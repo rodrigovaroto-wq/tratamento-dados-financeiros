@@ -75,41 +75,51 @@
 -- MEDIÇÃO NÃO-VAZIA (regra 2 do CLAUDE.md) — EXECUTADA, não descrita, em
 -- `Supabase/test/entidade_forma_de_controle.test.sql`:
 --
--- (a) A GUARDA DE COERÊNCIA (o `check` de linha única, item 2): com o `check`
---     `entidade_forma_de_controle_coerente` comentado nesta migration (e junto com ele o
---     `comment on constraint` dele — ver a ARMADILHA abaixo) e `teste_assert_0183` trocado
---     temporariamente para não abortar no primeiro assert (`raise notice` em vez de `raise
---     exception`) e contar todos — **2 dos 22 asserts do arquivo reprovaram**: "declarar
---     `controlada_por_entidade` SEM `controladora_id` preenchido é recusado" e "e nada foi
---     gravado — a forma continua indefinido (o estado anterior)". Religado o `check`, os 22
---     passam.
+-- TODOS OS NÚMEROS ABAIXO FORAM REMEDIDOS EM 21/09/2026 contra o arquivo COMO ESTÁ COMMITADO.
+-- A primeira versão deste cabeçalho dizia "22 asserts" quando o arquivo tinha 20, e uma revisão
+-- independente ainda achou um BURACO que os 20 não cobriam (ver (a) abaixo). Com os 2 asserts
+-- que fecham esse buraco, o denominador real é 22 — o número antigo estava certo por acidente e
+-- errado por método.
 --
---     **MEDIDO 2, e o desenho previa 4** — a diferença é informação, não erro de contagem, e
---     fica registrada aqui pelo mesmo motivo que a 0182 registrou a dela: "declarar
---     `controle_comum` COM `controladora_id` preenchido é recusado" NÃO reprova sem o `check`,
---     porque naquele arranjo quem recusa é o TRIGGER DO VÍNCULO (a entidade do teste não tem
---     linha em `entidade_controlador`), não o `check`. As duas guardas se SOBREPÕEM, e a
---     contribuição exclusiva do `check` é menor do que o desenho supunha. Quem for mexer numa
---     delas não pode concluir da outra que está coberto.
+-- (a) A GUARDA DE COERÊNCIA (o `check` de linha única): com o `check`
+--     `entidade_forma_de_controle_coerente` comentado (e junto com ele o `comment on constraint`
+--     dele — ver a ARMADILHA abaixo) e `teste_assert_0183` trocado temporariamente para não
+--     abortar no primeiro assert e contar todos — **4 dos 22 asserts reprovaram**: "declarar
+--     `controlada_por_entidade` SEM `controladora_id` é recusado", "nada foi gravado — a forma
+--     continua indefinido", e os DOIS asserts novos do arranjo com controladora_id E vínculo.
 --
--- (b) A GUARDA DO VÍNCULO (o trigger, item 3): com a criação do
---     `trigger trg_entidade_forma_de_controle_tem_vinculo` comentada nesta migration (a
---     função-guarda continua existindo, mas nada a chama) e `teste_assert_0183` contando todos
---     — **4 dos 22 asserts reprovaram**, e eles NÃO são quatro provas independentes: 2 são
---     DIRETOS ("declarar `controle_comum` sem NENHUM vínculo em `entidade_controlador` é
---     recusado" e "e nada foi gravado — a forma continua indefinido") e 2 são CASCATA
+--     ESSES DOIS SÃO A CORREÇÃO DE UM BURACO REAL, não cobertura decorativa. Antes deles, a
+--     cláusula `controle_comum ⇒ controladora_id IS NULL` podia ser APAGADA do check com a suíte
+--     inteira continuando verde: o único assert que exercitava esse par usava uma entidade com
+--     controladora_id e NENHUM vínculo, e ali quem recusa é o TRIGGER. O arranjo que faltava é
+--     perfeitamente real — uma entidade com as DUAS coisas (holding registrada pela 0181 E
+--     sócios pessoa física registrados pela 0182) — e sem a cláusula ela poderia ser declarada
+--     `controle_comum`: o trigger vê o vínculo e libera, e o banco passaria a afirmar "grupo
+--     horizontal, não há controladora empresa" numa linha que TEM controladora empresa
+--     preenchida. Ausência virando dado (regra 1) pelo caminho mais silencioso que existe.
+--
+-- (b) A GUARDA DO VÍNCULO (o trigger): com a criação do
+--     `trigger trg_entidade_forma_de_controle_tem_vinculo` comentada (a função-guarda continua
+--     existindo, mas nada a chama) e `teste_assert_0183` contando todos — **4 dos 22 asserts
+--     reprovaram**, e eles NÃO são quatro provas independentes: 2 são DIRETOS ("declarar
+--     `controle_comum` sem NENHUM vínculo é recusado" e "nada foi gravado") e 2 são CASCATA
 --     ("exatamente um evento_auditoria gravado para v_ent_c" e "reatribuir com a MESMA forma
 --     grava um segundo evento"), que reprovam porque a operação que deveria ter sido recusada
 --     PASSOU e sujou a contagem de eventos do resto do bloco — não porque o trigger os proteja.
---     Religado o trigger, os 22 passam.
+--
+--     AS DUAS GUARDAS SE SOBREPÕEM, e isso é medido, não suposto: um mesmo arranjo pode ser
+--     recusado por qualquer uma das duas dependendo de ter ou não vínculo registrado. Quem for
+--     mexer numa delas NÃO pode concluir da outra que está coberto — foi exatamente assim que a
+--     cláusula do check ficou sem dono até a revisão.
 --
 --     A ARMADILHA DESTE PROTOCOLO, medida na primeira tentativa e registrada para a próxima
 --     sessão: comentar só o `alter table ... add constraint` deixa o `comment on constraint`
---     órfão, a migration morre em `constraint ... does not exist`, o `run.sh` para ANTES do
---     teste e a contagem dá **0 reprovações**. Zero ali não era teste vazio — era teste NÃO
---     EXECUTADO, e os dois têm exatamente a mesma aparência (regra 7 do CLAUDE.md). Confira que
---     a migration APLICOU antes de acreditar em qualquer zero.
+--     órfão, a migration morre em `constraint ... does not exist`, o `run.sh` para ANTES do teste
+--     e a contagem dá **0 reprovações**. Zero ali não era teste vazio — era teste NÃO EXECUTADO,
+--     e os dois têm exatamente a mesma aparência (regra 7). Confira que a migration APLICOU antes
+--     de acreditar em qualquer zero.
 --
+
 -- (c) OS QUE NÃO DISCRIMINAM CADA REGRESSÃO, nomeados pela mesma honestidade que a 0181/0182
 --     usaram: os asserts de `fn_entidade_definir_forma_de_controle` grava evento_auditoria, de
 --     reatribuição (mudar de forma é permitido, é o ESTADO ATUAL), de resolução de pendência, do
@@ -118,6 +128,14 @@
 --     controladora_id NULL são estados DIFERENTES e distinguíveis por consulta) são invariantes
 --     GENUÍNOS, independentes tanto do `check` quanto do trigger — nenhum dos dois protocolos os
 --     derruba, e não deveriam: eles protegem coisas diferentes.
+--
+-- O CUSTO DO BACKFILL, com o número do PRECEDENTE junto (regra 5): este arquivo abre UMA
+-- pendência `forma_de_controle_indefinida` por entidade de TODO o banco, e não distingue mandato
+-- real de caso de teste. A 0179 fez exatamente isso e o efeito está medido no ESTADO.md: **365
+-- pendências abertas**, das quais **347 tiveram de ser resolvidas em lote** por serem ruído de
+-- caso de teste antigo, restando 18 do mandato real. Quem aplicar esta migration num banco com
+-- histórico vai precisar repetir essa triagem, e é melhor saber disso ANTES de aplicar do que
+-- descobrir com a lista de pendências inflada. Num banco novo o número é o de entidades dele.
 --
 -- **Pronto quando** (critério da fatia 1.7, roadmap): "um `controladora_id` vazio passa a ser
 -- distinguível de um não preenchido" — esta migration entrega exatamente isso: a consulta

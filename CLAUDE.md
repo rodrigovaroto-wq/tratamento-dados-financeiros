@@ -73,9 +73,11 @@ node --test 'Supabase/test/*.test.mjs'       # a tradução de "não perguntei a
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-kit-basico.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-modelagem-cobertura.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-limite-de-envio.mts
+node --test '.claude/conhecimento/test/*.test.mjs'  # ANTES de indexar: o grafo COMMITADO não pode
+                                                   # citar arquivo que o git ignora (depois do
+                                                   # indexar essa pergunta é verdadeira por construção)
 node .claude/conhecimento/indexar.mjs && git diff --exit-code -- .claude/conhecimento/grafo.jsonl \
   && node .claude/conhecimento/conferir.mjs   # o índice do conhecimento é derivado e tem portão
-node --test '.claude/conhecimento/test/*.test.mjs'  # e o grafo não pode citar arquivo que o git ignora
 node .claude/verificar-comandos.mjs           # todo subagent_type citado por comando existe
 node .claude/verificar-espelho-claude-md.mjs  # este bloco não ficou para trás do CI
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh

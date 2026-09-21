@@ -288,6 +288,16 @@ supabase db execute --file Supabase/migrations/0179_o_papel_no_grupo_que_nunca_f
 supabase db execute --file Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql
 supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql
 supabase db execute --file Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql
+# ATENÇÃO — a 0183 precisa dos MESMOS DOIS PASSOS que a 0179 precisou, e pela mesma razão.
+# Ela faz `alter type pendencia_tipo add value 'forma_de_controle_indefinida'` e USA o rótulo no
+# mesmo arquivo. No `psql` isso funciona (cada statement de topo aplica em autocommit, e o
+# cabeçalho da migration explica isso), mas o CAMINHO REAL DE PRODUÇÃO não é o psql: a porta do
+# Postgres não é alcançável do container, aplica-se pela API de gerenciamento do Supabase, e ela
+# envolve o lote numa TRANSAÇÃO IMPLÍCITA — onde o Postgres recusa com "unsafe use of new value of
+# enum type". Foi exatamente o que aconteceu com a 0179 (registrado no ESTADO.md), e quem aplicar
+# esta lista de uma vez vai receber o mesmo erro no meio, com a 0182 já aplicada.
+# Aplique a 0183 em dois envios: PRIMEIRO só até o `alter type ... add value` (inclusive),
+# DEPOIS o resto do arquivo.
 supabase db execute --file Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql
 
 # ---------------------------------------------------------------------------

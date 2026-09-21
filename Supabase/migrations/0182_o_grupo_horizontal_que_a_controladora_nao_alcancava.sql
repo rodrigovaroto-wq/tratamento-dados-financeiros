@@ -61,45 +61,44 @@
 -- MEDIÇÃO NÃO-VAZIA (regra 2 do CLAUDE.md) — EXECUTADA, não descrita, em
 -- `Supabase/test/entidade_controlador.test.sql`:
 --
+-- TODOS OS NÚMEROS ABAIXO FORAM REMEDIDOS EM 21/09/2026 contra o arquivo COMO ESTÁ COMMITADO,
+-- depois que uma revisão independente mostrou que a primeira versão deste cabeçalho usava o
+-- denominador ERRADO: dizia "24 asserts" quando o arquivo tem 32. Os numeradores estavam certos, o
+-- denominador não — e um denominador
+-- errado torna a medição IRREPRODUZÍVEL, que é a regra 2 por fora: a próxima sessão que
+-- reexecutasse o protocolo mediria outro número e teria de adivinhar se a diferença é regressão
+-- da guarda ou erro de contagem. O arquivo ganhou 2 asserts nesta mesma passada (o bloco 8, da
+-- mudança de `entidade_id`), então o denominador final é 32.
+--
 -- (a) A GUARDA DE SOMA: com a criação do `trigger trg_entidade_controlador_soma_maxima`
---     comentada nesta migration (a função-guarda existe, mas nada a chama) e
---     `teste_assert_0182` trocado temporariamente para não abortar no primeiro assert (`raise
---     notice` em vez de `raise exception`) e contar todos — **3 dos 24 asserts do arquivo
---     reprovaram**: "a terceira participação (que passaria de 100%) é recusada", "e nada foi
---     gravado — a soma continua em 80, não 130" e "e o terceiro sócio nem aparece no vínculo" (o
---     bloco 3 do arquivo). Os outros 21 passam com ou sem a guarda — inclusive os dois primeiros
---     inserts do MESMO bloco 3 (sócio A com 45%, sócio B com 35%, somando 80 ≤ 100): eles nunca
---     dependeram da guarda para passar, porque nenhum deles ultrapassa 100 sozinho — só o
---     terceiro insert (que levaria a soma a 130) discrimina a regressão. Religada a criação do
---     trigger, os 24 asserts passam.
+--     comentada (a função-guarda existe, mas nada a chama) e `teste_assert_0182` trocado
+--     temporariamente para não abortar no primeiro assert (`raise notice` em vez de `raise
+--     exception`) e contar todos — **5 dos 32 asserts reprovaram**: os 3 do bloco 3 ("a terceira
+--     participação que passaria de 100% é recusada", "nada foi gravado — a soma continua em 80,
+--     não 130", "o terceiro sócio nem aparece no vínculo") e os 2 do bloco 8 ("mover um vínculo
+--     de 60 para uma entidade que já soma 80 é recusado" e "a entidade de destino continua
+--     somando 80, não 140"). Religado o trigger, os 32 passam.
 --
--- (b) O FECHO TRANSITIVO: com a definição de `par_direto`/`alcance` na CTE de
---     `fn_grupo_por_controle_comum` trocada temporariamente para um JOIN DE UM SALTO (sem `with
---     recursive`, sem propagar — cada entidade só enxerga quem compartilha controlador
---     DIRETAMENTE com ela) e `teste_assert_0182` contando todos — **MEDIDO 3 dos 24 asserts do
---     arquivo reprovaram, não 2 como uma primeira leitura do desenho sugeria**: além de "A e C
---     (que só compartilham controlador via B, nunca diretamente) caem no MESMO grupo" e "o grupo
---     de A/B/C tem exatamente 3 entidades, não 2" (as duas óbvias), TAMBÉM "A e B estão no mesmo
---     grupo" reprovou — um efeito colateral do representante mínimo (`grupo_id`) que a medição
---     revelou e que não estava previsto antes de rodar: sem a recursão, A só alcança {A, B} e seu
---     `grupo_id` é o menor entre os dois; B alcança {A, B, C} (ela vê tanto A quanto C
---     diretamente) e seu `grupo_id` é o menor entre os TRÊS — quando C ordena antes de A
---     (textualmente), o `grupo_id` de B vira o de C, DIFERENTE do de A, e a igualdade "A e B no
---     mesmo grupo" quebra mesmo sem o teste perguntar sobre C. Ou seja: a quebra da transitividade
---     vaza para asserts que pareciam de um salto só, porque o representante do grupo depende do
---     alcance INTEIRO, não só do vínculo direto. Os outros 21 passam com ou sem a recursão,
---     inclusive "B e C estão no mesmo grupo" (a única relação verdadeiramente de um salto que
---     sobreviveu, porque B enxerga A e C nos dois cenários, e a comparação é sempre com o mesmo
---     `grupo_id` de B). Religada a recursão (0182 como está), os 24 asserts passam.
+-- (b) O FECHO TRANSITIVO: com o join da recursão trocado de `pd.a = al.alcancavel` para
+--     `pd.a = al.entidade_id` (cada entidade passa a ver só quem compartilha controlador
+--     DIRETAMENTE com ela, sem propagar) e `teste_assert_0182` contando todos — **3 dos 32
+--     asserts reprovaram**: "A e C (que só compartilham controlador via B) caem no MESMO grupo",
+--     "o grupo de A/B/C tem exatamente 3 entidades, não 2" e — a surpresa que só a medição
+--     revelou — "A e B estão no mesmo grupo", que PARECE ser de um salto só. A causa: `grupo_id`
+--     é o menor `alcancavel` do alcance INTEIRO, não do vínculo direto; sem propagação, A alcança
+--     {A,B} e B alcança {A,B,C}, e quando C ordena antes de A textualmente os dois grupo_id
+--     divergem. A quebra da transitividade VAZA para um assert que não pergunta nada sobre C.
 --
--- (c) OS 21 QUE NÃO DISCRIMINAM CADA REGRESSÃO, nomeados aqui pela mesma honestidade que a
---     0181 usou com os 25 dela: os testes de `controlador_caso_documento_unico` (unicidade de
---     documento por caso), de `entidade_controlador_percentual_valido` (check de tabela por
---     UPDATE direto), de reatribuição de percentual (reatribuir é permitido), de percentual NULL
---     distinguível de linha ausente, e de controle cross-caso são invariantes GENUÍNOS,
---     independentes tanto da guarda de soma quanto da recursão — nenhum dos dois protocolos
---     acima os derruba, e não deveriam: eles protegem invariantes DIFERENTES.
+-- (c) OS 27 QUE NÃO DISCRIMINAM CADA REGRESSÃO, nomeados aqui pela mesma honestidade que a 0181
+--     usou com os 25 dela: os testes de `controlador_caso_documento_unico`, dos checks de tabela
+--     por UPDATE direto, de reatribuição de percentual, de percentual NULL distinguível de linha
+--     ausente e de controle cross-caso são invariantes GENUÍNOS e independentes das duas guardas
+--     — nenhum dos dois protocolos os derruba, e não deveriam: protegem coisas diferentes.
+--     Também não discriminam: os dois primeiros inserts do bloco 3 (45 + 35 = 80, que nunca
+--     dependeram da guarda porque nenhum ultrapassa 100 sozinho) e "B e C estão no mesmo grupo"
+--     (a única relação de fato de um salto, que um join direto já resolve).
 --
+
 -- **Pronto quando** (critério da fatia 1.7, roadmap): as 8 entidades do mandato real podem ser
 -- reconhecidas como um grupo. Esta migration entrega o MODELO e o CONSUMIDOR — registrar os
 -- controladores reais (Karina, Rafael, Igor, Leandro, Roney) e os vínculos das 4 entidades
@@ -321,7 +320,7 @@ comment on function public.fn_trg_entidade_controlador_soma_maxima() IS
   'em silêncio.';
 
 create trigger trg_entidade_controlador_soma_maxima
-  after insert or update of percentual on entidade_controlador
+  after insert or update of percentual, entidade_id on entidade_controlador
   for each row
   when (NEW.percentual is not null)
   execute function fn_trg_entidade_controlador_soma_maxima();
@@ -407,12 +406,24 @@ grant execute on function public.fn_entidade_definir_controlador(uuid, uuid, num
 -- self-join viraria recalculado por salto — exatamente o padrão que a 0152 mediu e nomeou no
 -- cabeçalho dela.
 --
--- `alcance` propaga o alcance de cada entidade pelos pares diretos, com `UNION` (não `UNION
--- ALL`) — a deduplicação é o que garante TERMINAÇÃO num grafo com CICLO (A-B-C-A): sem ela, a
--- recursão giraria para sempre revisitando os mesmos pares. O limite de 50 saltos (`salto < 50`)
--- é o MESMO headroom da guarda de ciclo da 0181 — generoso para qualquer cadeia real deste
--- projeto (mandatos têm, no máximo, poucas dezenas de entidades), protegendo contra dado sujo
--- que já tivesse um grafo maior do que qualquer mandato real produziria.
+-- `alcance` propaga o alcance de cada entidade pelos pares diretos com `UNION` (não `UNION
+-- ALL`), e a deduplicação é o que garante TERMINAÇÃO num grafo com CICLO — que aqui é o caso
+-- NORMAL, não o excepcional: `par_direto` é simétrica por construção, então QUALQUER par de
+-- entidades que partilhe um controlador já é um ciclo de 2. O conjunto (entidade, alcançável) é
+-- finito (n² no caso), a recursão para quando nenhuma linha nova aparece, e é só isso que a
+-- sustenta.
+--
+-- ISTO SÓ É VERDADE PORQUE A TUPLA NÃO CARREGA CONTADOR, e a primeira versão desta migration
+-- errou exatamente aí (achado da revisão independente, 21/09/2026): ela emitia `al.salto + 1` na
+-- tupla e limitava com `salto < 50`, no espelho da guarda de ciclo da 0181. Mas o `UNION` de uma
+-- CTE recursiva dedupa a TUPLA INTEIRA, e com o contador dentro dela `(A,B,1)` e `(A,B,2)` são
+-- linhas DIFERENTES — nada era deduplicado entre níveis, nada convergia, e quem terminava a
+-- recursão era só o limite. O comentário afirmava uma coisa (a dedup termina) e o código fazia
+-- outra (o limite termina), o que é pior do que não comentar: uma sessão futura que lesse "a
+-- dedup já garante" e removesse o limite travaria a consulta no PRIMEIRO arranjo real. De
+-- quebra, sem convergência a recursão rodava os 50 níveis SEMPRE, gerando até 50·n² linhas mesmo
+-- quando o fecho fechava no salto 2 — o que corroía a justificativa de custo do `MATERIALIZED`
+-- logo acima. Sem o contador, a dedup faz o que o comentário sempre disse que ela fazia.
 --
 -- `grupo_id` é o `entidade_id` alcançável de MENOR ordenação textual (`uuid` não tem operador
 -- `min` nativo no Postgres — `min(al.alcancavel::text)::uuid` é o contorno) a partir de cada
@@ -437,18 +448,17 @@ RETURNS TABLE(entidade_id uuid, razao_social text, grupo_id uuid)
        and ec2.entidade_id <> ec1.entidade_id
      where ec1.caso_id = p_caso_id
   ),
-  alcance(entidade_id, alcancavel, salto) as (
-    select e.id, e.id, 0
+  alcance(entidade_id, alcancavel) as (
+    select e.id, e.id
       from entidade e
      where e.caso_id = p_caso_id
        and exists (
          select 1 from entidade_controlador ec
           where ec.entidade_id = e.id and ec.caso_id = p_caso_id)
     union
-    select al.entidade_id, pd.b, al.salto + 1
+    select al.entidade_id, pd.b
       from alcance al
       join par_direto pd on pd.a = al.alcancavel
-     where al.salto < 50
   )
   select al.entidade_id, e.razao_social, min(al.alcancavel::text)::uuid as grupo_id
     from alcance al
@@ -465,8 +475,10 @@ comment on function public.fn_grupo_por_controle_comum(uuid) IS
   'entidade_id alcançável de menor ordenação textual — representante arbitrário mas estável do '
   'componente conexo, não uma entidade "principal". Entidade sem controlador registrado não '
   'aparece na saída — ausência '
-  'não afirma nada sobre grupo real algum (regra 7 do CLAUDE.md). Limite de 50 saltos, mesmo '
-  'headroom da guarda de ciclo da 0181. É o consumidor mínimo que prova a fatia 1.7 do roadmap: '
+  'não afirma nada sobre grupo real algum (regra 7 do CLAUDE.md). A recursão termina pela '
+  'DEDUPLICAÇÃO do `union` sobre um conjunto finito (entidade, alcançável) — sem contador de '
+  'salto na tupla, que era justamente o que impedia a dedup de convergir na primeira versão '
+  '(ver cabeçalho). É o consumidor mínimo que prova a fatia 1.7 do roadmap: '
   '"as 8 entidades do mandato real podem ser reconhecidas como um grupo".';
 
 grant execute on function public.fn_grupo_por_controle_comum(uuid) to authenticated;

@@ -5113,18 +5113,17 @@ CREATE FUNCTION public.fn_grupo_por_controle_comum(p_caso_id uuid) RETURNS TABLE
        and ec2.entidade_id <> ec1.entidade_id
      where ec1.caso_id = p_caso_id
   ),
-  alcance(entidade_id, alcancavel, salto) as (
-    select e.id, e.id, 0
+  alcance(entidade_id, alcancavel) as (
+    select e.id, e.id
       from entidade e
      where e.caso_id = p_caso_id
        and exists (
          select 1 from entidade_controlador ec
           where ec.entidade_id = e.id and ec.caso_id = p_caso_id)
     union
-    select al.entidade_id, pd.b, al.salto + 1
+    select al.entidade_id, pd.b
       from alcance al
       join par_direto pd on pd.a = al.alcancavel
-     where al.salto < 50
   )
   select al.entidade_id, e.razao_social, min(al.alcancavel::text)::uuid as grupo_id
     from alcance al
@@ -5137,7 +5136,7 @@ $$;
 -- Name: FUNCTION fn_grupo_por_controle_comum(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_grupo_por_controle_comum(p_caso_id uuid) IS '0182: agrupa as entidades do caso por CONTROLE COMUM, por FECHO TRANSITIVO — se A e B compartilham um controlador, e B e C compartilham outro, as três caem no mesmo grupo. `par_direto` (pares de um salto) é MATERIALIZED de propósito (evita reavaliação a cada iteração da recursão — mesma lição da 0152, ver comentário acima da função). `grupo_id` é o entidade_id alcançável de menor ordenação textual — representante arbitrário mas estável do componente conexo, não uma entidade "principal". Entidade sem controlador registrado não aparece na saída — ausência não afirma nada sobre grupo real algum (regra 7 do CLAUDE.md). Limite de 50 saltos, mesmo headroom da guarda de ciclo da 0181. É o consumidor mínimo que prova a fatia 1.7 do roadmap: "as 8 entidades do mandato real podem ser reconhecidas como um grupo".';
+COMMENT ON FUNCTION public.fn_grupo_por_controle_comum(p_caso_id uuid) IS '0182: agrupa as entidades do caso por CONTROLE COMUM, por FECHO TRANSITIVO — se A e B compartilham um controlador, e B e C compartilham outro, as três caem no mesmo grupo. `par_direto` (pares de um salto) é MATERIALIZED de propósito (evita reavaliação a cada iteração da recursão — mesma lição da 0152, ver comentário acima da função). `grupo_id` é o entidade_id alcançável de menor ordenação textual — representante arbitrário mas estável do componente conexo, não uma entidade "principal". Entidade sem controlador registrado não aparece na saída — ausência não afirma nada sobre grupo real algum (regra 7 do CLAUDE.md). A recursão termina pela DEDUPLICAÇÃO do `union` sobre um conjunto finito (entidade, alcançável) — sem contador de salto na tupla, que era justamente o que impedia a dedup de convergir na primeira versão (ver cabeçalho). É o consumidor mínimo que prova a fatia 1.7 do roadmap: "as 8 entidades do mandato real podem ser reconhecidas como um grupo".';
 
 --
 -- Name: fn_indice_macro_anual(integer); Type: FUNCTION; Schema: public; Owner: -
@@ -14219,7 +14218,7 @@ CREATE TRIGGER trg_entidade_ambigua AFTER INSERT OR UPDATE OF entidade_id ON pub
 -- Name: entidade_controlador trg_entidade_controlador_soma_maxima; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_entidade_controlador_soma_maxima AFTER INSERT OR UPDATE OF percentual ON public.entidade_controlador FOR EACH ROW WHEN ((new.percentual IS NOT NULL)) EXECUTE FUNCTION public.fn_trg_entidade_controlador_soma_maxima();
+CREATE TRIGGER trg_entidade_controlador_soma_maxima AFTER INSERT OR UPDATE OF percentual, entidade_id ON public.entidade_controlador FOR EACH ROW WHEN ((new.percentual IS NOT NULL)) EXECUTE FUNCTION public.fn_trg_entidade_controlador_soma_maxima();
 
 --
 -- Name: entidade trg_entidade_forma_de_controle_tem_vinculo; Type: TRIGGER; Schema: public; Owner: -

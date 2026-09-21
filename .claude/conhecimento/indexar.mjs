@@ -98,7 +98,7 @@ const existe = (p) => existsSync(join(RAIZ, p));
 // TUDO QUE O GIT IGNORA FICA FORA DO GRAFO, e a razão é um portão vermelho medido
 // em 21/09/2026 (PR #238). Antes desta linha, a lista de exclusão era três NOMES
 // (`node_modules`, `.git`, `.next`), e qualquer outro diretório gerado entrava no
-// índice. Foi o que aconteceu: `Verificação/variacoes.mts` grava 24 arquivos em
+// índice. Foi o que aconteceu: `Verificação/variacoes.mts` grava 51 arquivos em
 // `Verificação/saida/` (gitignored, `.gitignore:21`), a sessão rodou o `variacoes`
 // ANTES do `indexar` — que é a ordem em que o bloco de comandos do `CLAUDE.md` os
 // lista —, e o grafo commitado saiu com **50 nós e arestas que não existem num

@@ -7,11 +7,11 @@
 -- (a) A GUARDA DE COERÊNCIA (`entidade_forma_de_controle_coerente`, check de linha única): com o
 --     `check` comentado na migration 0183 e `teste_assert_0183` trocado temporariamente para não
 --     abortar no primeiro assert (`raise notice` em vez de `raise exception`) e contar todos —
---     [MEDIR AO RODAR] dos [N] asserts do arquivo reprovaram. Religado o `check`, todos passam.
+--     4 dos 22 asserts do arquivo reprovaram (MEDIDO 21/09/2026). Religado o `check`, os 22 passam.
 --
 -- (b) A GUARDA DO VÍNCULO (`fn_trg_entidade_forma_de_controle_tem_vinculo`, trigger): com a
 --     criação de `trg_entidade_forma_de_controle_tem_vinculo` comentada na migration (a função
---     existe, nada a chama) e `teste_assert_0183` contando todos — [MEDIR AO RODAR] dos [N]
+--     existe, nada a chama) e `teste_assert_0183` contando todos — 4 dos 22 (MEDIDO 21/09/2026),
 --     asserts reprovaram. Religado o trigger, todos passam.
 --
 -- (Ambos os números acima são preenchidos ao RODAR o protocolo — não estimados. Ver o cabeçalho
@@ -53,6 +53,7 @@ declare
   v_ent_a                uuid;  -- controlada por entidade (mundo 0181)
   v_ent_b                uuid;  -- controladora de v_ent_a
   v_ent_c                uuid;  -- controle comum (mundo 0182)
+  v_ent_ambos            uuid;  -- controladora_id E vínculo: o par que só o check recusa
   v_ent_d                uuid;  -- indefinido, controladora_id NULL — a metade da assimetria
   v_ctrl                 uuid;
   v_forma                entidade_forma_de_controle;
@@ -219,6 +220,37 @@ begin
       where id in (v_ent_c, v_ent_d) and controladora_id is null) = 2,
     'entre as entidades com controladora_id NULL, há PELO MENOS duas formas_de_controle '
     'diferentes — o vazio de controladora_id não é mais um valor único e ambíguo');
+
+  -- O BURACO QUE A REVISÃO INDEPENDENTE ACHOU (21/09/2026), e que os 20 asserts anteriores NÃO
+  -- discriminavam: apagar a cláusula `controle_comum ⇒ controladora_id IS NULL` do check deixava
+  -- a suíte inteira verde. O único assert que exercitava esse par era o de v_ent_a, que tem
+  -- controladora_id e NENHUM vínculo — ali quem recusa é o TRIGGER, não o check, então a
+  -- cláusula podia sumir sem que nada acusasse.
+  --
+  -- O arranjo que FALTAVA é perfeitamente real: uma entidade com as DUAS coisas — controladora
+  -- empresa registrada pela 0181 E vínculo de pessoa física registrado pela 0182 (holding no
+  -- papel + sócios no contrato social). Sem esta cláusula, ela poderia ser declarada
+  -- `controle_comum`: o trigger vê o vínculo e libera, e o banco passaria a afirmar "grupo
+  -- horizontal, não há controladora empresa" numa linha que TEM controladora empresa preenchida.
+  -- É ausência virando dado (regra 1) pelo caminho mais silencioso possível — o estado declarado
+  -- contradizendo a coluna ao lado.
+  v_ent_ambos := fn_upsert_entidade(v_caso, 'ENTIDADE COM CONTROLADORA *E* VINCULO (0183)');
+  perform fn_entidade_definir_participacao(v_ent_ambos, v_ent_a, 60, 'analista@0183');
+  perform fn_entidade_definir_controlador(v_ent_ambos, v_ctrl, 40, 'analista@0183');
+
+  v_excecao := false;
+  begin
+    perform fn_entidade_definir_forma_de_controle(v_ent_ambos, 'controle_comum', 'analista@0183');
+  exception when others then
+    v_excecao := true;
+  end;
+  perform teste_assert_0183(v_excecao,
+    'entidade que tem controladora_id E vínculo NÃO pode ser declarada controle_comum — o '
+    'trigger sozinho a liberaria (há vínculo); quem a recusa é a cláusula do check');
+
+  select forma_de_controle into v_forma from entidade where id = v_ent_ambos;
+  perform teste_assert_0183(v_forma = 'indefinido',
+    'e nada foi gravado — a forma continua indefinido', format('forma=%s', v_forma));
 
   raise notice 'FORMA DE CONTROLE OK — indefinido é o default honesto de toda entidade nova, a '
     'guarda de coerência recusa controlada_por_entidade sem controladora_id e controle_comum '

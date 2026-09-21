@@ -285,19 +285,30 @@ jobs:
         # índice, porque uma regex que parou de casar continua verde e devolve
         # briefing curto, que se lê como "não há nada sobre isso".
         #
-        # A TERCEIRA metade, acrescentada em 21/09/2026 depois de o portão acima
+        # A TERCEIRA metade, acrescentada em 21/09/2026 depois de o portão abaixo
         # reprovar por um defeito que ele NÃO sabia nomear: o grafo tinha 50 nós de
         # `Verificação/saida/` (gitignored), porque a sessão rodou `variacoes.mts`
         # antes de `indexar.mjs`. O `git diff --exit-code` acusou "diverge", que é
         # verdade e é inútil — não diz que a causa foi artefato gerado. O teste
-        # abaixo afirma o invariante direto e nomeia os caminhos: rodado contra
-        # aquele grafo (070b0c2), reprova com 25 caminhos distintos.
+        # afirma o invariante direto e NOMEIA os caminhos: rodado contra aquele
+        # grafo (070b0c2), reprova com 25 caminhos distintos.
+        #
+        # ELE RODA PRIMEIRO, E A ORDEM É O PONTO — achado da revisão independente.
+        # Ligado DEPOIS do `indexar.mjs`, como ele estava na primeira versão, o teste
+        # era MORTO: o `indexar.mjs` reescreve o `grafo.jsonl` antes dele, e o
+        # `git diff --exit-code` já garantiu que o arquivo bate com o commitado,
+        # gerado num checkout onde nada ignorado existe — a asserção ficava verdadeira
+        # por construção sempre que a linha anterior passava. Pior, no cenário que ele
+        # existe para nomear (alguém commita um grafo poluído) o `exit 1` do diff
+        # abortava a etapa ANTES dele, com exatamente a mensagem inútil que ele veio
+        # substituir. Rodando primeiro, ele lê o grafo COMMITADO — que é o estado de um
+        # checkout limpo — e é o único ponto em que essa pergunta tem resposta.
         run: |
+          node --test '.claude/conhecimento/test/*.test.mjs'
           node .claude/conhecimento/indexar.mjs
           git diff --exit-code -- .claude/conhecimento/grafo.jsonl \
             || { echo "::error::o grafo commitado diverge do repositório — rode node .claude/conhecimento/indexar.mjs e commite o resultado"; exit 1; }
           node .claude/conhecimento/conferir.mjs
-          node --test '.claude/conhecimento/test/*.test.mjs'
 
       - name: Portão dos comandos de barra (todo subagent_type existe)
         # Despacho para `subagent_type` inexistente falha em tempo de execução, e

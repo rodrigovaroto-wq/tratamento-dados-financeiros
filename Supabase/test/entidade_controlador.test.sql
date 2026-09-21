@@ -3,43 +3,40 @@
 --        `entidade.controladora_id` (0181) não alcança quando não há holding, fatia 1.7a do
 --        plano F1
 --
--- MEDIÇÃO NÃO-VAZIA (regra 2 do CLAUDE.md) — EXECUTADA, não descrita, duas vezes:
+-- MEDIÇÃO NÃO-VAZIA (regra 2 do CLAUDE.md) — REMEDIDA EM 21/09/2026 contra este arquivo como
+-- ele está, com 32 asserts no corpo do bloco. A primeira versão deste
+-- cabeçalho dizia "24", denominador que não correspondia ao arquivo — e denominador errado torna
+-- a medição irreproduzível, que é a regra 2 por fora.
 --
--- (a) A GUARDA DE SOMA: com a criação do `trigger trg_entidade_controlador_soma_maxima` COMENTADA
---     na migration 0182 (a função-guarda existe, mas nada a chama) e `teste_assert_0182` trocado
+-- (a) A GUARDA DE SOMA: com a criação do `trigger trg_entidade_controlador_soma_maxima` comentada
+--     na 0182 (a função-guarda existe, mas nada a chama) e `teste_assert_0182` trocado
 --     temporariamente para não abortar no primeiro assert (`raise notice` em vez de `raise
---     exception`) e contar todos — **3 dos 24 asserts deste arquivo reprovaram**: as três do
---     bloco 3 que checam diretamente o efeito da guarda ("a terceira participação (que passaria
---     de 100%) é recusada", "e nada foi gravado — a soma continua em 80, não 130", "e o terceiro
---     sócio nem aparece no vínculo"). OS OUTROS 21 PASSAM COM OU SEM A GUARDA, inclusive os dois
---     PRIMEIROS inserts do próprio bloco 3 (sócio A 45%, sócio B 35%, somando 80 ≤ 100) — eles
---     nunca dependeram da guarda, porque nenhum deles ultrapassa 100 sozinho. Religada a criação
---     do trigger (0182 como está), os 24 asserts passam.
+--     exception`) e contar todos — **5 dos 32 asserts reprovaram**: os 3 do bloco 3 ("a terceira
+--     participação que passaria de 100% é recusada", "nada foi gravado — a soma continua em 80,
+--     não 130", "o terceiro sócio nem aparece no vínculo") e os 2 do bloco 8, que cobrem a
+--     MUDANÇA DE `entidade_id` (mover um vínculo de 60 para uma entidade que já soma 80). Os
+--     dois primeiros inserts do bloco 3 (45 + 35 = 80) NÃO discriminam: nenhum ultrapassa 100
+--     sozinho, então passam com ou sem a guarda. Religado o trigger, os 32 passam.
 --
--- (b) O FECHO TRANSITIVO: com `par_direto`/`alcance`, dentro de `fn_grupo_por_controle_comum`,
---     trocada temporariamente por um JOIN DE UM SALTO (sem `with recursive`, sem propagar — cada
---     entidade só vê quem compartilha controlador diretamente com ela) e `teste_assert_0182`
---     contando todos — **MEDIDO 3 dos 24 asserts reprovaram, não 2 como o desenho sugeria antes de
---     rodar**: além de "A e C (que só se ligam via B, nunca compartilham um controlador
---     DIRETAMENTE) caem no MESMO grupo" e "o grupo de A/B/C tem exatamente 3 entidades, não 2"
---     (bloco 5, as duas óbvias), TAMBÉM "A e B estão no mesmo grupo" reprovou — um efeito colateral
---     do REPRESENTANTE do grupo (`grupo_id`, o menor `alcancavel` alcançado) que só a medição
---     revelou: sem a recursão, A alcança só {A, B} e seu `grupo_id` é o menor entre os dois; B
---     alcança {A, B, C} (vê A e C diretamente) e seu `grupo_id` é o menor entre os TRÊS — quando C
---     ordena antes de A (textualmente), o `grupo_id` de B vira o de C, diferente do de A, e "A e B
---     no mesmo grupo" quebra mesmo sem o teste perguntar sobre C. A quebra da transitividade VAZA
---     para um assert que parecia de um salto só, porque o representante depende do alcance
---     INTEIRO, não só do vínculo direto. OS OUTROS 21 PASSAM COM OU SEM A RECURSÃO, inclusive "B e
---     C estão no mesmo grupo" (a única comparação de fato robusta a um salto, porque B enxerga A e
---     C nos dois cenários e é sempre comparada contra o PRÓPRIO grupo_id de B). Religada a
---     recursão (0182 como está), os 24 asserts passam.
+-- (b) O FECHO TRANSITIVO: com o join da recursão trocado de `pd.a = al.alcancavel` para
+--     `pd.a = al.entidade_id` (cada entidade passa a ver só quem compartilha controlador
+--     diretamente com ela, sem propagar) e `teste_assert_0182` contando todos — **3 dos 32
+--     asserts reprovaram**: "A e C (que só se ligam via B) caem no MESMO grupo", "o grupo de
+--     A/B/C tem exatamente 3 entidades, não 2" e — a surpresa que só a medição revelou — "A e B
+--     estão no mesmo grupo", que PARECE ser de um salto só.
 --
--- (c) OS 21 QUE NÃO DISCRIMINAM NENHUM DOS DOIS PROTOCOLOS, nomeados pela mesma honestidade que a
---     0181 usou com os 25 dela: os blocos 1, 2, 4, 6, 7 e 8 (unicidade de documento por caso,
---     checks de tabela por UPDATE direto, percentual NULL distinguível de linha ausente,
---     reatribuição de percentual, controle cross-caso) são invariantes GENUÍNOS, independentes
---     tanto da guarda de soma quanto da recursão — protegem coisas diferentes, e não deveriam
---     cair em nenhum dos dois protocolos acima.
+--     A causa dessa terceira: `grupo_id` é o menor `alcancavel` do alcance INTEIRO, não do
+--     vínculo direto. Sem propagação, A alcança {A,B} e tira o grupo_id desse par; B alcança
+--     {A,B,C} e tira o dela dos três — quando C ordena antes de A textualmente, os dois divergem
+--     e o assert quebra sem nunca ter perguntado sobre C. A quebra da transitividade VAZA para
+--     uma afirmação que parecia local. "B e C estão no mesmo grupo" é a única comparação de fato
+--     robusta a um salto, e não discrimina.
+--
+-- (c) OS 27 QUE NÃO DISCRIMINAM NENHUM DOS DOIS PROTOCOLOS, nomeados pela mesma honestidade que a
+--     0181 usou com os 25 dela: unicidade de documento por caso, checks de tabela por UPDATE
+--     direto, percentual NULL distinguível de linha ausente, reatribuição de percentual e
+--     controle cross-caso são invariantes GENUÍNOS, independentes das duas guardas — protegem
+--     coisas diferentes, e não deveriam cair em nenhum dos dois protocolos.
 --
 -- O QUE ESTE ARQUIVO MEDE:
 --   1. fn_controlador_registrar grava nome/documento/tipo_pessoa e o evento_auditoria; documento
@@ -86,6 +83,7 @@ declare
   v_soma_socio_a      uuid;
   v_soma_socio_b      uuid;
   v_soma_socio_c      uuid;
+  v_soma_socio_c_bis  uuid;
   v_perc_ent          uuid;
   v_grupo_a           uuid;
   v_grupo_b           uuid;
@@ -143,8 +141,16 @@ begin
   -- documento NULL repetido não colide: vários controladores sem documento informado.
   perform fn_controlador_registrar(v_caso, 'Sócio sem CPF no contrato (1)', null, 'fisica', 'analista@0182');
   perform fn_controlador_registrar(v_caso, 'Sócio sem CPF no contrato (2)', null, 'fisica', 'analista@0182');
-  perform teste_assert_0182(true,
-    'dois controladores sem documento (NULL) no mesmo caso NÃO colidem entre si');
+  -- O assert era `true` literal, o que imprimia `ok` incondicionalmente: quem provava a
+  -- afirmação eram os dois `fn_controlador_registrar` acima (que abortariam o bloco se o índice
+  -- único cobrisse NULL), e o log não distinguia a prova do carimbo. Achado da revisão de
+  -- 21/09/2026 — num arquivo cujo assunto é "ausência não é dado", um `ok` que sempre imprime é
+  -- exatamente a coisa errada a deixar no log.
+  select count(*) into v_ev_n from controlador
+   where caso_id = v_caso and documento is null;
+  perform teste_assert_0182(v_ev_n = 2,
+    'dois controladores sem documento (NULL) no mesmo caso NÃO colidem entre si — os dois estão '
+    'gravados', format('%s controlador(es) sem documento', v_ev_n));
 
   raise notice '--- 2. os checks de entidade_controlador recusam por UPDATE direto ---';
   v_ent_x := fn_upsert_entidade(v_caso, 'ENTIDADE DE TESTE DE CHECK LTDA. (0182)');
@@ -180,6 +186,7 @@ begin
   v_soma_socio_a := fn_controlador_registrar(v_caso, 'Sócio A da guarda', '333.333.333-33', 'fisica', 'analista@0182');
   v_soma_socio_b := fn_controlador_registrar(v_caso, 'Sócio B da guarda', '444.444.444-44', 'fisica', 'analista@0182');
   v_soma_socio_c := fn_controlador_registrar(v_caso, 'Sócio C da guarda', '555.555.555-55', 'fisica', 'analista@0182');
+  v_soma_socio_c_bis := fn_controlador_registrar(v_caso, 'Sócio C-bis (vínculo movido)', '121.121.121-12', 'fisica', 'analista@0182');
 
   perform fn_entidade_definir_controlador(v_soma_ent, v_soma_socio_a, 45, 'analista@0182');
   perform fn_entidade_definir_controlador(v_soma_ent, v_soma_socio_b, 35, 'analista@0182');
@@ -362,6 +369,32 @@ begin
   end;
   perform teste_assert_0182(v_excecao,
     'nome em branco é recusado por fn_controlador_registrar');
+
+  -- 8. A GUARDA DE SOMA TAMBÉM PRECISA COBRIR A MUDANÇA DE `entidade_id`, e não cobria.
+  -- Achado da revisão independente (21/09/2026): o gatilho era `after insert or update OF
+  -- percentual`, então mover um vínculo de uma entidade para outra por UPDATE direto não o
+  -- disparava — a linha chegava inteira na entidade de destino sem que a soma de lá fosse
+  -- reconferida. UPDATE direto não é arranjo inventado: o bloco 2 deste arquivo já cobra os
+  -- checks por esse caminho, então ele está no modelo de ameaça declarado pelo próprio teste.
+  -- v_soma_ent já tem 45 + 35 (+ o sócio C com percentual NULL, que não soma).
+  v_perc_ent := fn_upsert_entidade(v_caso, 'ENTIDADE DE ORIGEM DO VINCULO MOVIDO (0182)');
+  v_vinculo_id := fn_entidade_definir_controlador(v_perc_ent, v_soma_socio_c_bis, 60,
+                                                   'analista@0182');
+
+  v_excecao := false;
+  begin
+    update entidade_controlador set entidade_id = v_soma_ent where id = v_vinculo_id;
+  exception when others then
+    v_excecao := true;
+  end;
+  perform teste_assert_0182(v_excecao,
+    'mover um vínculo de 60 para uma entidade que já soma 80 é recusado — a guarda de soma '
+    'dispara na mudança de entidade_id, não só na de percentual');
+
+  select coalesce(sum(percentual), 0) into v_percentual
+    from entidade_controlador where entidade_id = v_soma_ent;
+  perform teste_assert_0182(v_percentual = 80,
+    'e a entidade de destino continua somando 80, não 140', format('soma=%s', v_percentual));
 
   raise notice 'CONTROLE COMUM OK — controlador e entidade_controlador gravados e auditados, a '
     'guarda de soma nunca deixa passar de 100 sem exigir soma completa, percentual NULL é '

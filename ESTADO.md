@@ -2,20 +2,29 @@
 
 > ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL) — F1.7 (a+b) ESCRITA, NÃO APLICADA (21/09/2026)
 >
-> **F1.7a — migration `0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql` (não commitada por este agente)**:
+> **F1.7a — migration `0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql`**:
 > `controlador` + `entidade_controlador` (N:N, sem temporalidade, guarda de soma nunca > 100 sem
 > exigir = 100) e o consumidor `fn_grupo_por_controle_comum` (fecho transitivo). Resolve o achado
 > de `.claude/memory/grupo-por-controle-comum-sem-holding.md`: as 8 entidades do mandato AMO não
 > têm holding, então `entidade.controladora_id` (0181) fica NULL corretamente nas 8 e não há onde
-> registrar o grupo. Teste `Supabase/test/entidade_controlador.test.sql`, 24 asserts — 3 reprovam
-> sem a guarda de soma, 2 reprovam com a recursão trocada por join de um salto (não discrimina o
-> fecho transitivo). Escrita ≠ aplicada — nenhum caso real tem controlador registrado ainda.
-> `forma_de_controle` (fatia 1.7b, FECHA a fatia 1.7) é a migration
-> `0183_a_forma_de_controle_que_ninguem_declarava.sql` (não commitada por este agente) — torna
-> `controladora_id` NULL distinguível de um não preenchido, com guarda de coerência (check) e
-> guarda do vínculo (trigger). Teste `Supabase/test/entidade_forma_de_controle.test.sql`. Números
-> medidos: ver o cabeçalho da migration e o relatório da rodada que a escreveu. Escrita ≠
-> aplicada.
+> registrar o grupo. Teste `Supabase/test/entidade_controlador.test.sql`, **32 asserts — 5
+> reprovam sem a guarda de soma, 3 sem o fecho transitivo** (REMEDIDO em 21/09/2026: os números
+> anteriores usavam o denominador errado, "24").
+>
+> **F1.7b — migration `0183_a_forma_de_controle_que_ninguem_declarava.sql`, FECHA a fatia 1.7**:
+> torna `controladora_id` NULL distinguível de um não preenchido, com guarda de coerência (check)
+> e guarda do vínculo (trigger). Teste `Supabase/test/entidade_forma_de_controle.test.sql`,
+> **22 asserts — 4 reprovam sem o check, 4 sem o trigger** (destes, 2 por CASCATA e não por
+> proteção direta; está nomeado no cabeçalho da migration).
+>
+> **As duas passaram por revisão independente em 21/09/2026, e ela achou defeito real** — entre
+> eles um BURACO: a cláusula `controle_comum ⇒ controladora_id IS NULL` podia ser apagada do check
+> com a suíte inteira continuando verde. Os 2 asserts que a discriminam foram acrescentados e
+> medidos. Ver o cabeçalho de cada migration para a lista completa e os números por protocolo.
+>
+> **Escrita ≠ aplicada**: nenhuma das duas está em produção, e nenhum caso real tem controlador
+> ou forma de controle registrados ainda. A `0184` foi RESERVADA para esta fatia e NÃO FOI USADA —
+> gap declarado, não buraco. Uma sessão paralela na F2 começa em `0185`.
 >
 > **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
 > - **F1.3**: `entidade.papel_no_grupo` tipado em enum + escrita explícita (`fn_entidade_definir_papel_no_grupo`) + guarda de pendência. Migration `0179`. **VERIFICADA**: reconstrução do banco do zero, correção desligada (reprova no ponto esperado), religada (todas as suítes passam).

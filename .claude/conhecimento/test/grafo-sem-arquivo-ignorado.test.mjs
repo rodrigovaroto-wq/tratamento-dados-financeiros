@@ -3,7 +3,7 @@
 // O DEFEITO QUE ESTE ARQUIVO EXISTE PARA PEGAR, medido em 21/09/2026 (PR #238):
 // o `indexar.mjs` pulava três diretórios POR NOME (`node_modules`, `.git`,
 // `.next`) e não consultava o `.gitignore`. Uma sessão rodou
-// `Verificação/variacoes.mts` — que grava 24 arquivos em `Verificação/saida/`,
+// `Verificação/variacoes.mts` — que grava 51 arquivos em `Verificação/saida/`,
 // gitignored — ANTES de `indexar.mjs`, que é a ordem em que o bloco de comandos
 // do `CLAUDE.md` os lista. O grafo commitado saiu com 50 nós e arestas que não
 // existem num checkout limpo, e o CI reprovou em "o grafo commitado diverge do
