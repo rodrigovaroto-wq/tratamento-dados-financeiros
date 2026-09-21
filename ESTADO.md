@@ -18,6 +18,52 @@
 > | `secao_fecha` | 422 | 166 | 39,3% | 13 |
 > | `duplicidade_de_rotulo` · `conflito_entre_documentos` | 119 · 102 | todos | 100% | 15 · 11 |
 >
+> ### ⚠️ CORREÇÃO da própria medição acima, 21/09/2026 — ela SUPERESTIMAVA o problema
+>
+> A tabela acima conta por **período**. Lendo `fn_reconciliar_chaves_do_documento` em produção
+> descobriu-se por que isso infla: o despachante roda cada checagem **em laço sobre todos os
+> períodos compatíveis** e para no primeiro que conclui (`exit when <> precondicao_nao_satisfeita`).
+> Um caso cujo 2023 não tem Fluxo de Caixa e cujo 2024 tem grava uma FALHA e um SUCESSO — e a
+> métrica por período contava a falha como "a checagem não conclui", quando a checagem conclui
+> para aquela entidade.
+>
+> **A métrica honesta é por caso × entidade: ela concluiu em ALGUM período?**
+>
+> | Checagem | caso × entidade | Concluiu em algum | Nunca concluiu | % |
+> |---|---|---|---|---|
+> | `caixa_bp_vs_fluxo` | 33 | **0** | 33 | **0,0%** |
+> | `mutuos_planilha_vs_balanco` | 12 | 1 | 11 | 8,3% |
+> | `caixa_bp_fluxo` | 163 | 14 | 149 | 8,6% |
+> | `despfin_dre_vs_divida` | 109 | 15 | 94 | 13,8% |
+> | `receita_dre_vs_faturamento` | 109 | 23 | 86 | 21,1% |
+> | `intragrupo_espelho` | 12 | 4 | 8 | 33,3% |
+> | `ativo_passivo_pl` | 196 | 112 | 84 | **57,1%** (era 29,9% por período) |
+> | `secao_fecha` | 118 | 80 | 38 | **67,8%** (era 39,3% por período) |
+> | `duplicidade_de_rotulo` · `conflito_entre_documentos` | 119 · 102 | todos | 0 | 100% |
+>
+> As duas maiores melhoram muito com a métrica certa; as outras seguem ruins, e o `caixa_bp_vs_fluxo`
+> segue em ZERO. **O problema é real, e era menor do que a primeira medição dizia.** Fica registrado
+> nos dois formatos de propósito: quem citar o número tem de dizer qual dos dois está citando.
+>
+> ### E a causa-raiz estrutural, lida no código e não suposta
+>
+> **`precondicao_nao_satisfeita` é um veredito único que confunde pelo menos quatro estados
+> diferentes**, e `fonte_a`/`fonte_b` vêm as duas NULAS em 1.922 das 1.926 linhas — então nada a
+> jusante consegue distinguir:
+> 1. o documento da contraparte **não existe no caso** (medido: ~278 pares — a checagem rodou onde
+>    não havia o que conferir; o despachante decide pelo TIPO do documento que chegou, sem saber se
+>    o outro lado existe);
+> 2. a contraparte existe e a **linha não foi localizada** — que pode ser defeito nosso de
+>    localizador (foi a `0165`/`0166`) **ou** ausência legítima (o DRE que publica resultado
+>    financeiro líquido);
+> 3. **unidade divergente** entre os dois lados;
+> 4. **período sem par**.
+>
+> Quatro coisas com remédios opostos, um só nome. **É por isso que esta fase trava:** a fila não é
+> acionável, e descobrir o motivo exige uma sessão de investigação forense como esta, toda vez.
+> Isto é a regra 1 aplicada ao diagnóstico do próprio sistema — ausência declarada sem o motivo e
+> sem o efeito.
+>
 > **O que isto NÃO prova, e a distinção é o ponto.** `precondicao_nao_satisfeita` é o comportamento
 > CERTO quando o dado realmente não está lá — é a regra 1 funcionando, não falhando. Um percentual
 > baixo pode ser honestidade. **O que está provado é que ninguém sabe qual dos dois é**, checagem
