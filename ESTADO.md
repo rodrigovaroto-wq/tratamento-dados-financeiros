@@ -1,5 +1,45 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+> ## 🚨 MEDIDO 21/09/2026: a camada de reconciliação quase não CONCLUI — e uma checagem nunca concluiu
+>
+> Nasceu de uma pergunta estreita (o DRE líquido cega a `despfin_dre_vs_divida`?). A resposta é sim,
+> e o que apareceu ao lado é maior. **Estado ATUAL, não o log:** último veredito por
+> (caso × entidade × período × tipo) em `reconciliacao`, contra produção, somente leitura.
+>
+> | Checagem | Pares | Conferiu de fato | % | Casos |
+> |---|---|---|---|---|
+> | `caixa_bp_vs_fluxo` | 55 | **0** | **0,0%** | 18 |
+> | `mutuos_planilha_vs_balanco` | 97 | 5 | 5,2% | 12 |
+> | `caixa_bp_fluxo` | 460 | 25 | 5,4% | 24 |
+> | `despfin_dre_vs_divida` | 283 | 29 | **10,2%** | 33 |
+> | `receita_dre_vs_faturamento` | 390 | 60 | 15,4% | 33 |
+> | `intragrupo_espelho` | 97 | 23 | 23,7% | 12 |
+> | `ativo_passivo_pl` | 833 | 249 | 29,9% | 42 |
+> | `secao_fecha` | 422 | 166 | 39,3% | 13 |
+> | `duplicidade_de_rotulo` · `conflito_entre_documentos` | 119 · 102 | todos | 100% | 15 · 11 |
+>
+> **O que isto NÃO prova, e a distinção é o ponto.** `precondicao_nao_satisfeita` é o comportamento
+> CERTO quando o dado realmente não está lá — é a regra 1 funcionando, não falhando. Um percentual
+> baixo pode ser honestidade. **O que está provado é que ninguém sabe qual dos dois é**, checagem
+> por checagem — e é isso que precisa de diagnóstico, não de conserto às cegas.
+>
+> **Para a `despfin_dre_vs_divida` o diagnóstico JÁ existe** (bloco abaixo): das entidades com
+> pendência, 50 têm DRE que publica `Resultado financeiro líquido` em vez da despesa bruta —
+> ausência real, legítima, com o recado errado. 254 dos 283 pares dela não concluem; a fila de
+> pendência só mostrava 52, porque a pendência é por caso×entidade e a reconciliação é por
+> caso×entidade×período. **A fila subestima o buraco em 5×.**
+>
+> **`caixa_bp_vs_fluxo` com 0 de 55 em 18 casos merece pergunta própria e NÃO foi investigada:** ou
+> é checagem que nunca funcionou, ou é nome antigo convivendo com `caixa_bp_fluxo` (que roda 460
+> pares) e virou código morto que ninguém aposentou. Estágio que nunca concluiu tem exatamente a
+> aparência de estágio que concluiu e não achou nada — a regra 7 em pessoa, e desta vez com o
+> número na mão.
+>
+> **Consequência para o roadmap:** a F2 existe para dar consumidor a tipo de documento mudo. Esta
+> medição diz que os consumidores que JÁ existem concluem entre 0% e 40%. Acrescentar exigência
+> nova a essa camada, antes de saber por que ela não conclui, é construir em cima de um andar que
+> ninguém verificou.
+
 > ## 🔎 DIAGNÓSTICO 21/09/2026: 64% da fila de pendências é UM conceito, e a pendência está certa dizendo a coisa errada
 >
 > Medido em produção (somente leitura). Das **81** pendências `linha_exigida_ausente` abertas,
