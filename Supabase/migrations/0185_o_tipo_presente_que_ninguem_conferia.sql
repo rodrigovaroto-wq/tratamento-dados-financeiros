@@ -1,4 +1,48 @@
 -- =============================================================================
+-- ⛔ NÃO APLIQUE ESTE ARQUIVO. A MEDIÇÃO DE ALCANCE CONTRA PRODUÇÃO REPROVOU
+-- ESTA MIGRATION EM 21/09/2026, E ELA ESTÁ AQUI COMO REGISTRO, NÃO COMO FILA.
+--
+-- O dono mandou medir o alcance antes de aplicar (a lição da 0179: backfill se
+-- mede em produção ANTES). Medido, somente leitura, contra o banco real — que
+-- está na 0181, ou seja, isto nunca foi aplicado em lugar nenhum:
+--
+--     190 documentos dos nove tipos, em 14 casos
+--     64 pares caso × tipo com conteúdo (o que a exigência avaliaria)
+--     17 abririam `linha_exigida_ausente`
+--     dos 17, quantos são documento que de fato não tem o dado: ZERO
+--
+-- Os 17 foram olhados um a um. TODOS têm o dado. A causa não é escolha ruim de
+-- termo — é a premissa: **em relatório ITEMIZADO o conceito não aparece no
+-- rótulo. O rótulo é o ITEM; o conceito é o próprio TIPO do documento.** No
+-- mandato real, o AGING_AP tem chaves como `41518 - WELLA BRASIL LTDA.` e o
+-- ESTOQUE tem 484 linhas como `2500 - ASSALA PRIME`. Em CONTINGENCIAS (9 dos
+-- 17) as chaves são descrições de processo e as seções são `Trabalhista` /
+-- `Cível` / `Tributário - DIFAL`: a palavra "contingência" não está em canto
+-- nenhum do documento.
+--
+-- E o lado que passa erra junto: 22 dos 47 satisfeitos passam por UMA linha
+-- residual — `Demais fornecedores (184 credores)` / `Demais clientes (312
+-- sacados)` —, que é exatamente o agregado que o aging não abre. Um aging só
+-- com o resto passa; um aging completo sem linha de resto reprova.
+--
+-- E A ARMADILHA QUE ISTO DESCOBRIU, que vale para QUALQUER portão futuro deste
+-- repositório: a `secao` NÃO É ESTÁVEL entre versões da extração. O mesmo book
+-- canastra tem `secao` nula nas ingestões antigas e preenchida nas novas. A
+-- `fixture_book_canastra.sql` tem `secao` — então o teste que a revisão exigiu
+-- (medir contra a fixture) passava nos seis tipos, e a fatia continuava falsa
+-- em produção. Terceira ocorrência de
+-- `.claude/memory/portao-mede-a-entrada-de-producao.md`.
+--
+-- O QUE FAZER EM VEZ DISTO: para tipo itemizado a pergunta certa é ESTRUTURAL
+-- (quantas linhas com valor; o eixo que o relatório precisa ter — faixas de
+-- vencimento no aging, competência no headcount), não lexical. Ou nenhuma,
+-- assumindo que `item_sem_conteudo` (0036) já cobre "chegou vazio". Decidir
+-- isso é a próxima fatia; até lá este arquivo não entra em banco nenhum.
+--
+-- Decisão do dono na mesma data: os nove tipos ficam COMPLEMENTARES, não sobem
+-- a bloqueante.
+-- =============================================================================
+--
 -- 0185 — Nove tipos do complementar chegam e ninguém confere o CONTEÚDO
 --
 -- O DEFEITO. `taxonomia_linha_exigida` (0113) nomeou o que precisa existir

@@ -18,6 +18,60 @@
 > RETROATIVAMENTE para casos já gravados; ver o comentário junto do comando de apply em
 > `Supabase/README.md`. Detalhe completo em ficha de conhecimento (F2.1).
 >
+> ## ⛔ NÃO APLIQUE A `0185` COMO ESTÁ — a medição de alcance contra PRODUÇÃO reprovou (21/09/2026)
+>
+> O dono mandou medir o alcance antes de aplicar, e a medição — somente leitura, pela API de
+> gerenciamento do Supabase, projeto `mrcabcaotblleojxnsxc` — **derrubou a fatia**. Os números,
+> simulando o predicado de `fn_exigencias_do_caso` com os localizadores da `0185` sobre o banco
+> real (a `0185` NÃO foi aplicada; a sonda de produção responde `ate_migration = 0181`):
+>
+> | | medido em produção |
+> |---|---|
+> | documentos dos nove tipos | **190**, em **14** casos |
+> | pares caso × tipo com conteúdo (o que a exigência avaliaria) | **64** |
+> | abririam `linha_exigida_ausente` | **17** |
+> | desses 17, quantos são documento que REALMENTE não tem o dado | **ZERO — os 17 são falsos** |
+> | pendências `linha_exigida_ausente` abertas hoje, antes de qualquer coisa | 81 |
+>
+> **Os 17 foram olhados um a um, e todos têm o dado.** O que eles têm em comum é a razão de a
+> fatia estar errada: **em relatório ITEMIZADO o conceito não aparece no rótulo — o rótulo é o
+> ITEM, e o conceito é o próprio tipo do documento.** No mandato real `AMO teste 00`: o AGING_AP
+> tem 12 linhas cujas chaves são `41518 - WELLA BRASIL LTDA.`, `01453 - L'OREAL BRASIL…` — nomes
+> de fornecedor, nunca a palavra "fornecedor"; o ESTOQUE tem **484 linhas** com chaves como
+> `2500 - ASSALA PRIME`. Em CONTINGENCIAS (9 dos 17) as chaves são descrições de processo
+> (`Reclamações de horas extras…`, `Nº 22 — AMARO FASHION LTDA`) e as seções são
+> `Trabalhista`/`Cível`/`Tributário - DIFAL` — a palavra "contingência" não está em lugar nenhum.
+>
+> **E o outro lado erra junto:** dos 47 pares que "passam", **22 passam por acidente** — AGING_AP
+> e AGING_AR se satisfazem em 11 casos cada por UMA única linha, `Demais fornecedores (184
+> credores)` / `Demais clientes (312 sacados)`, que é justamente o agregado que o aging não abre.
+> Um aging que traga só o resto passaria; um que traga o detalhe completo sem linha de resto
+> reprovaria. É o inverso do que a exigência promete.
+>
+> **A armadilha que isto revelou, e que vale para qualquer portão futuro deste projeto:** a
+> `secao` **não é estável entre versões da extração**. O MESMO book canastra, ingerido em momentos
+> diferentes, tem `secao` NULA nas ingestões antigas (`teste - Canastra`, `teste Canastra`,
+> `Teste comparativo`) e preenchida nas novas (`V45`, `v47`, `v4x`). A correção da revisão
+> (localizador `contra='secao'`) evitou **13 pendências falsas** — sem ela seriam 30 em vez de
+> 17 — mas ela se apoia num campo que depende da versão do extrator, não do documento. É a mesma
+> lição de `.claude/memory/portao-mede-a-entrada-de-producao.md`, terceira vez.
+>
+> **O que a fixture do repositório NÃO podia pegar:** `fixture_book_canastra.sql` tem a `secao`
+> preenchida, então o bloco 2 do teste (medido contra ela) passava nos seis tipos. Produção, no
+> mesmo book, às vezes não tem. Teste verde contra a fixture e falso em produção — de novo.
+>
+> **Próximo passo, e é redesenho, não conserto de termo:** para tipo itemizado a pergunta certa
+> não é lexical ("existe linha casando um termo") e sim estrutural — quantas linhas com valor, o
+> eixo esperado do relatório (faixas de vencimento no aging, competência no headcount), ou nada,
+> assumindo que `item_sem_conteudo` (0036) já cobre "chegou vazio". A `0185` fica no repositório,
+> NÃO aplicada, até essa decisão. Nenhum dano em produção: ela nunca foi aplicada.
+>
+> **DECISÃO DO DONO, 21/09/2026: os nove tipos ficam COMPLEMENTARES, não sobem a bloqueante.**
+> Perguntado explicitamente se aging/extrato deveriam subir para o Kit Básico, o dono respondeu
+> "não, manter como complementar". Isso fecha a pergunta que
+> `2 Especificação/f0/03_taxonomia_reestruturacao.md` deixava em aberto para a v2 — e continua
+> valendo mesmo depois do redesenho acima.
+>
 > **A DECISÃO QUE ESTAVA PENDENTE FOI TOMADA PELO DONO EM 21/09/2026: F2.** O bloco abaixo, de
 > 18/09, dizia "decisão pendente entre 1.7/F2/F3b" — não está mais. Escolhida a F2, e com uma
 > condição que o dono declarou junto e que vale para as próximas rodadas, nas palavras dele:

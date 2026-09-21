@@ -32,8 +32,12 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 
 ## Armadilhas de teste e de portão
 
-- [Localizador contra `chave` abre pendência falsa quando termo mora em `secao`](../conhecimento/fichas/f2-localizador-chave-pendencia-falsa.md) —
-  aconteceu em `0166`, volta agora em `0185`, vai voltar em F2.2/F2.3/F2.4 se não for checado contra documento real
+- [Em relatório itemizado o conceito não está no rótulo](conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md)
+  — o rótulo é o ITEM (nome do fornecedor, do banco, do processo) e o conceito é o TIPO do
+  documento; exigência lexical reprova 17 documentos que TÊM o dado e passa 22 por linha residual
+- [E `secao` não é estável entre versões da extração](../conhecimento/fichas/f2-localizador-chave-pendencia-falsa.md)
+  — o mesmo book canastra tem `secao` nula nas ingestões antigas e preenchida nas novas, e a
+  fixture do repositório tem: teste verde contra ela, falso em produção (`0166`, depois `0185`)
 - [Fixture nasce vazia com mais frequência do que parece](fixture-nasce-vazia.md) — duas da
   sessão 18 passavam com o bug LIGADO
 - [Derivado versionado precisa de `git diff --exit-code`](derivado-versionado-precisa-de-git-diff.md)
