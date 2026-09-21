@@ -73,6 +73,17 @@ Cada fatia foi verificada antes de commit pela sessão principal:
 
 Nenhuma das três fatias (0179/0180/0181) foi aplicada em produção ainda — escrita ≠ aplicada é doutrina deste projeto. Quem aplica é uma sessão seguinte, contra a sonda.
 
+## Aplicação em produção (18/09/2026)
+
+As **quatro migrations 0178–0181 foram aplicadas em produção** em decisão do dono, com sonda rodada para cada uma. **Resultado: 107 requisitos, 0 ausentes** — a cobertura da `0181` é completa. Efeito medido:
+
+- `0178` (guarda de entidade fantasma): 4 detecções em mandato AMO
+- `0179` (papel_no_grupo tipado): 7 entidades inicialmente indefinidas, abrindo pendência complementar `papel_no_grupo_indefinido`
+- `0180` (perimetro novo): tabela criada, 0 linhas (à espera de decisão do dono sobre escopo)
+- `0181` (participacao com FK): FK e percentual em lugar, nenhuma controladora ainda (esperado — grupo real sem holding)
+
+Instruções de aplicação futura (próxima migration em produção) e detalhes da necessidade de duas chamadas para `0179` (`alter type` exige DROP/CREATE) estão em `.claude/memory/aplicar-migration-em-producao-pela-api.md`.
+
 ## Estado de `F1.6` (próxima fatia)
 
 Bloqueada — aguardando que o dono forneça o COMBINADO real do cliente. O mandato AMO teste 00 não tem COMBINADO real ingerido; o que está marcado como tal é apenas um balanço de uma entidade. A fatia exige conferir o perímetro contra o COMBINADO, e sem ele é impossível.

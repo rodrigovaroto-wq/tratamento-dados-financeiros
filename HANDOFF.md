@@ -4,6 +4,26 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 98 (18/09/2026) — F1.3/F1.4/F1.5 verificadas e aplicadas em produção; F1.6 não verificável (estrutural)
+
+Continuação da 97 no mesmo dia, mesmo branch. **Leia o topo do `ESTADO.md` antes — este é o resumo técnico de como se chegou aqui.**
+
+### O que esta sessão fez, em ordem
+
+1. **F1.3, F1.4 e F1.5 verificadas independentemente** pela sessão principal — não apenas relatadas pelo agente que escreveu. Padrão estabelecido aqui como não-negociável: reconstruir o banco do zero (122→126 migrations), desligar cada correção, confirmar regressão exata no ponto esperado (11/21 + 4/17 + 4/29 asserts reprovando, respectivamente), religar, confirmar `TODOS OS TESTES PASSARAM`. Ver ficha `f1-entidade-perimetro-participacao-0179-0181.md`.
+
+2. **Colisão de duas sessões paralelas em F1.4 resolvida por merge** (não rebase, não force-push) — ambas compatíveis depois de verificação. Commit `5c6916a` é o merge. Nova memória `.claude/memory/colisao-sessoes-paralelas-mesma-branch.md` documenta como resolver de novo.
+
+3. **F1.6 investigada e medida como NÃO VERIFICÁVEL por razão estrutural**, não por bloqueio operacional: o mandato AMO grupo real não tem holding (4 de 8 entidades com estrutura societária medida; 34 de 38 documentos processados). Contratos sociais reais ingeridos mostram empresas irmãs sem sócios pessoas jurídicas — "demonstração combinada" é **probabilidade zero no cliente real**. Ver `.claude/memory/grupo-por-controle-comum-sem-holding.md`. Fatia 1.7 nasceu dessa descoberta e está documentada (decisão do dono: não implementar, porque a 0181 modela só participação entre empresas, e controle comum por pessoa física precisa de desenho diferente).
+
+4. **Quatro migrations aplicadas em produção** (18/09/2026, decisão do dono fora de F0/F1) — `0178`–`0181`, conferidas pela sonda: **107 requisitos, 0 ausentes**. Efeito medido de cada uma (`ESTADO.md` "Aplicadas no Supabase"): `0178` bloqueia entidade fantasma (4 detectadas); `0179` permite tipagem de papel no grupo (7 inicialmente indefinidas); `0180` cria perímetro vazio à espera de decisão; `0181` FK de participação pronta para F4.
+
+5. **Documentação de handoff, estado e ficha** — todas regeneradas. Nenhum arquivo de código tocado nesta passada. PR #237 mantém rascunho.
+
+### O que fica para a próxima sessão (decisão do dono)
+
+Seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`: escolher entre a fatia 1.7 (modelar controle comum por pessoa física — decisão de design), F2 (dar consumidor aos 27 tipos mudos) ou F3b (completude por linha). As três dependem só de F0, que está fechada.
+
 ## ⏸️ SESSÃO 97 (18/09/2026) — F0 fechada, F1 (entidade e perímetro) em execução autônoma até a fatia 1.3, parada a pedido do dono
 
 **Leia o aviso no topo do `ESTADO.md` primeiro — este é só o resumo de como se chegou aqui.**

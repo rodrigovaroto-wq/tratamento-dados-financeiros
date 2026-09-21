@@ -1,6 +1,6 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-> ## ✅ F1.1–F1.5 FEITAS — F1.6 BLOQUEADA, AGUARDANDO COMBINADO REAL DO CLIENTE (18/09/2026)
+> ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL), DECISÃO PENDENTE ENTRE 1.7/F2/F3b (18/09/2026)
 >
 > **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
 > - **F1.3**: `entidade.papel_no_grupo` tipado em enum + escrita explícita (`fn_entidade_definir_papel_no_grupo`) + guarda de pendência. Migration `0179`. **VERIFICADA**: reconstrução do banco do zero, correção desligada (reprova no ponto esperado), religada (todas as suítes passam).
@@ -51,9 +51,12 @@
 > entre a fatia 1.7, a F2 (dar consumidor aos 27 tipos mudos) ou a F3b (completude por linha) —
 > as três dependem só da F0, que está fechada.
 >
+> **11 commits nesta rodada** (de `14e80da` até `be9e1bf`), **nenhum arquivo de código tocado nesta
+> última passada** — só documentação de estado, ficha e handoff.
+>
 > PR [#237](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/237) segue
 > aberto, rascunho. Uma sessão nova que continuar aqui deve chamar `subscribe_pr_activity` de novo
-> (a inscrição não atravessa sessões) e reconferir o CI antes de seguir para a 1.5.
+> (a inscrição não atravessa sessões) e reconferir o CI antes de decidir entre as fatias 1.7, F2 ou F3b.
 
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
