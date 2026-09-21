@@ -48,6 +48,29 @@ ENT = {
 NOME = {k: D.ENTIDADES[k]["razao_social"] for k in D.ENTIDADES}
 NOME["grupo"] = D.GRUPO
 
+# Fatia 1.3 (`ARQUITETURA_ALVO_E_ROADMAP.md`, seção 12.2): `papel_no_grupo` virou
+# enum tipado (`entidade_papel_no_grupo`), e o valor literal que este gerador
+# escrevia até a migration 0179 — 'alvo' — não bate NENHUM dos 5 rótulos
+# (holding/operacional/veiculo/coligada/fora_do_perimetro): o `alter column ...
+# using papel_no_grupo::entidade_papel_no_grupo` quebraria ao rodar `Supabase/
+# test/run.sh`, que recria o banco e carrega este fixture. A correção usa a
+# CHAVE que o próprio dicionário `ENT` já dá a cada entidade (não é inferência
+# nova: "holding" e "spe" já eram os nomes que o autor do fixture escolheu)
+# — holding e SPE têm rótulo próprio no enum; as demais LTDA operacionais são
+# 'operacional'; "grupo" (o nome do GRUPO usado nos documentos consolidados,
+# 0160) entra como 'holding' também, por ser o papel mais próximo do que ele
+# representa nos documentos — é fixture escrita à mão para o export (0001,
+# achado da fatia 1.1), não dado inferido pelo pipeline, então a decisão cabe
+# aqui e é registrada, não calculada.
+PAPEL = {
+    "metalurgica": "operacional",
+    "componentes": "operacional",
+    "holding": "holding",
+    "logistica": "operacional",
+    "spe": "veiculo",
+    "grupo": "holding",
+}
+
 # Cada arquivo declara a granularidade de período que quer — é essa variação que
 # a reconciliação tem de tolerar (nome do arquivo "2025x2024" vira multi;
 # "Posição em 31/12/2025" vira data-base; faturamento de 24 meses vira L24M).
@@ -325,7 +348,7 @@ out = [
     f"insert into caso (id, nome, produto) values ({CASO}, 'FIXTURE Grupo Vertentes', 'reestruturacao');",
 ]
 for k, u in ENT.items():
-    out.append(f"insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('{u}', {CASO}, {q(NOME[k])}, 'alvo');")
+    out.append(f"insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('{u}', {CASO}, {q(NOME[k])}, '{PAPEL[k]}');")
 for u, tipo, ref in PER.values():
     out.append(f"insert into periodo (id, caso_id, tipo, referencia) values ('{u}', {CASO}, {q(tipo)}, {q(ref)});")
 for d in docs:

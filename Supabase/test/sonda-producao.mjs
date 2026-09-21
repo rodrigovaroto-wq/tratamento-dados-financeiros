@@ -49,7 +49,8 @@ export function interpretar({ configurado, status, saida, stderr }) {
         'produção. Isto NÃO é "produção está em dia": é ausência de medição.\n\n' +
         '  SONDA_PSQL="psql \'postgresql://usuario:SENHA@host:5432/postgres\'" \\\n' +
         '    node Supabase/test/sonda-producao.mjs\n\n' +
-        'No CI, a URL vem do segredo `SONDA_PSQL_URL` (Settings → Secrets → Actions).',
+        'No CI, a URL vem do segredo `SONDA_DB_URL` (Settings → Secrets → Actions) — o nome é o\n' +
+        'que `.github/workflows/sonda-producao.yml` lê, e o teste desta suíte confere os dois.',
     };
   }
   // 3 = o servidor RESPONDEU e a resposta é um erro (a sonda não existe lá, por exemplo).

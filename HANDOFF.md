@@ -4,6 +4,82 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 98 (18/09/2026) — F1.3/F1.4/F1.5 verificadas e aplicadas em produção; F1.6 não verificável (estrutural)
+
+Continuação da 97 no mesmo dia, mesmo branch. **Leia o topo do `ESTADO.md` antes — este é o resumo técnico de como se chegou aqui.**
+
+### O que esta sessão fez, em ordem
+
+1. **F1.3, F1.4 e F1.5 verificadas independentemente** pela sessão principal — não apenas relatadas pelo agente que escreveu. Padrão estabelecido aqui como não-negociável: reconstruir o banco do zero (122→126 migrations), desligar cada correção, confirmar regressão exata no ponto esperado (11/21 + 4/17 + 4/29 asserts reprovando, respectivamente), religar, confirmar `TODOS OS TESTES PASSARAM`. Ver ficha `f1-entidade-perimetro-participacao-0179-0181.md`.
+
+2. **Colisão de duas sessões paralelas em F1.4 resolvida por merge** (não rebase, não force-push) — ambas compatíveis depois de verificação. Commit `5c6916a` é o merge. Nova memória `.claude/memory/colisao-sessoes-paralelas-mesma-branch.md` documenta como resolver de novo.
+
+3. **F1.6 investigada e medida como NÃO VERIFICÁVEL por razão estrutural**, não por bloqueio operacional: o grupo real (mandato AMO) não tem holding — medido nos contratos sociais reais ingeridos (4 de 8 entidades com estrutura societária legível), todos os sócios são pessoas físicas, nenhuma empresa é sócia de outra. "Demonstração combinada" é a forma contábil desse arranjo, não exigida em formato padrão — o cliente provavelmente nunca preparou uma. Ver `.claude/memory/grupo-por-controle-comum-sem-holding.md`. Fatia 1.7 nasceu dessa descoberta e está documentada (decisão do dono: não implementar, porque a 0181 modela só participação entre empresas, e controle comum por pessoa física precisa de desenho diferente).
+
+4. **Quatro migrations aplicadas em produção** (18/09/2026, decisão do dono fora de F0/F1) — `0178`–`0181`, conferidas pela sonda: **107 requisitos, 0 ausentes**. Efeito MEDIDO de cada uma (`ESTADO.md` "Aplicadas no Supabase"): `0178` marcou **7 entidades** no banco inteiro (70 casos, previsto 7 antes de aplicar); `0179` abriu **365 pendências** `papel_no_grupo_indefinido` (todo o banco, não só o mandato) — **347 resolvidas em lote** como ruído de caso de teste, **18 seguem abertas** (mandato real + `AMOBELEZA*`); `0180` cria perímetro vazio à espera de decisão; `0181` deixa `controladora_id` NULL nas 365 entidades — correto, o grupo real não tem holding. Armadilha do transporte (não do arquivo): a `0179` precisou de duas chamadas, porque a API de gerenciamento envolve o lote numa transação implícita e o Postgres recusa usar rótulo de enum recém-criado na mesma transação — ver `.claude/memory/aplicar-migration-em-producao-pela-api.md`.
+
+5. **Documentação de handoff, estado e ficha** — todas regeneradas. Nenhum arquivo de código tocado nesta passada. PR #237 mantém rascunho.
+
+### O que fica para a próxima sessão (decisão do dono)
+
+Seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`: escolher entre a fatia 1.7 (modelar controle comum por pessoa física — decisão de design), F2 (dar consumidor aos 27 tipos mudos) ou F3b (completude por linha). As três dependem só de F0, que está fechada.
+
+## ⏸️ SESSÃO 97 (18/09/2026) — F0 fechada, F1 (entidade e perímetro) em execução autônoma até a fatia 1.3, parada a pedido do dono
+
+**Leia o aviso no topo do `ESTADO.md` primeiro — este é só o resumo de como se chegou aqui.**
+
+### O que esta sessão fez, em ordem
+
+1. **F0 fechada.** `SONDA_DB_URL` tinha o segredo certo cadastrado, mas a instrução de cadastro em
+   `sonda-producao.mjs` citava o nome errado (`SONDA_PSQL_URL`) — corrigido com portão que compara
+   os dois lados (o nome que o `.yml` lê vs. o que a mensagem manda cadastrar). O dono trocou o
+   VALOR do segredo no meio da sessão e quebrou o portão duas vezes (linha de comando `psql` em vez
+   de URI; depois URI de `Direct connection`, que é IPv6 e os runners do GitHub são IPv4) — as
+   assinaturas de erro das duas ficaram documentadas para quem reconfigurar de novo. Escrita e
+   provada `cobertura-do-lote.sql` (o instrumento do aceite financeiro). **Medida contra produção
+   real**: 94,9% dos documentos do lote "AMO teste 00" com linha, zero falha silenciosa, zero
+   documento não processado. O dono subiu o aceite para 98%, mediu de novo, entendeu que 98% não
+   mede o que ele queria (linhas DENTRO do documento, não documentos) e voltou a 95% com o
+   argumento registrado — **o aceite reprovou por 0,1 ponto e foi concedido**, vendo a decomposição.
+   Achado no caminho: `PLANO_LINHA_A_LINHA.md` existia desde 01/09 e o roadmap nunca o citava —
+   plano órfão, encaixado como fase nova **F3b**.
+
+2. **F1.1 (Inventário do perímetro) — feita, commitada (`f42f3cf`).** As 71 pendências
+   `entidade_incorreta` abertas em produção, cada uma com causa nomeada (34 bug de comparação, 37
+   não). Script `Supabase/test/perimetro-inventario.mjs`, testado contra fixture real congelada.
+   Achado: `papel_no_grupo` NULL em TODO caso do banco, não só no mandato real.
+
+3. **F1.2 (Guarda contra entidade fantasma) — feita, commitada (`ad431b9`), NÃO aplicada em
+   produção.** Migration `0178`: 4 das 13 entidades do mandato AMO eram títulos de planilha
+   virando pessoa jurídica. Guarda por CONJUNÇÃO de sinais, nunca "sem CNPJ" sozinho — testada
+   explicitamente contra o cenário do balcão ambíguo. **Verificação independente estabelecida
+   como padrão aqui**: a sessão principal reconstrói o banco do zero, neutraliza a correção, prova
+   que reprova, restaura, prova que passa — antes de comitar, não confiando só no relato do
+   agente que escreveu.
+
+4. **F1.3 (papel_no_grupo tipado + caminho de escrita) — feita, commitada (`14e80da`), NÃO
+   aplicada em produção.** Migration `0179`: a coluna era `text` livre e NULL em todo caso do
+   banco desde a `0001` — estágio desligado, não gap de schema. Enum novo, pendência complementar
+   `papel_no_grupo_indefinido`, e `fn_entidade_definir_papel_no_grupo` como único caminho de
+   escrita (humano, nunca inferência automática). **O padrão da verificação independente se provou
+   necessário aqui de um jeito concreto**: a primeira versão desta fatia (escrita antes da ordem de
+   parar) tinha erro de sintaxe e não rodava; a sessão comitou isso localmente como "não confiar" e,
+   ao tentar empurrar, achou no remoto uma SEGUNDA versão já corrigida (presumivelmente uma
+   continuação autônoma do mesmo agente). A sessão descartou a quebrada, adotou a boa, e só a
+   aceitou depois de reconstruir o banco do zero duas vezes (neutralizada → reprova; religada →
+   `TODOS OS TESTES PASSARAM`) — o mesmo rigor da F1.2, não o relato por si só.
+
+### O que fazer a seguir (retomando em chat novo)
+
+Seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`: fatia 1.4 (tabela `perimetro`), 1.5
+(`entidade.participacao`), 1.6 (aceite contra o COMBINADO real — depende do dono, o mandato AMO
+não tem um combinado real ingerido, achado registrado na F0). Depois, as fases paralelizáveis
+F1(resto)/F2/F3/F3b. Sempre a mesma disciplina: `ESTADO.md` → `buscar.mjs` → delegar ao agente
+certo → **verificar antes de comitar, nunca confiar sozinho no relato de um agente, mesmo quando
+ele soa detalhado e medido**. PR [#237](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/237)
+segue aberto, rascunho; CI verde confirmado até `ad431b9` — reconferir os commits da F1.3 antes de
+seguir.
+
 ## ✅ SESSÃO 96 (17–18/09) — Modelagem do mandato AMO aplicada em produção, export corrigido (PR #235), workflow republicado com nome preservado (PR #236)
 
 Continuação da 95 no mesmo dia/dias seguintes, mesma branch original + duas novas. Três frentes, nesta ordem:

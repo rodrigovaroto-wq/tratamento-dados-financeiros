@@ -66,6 +66,24 @@ CREATE TYPE public.documento_status AS ENUM (
 );
 
 --
+-- Name: entidade_papel_no_grupo; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.entidade_papel_no_grupo AS ENUM (
+    'holding',
+    'operacional',
+    'veiculo',
+    'coligada',
+    'fora_do_perimetro'
+);
+
+--
+-- Name: TYPE entidade_papel_no_grupo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TYPE public.entidade_papel_no_grupo IS '0179: papel da entidade dentro do grupo do mandato. Tipado a partir de `entidade.papel_no_grupo` (text livre desde a 0001, NULL em todo caso do banco — fatia 1.3 do plano F1). Não existe sinal automático para preenchê-lo (sem tabela participacao/hierarquia — fatia 1.5, futura): o único caminho de escrita é `fn_entidade_definir_papel_no_grupo`, chamado por um humano.';
+
+--
 -- Name: golden_estrato; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -191,7 +209,8 @@ CREATE TYPE public.pendencia_tipo AS ENUM (
     'extracao_falhou',
     'item_sem_conteudo',
     'documento_nao_extraido',
-    'linha_exigida_ausente'
+    'linha_exigida_ausente',
+    'papel_no_grupo_indefinido'
 );
 
 --
@@ -2684,6 +2703,37 @@ $$;
 COMMENT ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) IS 'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: um CNPJ já gravado na MESMA entidade (mesmo que divergente) é decisão de humano. 0174: quando o CNPJ já pertence a OUTRA entidade do mesmo caso, funde as duas (fn_fundir_entidade) em vez de tentar gravar — sem isso o UPDATE violava entidade_caso_cnpj_unico e derrubava fn_registrar_diagnostico inteira. 0177: a fusão é recusada quando EXATAMENTE um dos dois lados é um balcão ambíguo (0162/0175) — em QUALQUER direção (a guarda da 0176 só olhava uma) — porque fundir apagaria uma entidade CONFIRMADA dentro de um balcão sem nome validado, ou apagaria o BALCÃO (com sua pendência de ambiguidade bloqueante) dentro de uma confirmada; a colisão vira pendência (fn_pendencia_cnpj_colide_balcao) e nada funde. Quando os DOIS são balcão (convergência 0175) ou os DOIS são confirmados, funde normalmente. Devolve o id da entidade que sobrou: SEMPRE use o retorno, nunca o id que foi passado — depois de uma fusão ele pode apontar para uma linha deletada.';
 
 --
+-- Name: fn_entidade_cadeia_controladora(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_cadeia_controladora(p_entidade_id uuid) RETURNS TABLE(entidade_id uuid, razao_social text, nivel integer)
+    LANGUAGE sql STABLE
+    AS $$
+  with recursive cadeia(entidade_id, nivel) as (
+    select e0.controladora_id, 1
+      from entidade e0
+     where e0.id = p_entidade_id
+       and e0.controladora_id is not null
+    union all
+    select e1.controladora_id, c.nivel + 1
+      from cadeia c
+      join entidade e1 on e1.id = c.entidade_id
+     where e1.controladora_id is not null
+       and c.nivel < 50
+  )
+  select c.entidade_id, e2.razao_social, c.nivel
+    from cadeia c
+    join entidade e2 on e2.id = c.entidade_id
+   order by c.nivel;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_cadeia_controladora(p_entidade_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_cadeia_controladora(p_entidade_id uuid) IS '0181: sobe a cadeia de controle a partir de uma entidade (nível 1 = controladora direta, nível 2 = a controladora da controladora, …), parando no topo (controladora_id NULL) ou no limite de 50 níveis (mesmo limite de fn_entidade_criaria_ciclo_participacao). Consumidor mínimo — prova que a FK serve para algo além de existir (regra 7 do CLAUDE.md). O consumidor REAL (consolidação/intercompany) é F4, fora do escopo desta fatia — ver roadmap, fatia 1.5.';
+
+--
 -- Name: fn_entidade_canonica(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2729,6 +2779,142 @@ $_$;
 --
 
 COMMENT ON FUNCTION public.fn_entidade_canonica_forte(p_nome text) IS '0171: a forma canônica com a pontuação achatada ANTES do sufixo — sem isso "OMNIBEAUTY S.A." vira "omnibeauty s a" (dois tokens fantasma) e a decisão de renomear muda por causa da grafia do sufixo. Local a esta decisão: fn_entidade_canonica (0030) não é tocada.';
+
+--
+-- Name: fn_entidade_criaria_ciclo_participacao(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $$
+declare
+  v_atual  uuid := p_nova_controladora_id;
+  v_saltos int  := 0;
+begin
+  while v_atual is not null and v_saltos < 50 loop
+    if v_atual = p_entidade_id then
+      return true;
+    end if;
+    select controladora_id into v_atual from entidade where id = v_atual;
+    v_saltos := v_saltos + 1;
+  end loop;
+  return false;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid) IS '0181: sobe a cadeia de `controladora_id` a partir de `p_nova_controladora_id` e devolve true se `p_entidade_id` aparecer nela — nesse caso, torná-la controladora de `p_entidade_id` fecharia um ciclo. Limite de 50 saltos (mesmo limite do consumidor de leitura, item 4) evita loop infinito com dado sujo. Chamada por `fn_entidade_definir_participacao` ANTES de gravar — é a MEDIÇÃO NÃO-VAZIA desta migration (ver cabeçalho).';
+
+--
+-- Name: fn_entidade_definir_papel_no_grupo(uuid, public.entidade_papel_no_grupo, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_papel_anterior entidade_papel_no_grupo;
+  v_caso_id        uuid;
+begin
+  select papel_no_grupo, caso_id into v_papel_anterior, v_caso_id
+  from entidade where id = p_entidade_id;
+
+  if v_caso_id is null then
+    raise exception 'entidade % não encontrada', p_entidade_id;
+  end if;
+
+  update entidade set papel_no_grupo = p_papel where id = p_entidade_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (p_autor, 'entidade_papel_no_grupo_definido', 'entidade:' || p_entidade_id,
+          jsonb_build_object('papel_novo', p_papel, 'papel_anterior', v_papel_anterior));
+
+  update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = p_autor
+   where entidade_id = p_entidade_id
+     and tipo = 'papel_no_grupo_indefinido'
+     and motivo = 'papel_no_grupo_indefinido:' || p_entidade_id
+     and estado <> 'resolvida';
+
+  return p_entidade_id;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text) IS '0179: o ÚNICO caminho de escrita de entidade.papel_no_grupo — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo da fatia 1.3). Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''), e resolve fn_pendencia_papel_no_grupo_indefinido se estiver aberta para esta entidade. Reatribuir com papel diferente é permitido — é o estado ATUAL, o histórico mora em evento_auditoria.';
+
+--
+-- Name: fn_entidade_definir_participacao(uuid, uuid, numeric, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_caso_entidade         uuid;
+  v_caso_controladora     uuid;
+  v_controladora_anterior uuid;
+  v_percentual_anterior   numeric;
+begin
+  if p_controladora_id is null and p_percentual is not null then
+    raise exception 'percentual (%) sem controladora não significa nada — informe p_percentual '
+                     'null junto com p_controladora_id null', p_percentual;
+  end if;
+
+  select caso_id, controladora_id, percentual_participacao
+    into v_caso_entidade, v_controladora_anterior, v_percentual_anterior
+    from entidade where id = p_entidade_id;
+
+  if v_caso_entidade is null then
+    raise exception 'entidade % não encontrada', p_entidade_id;
+  end if;
+
+  if p_controladora_id is not null then
+    select caso_id into v_caso_controladora from entidade where id = p_controladora_id;
+    if v_caso_controladora is null then
+      raise exception 'controladora % não encontrada', p_controladora_id;
+    end if;
+    if v_caso_controladora <> v_caso_entidade then
+      raise exception 'controladora % não pertence ao mesmo caso que a entidade %',
+        p_controladora_id, p_entidade_id;
+    end if;
+
+    -- A MEDIÇÃO NÃO-VAZIA desta migration (ver cabeçalho): sem esta chamada, um ciclo de 2 ou
+    -- 3 níveis seria GRAVADO em vez de recusado, e um consumidor futuro que suba a cadeia
+    -- (fn_entidade_cadeia_controladora ou qualquer código que a F4 escrever) entraria em loop
+    -- até o limite de profundidade, escondendo o defeito em vez de o recusar na escrita.
+    if fn_entidade_criaria_ciclo_participacao(p_entidade_id, p_controladora_id) then
+      raise exception 'definir % como controladora de % criaria um CICLO de participação — % já '
+                       'é controlada (direta ou indiretamente) por %',
+        p_controladora_id, p_entidade_id, p_controladora_id, p_entidade_id;
+    end if;
+  end if;
+
+  update entidade
+     set controladora_id = p_controladora_id,
+         percentual_participacao = p_percentual
+   where id = p_entidade_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (p_autor, 'entidade_participacao_definida', 'entidade:' || p_entidade_id,
+          jsonb_build_object(
+            'controladora_id_novo', p_controladora_id, 'controladora_id_anterior', v_controladora_anterior,
+            'percentual_novo', p_percentual, 'percentual_anterior', v_percentual_anterior));
+
+  return p_entidade_id;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text) IS '0181: o ÚNICO caminho de escrita de `entidade.controladora_id`/`percentual_participacao` — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo desta fatia). p_controladora_id NULL remove a controladora e EXIGE p_percentual NULL. Valida que as duas entidades existem e pertencem ao mesmo caso, e recusa (raise exception) se fn_entidade_criaria_ciclo_participacao disser que fecharia um ciclo. Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''). Reatribuir é permitido — é o estado ATUAL, o histórico mora em evento_auditoria.';
 
 --
 -- Name: fn_entidade_e_balcao_ambiguo(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -2781,6 +2967,23 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_entidade_nome_mais_completo(p_atual text, p_novo text) IS '0171: entre dois nomes que o CNPJ já provou serem a MESMA empresa, qual fica. Três sinais em ordem: cara de endereço colado (nunca vence, mesmo mais longo) > sufixo societário > comprimento cru. Sem isso, "SURUBIJU, 1930" (55 chars) venceria "MARCAS LTDA" (52) só por ser mais longo — e é o nome ERRADO.';
+
+--
+-- Name: fn_entidade_nome_parece_titulo_ou_arquivo(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_nome_parece_titulo_ou_arquivo(p_nome text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select fn_entidade_canonica(p_nome) ~
+    '^(comparativo|relatorio|controle|status|meses|liquido|empresas|vencidos)\y|\d{4}x\d{4}';
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_nome_parece_titulo_ou_arquivo(p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_nome_parece_titulo_ou_arquivo(p_nome text) IS '0178: nome com cara de título de coluna/planilha/arquivo em vez de razão social. Mesma normalização de fn_entidade_canonica (2690); o léxico é referência direta de Supabase/test/perimetro-inventario.mjs (PADRAO_TITULO_OU_ARQUIVO), medido contra os 16 nomes reais da causa nome_de_arquivo_ou_titulo_virou_entidade (fatia 1.1), mais "empresas"/"vencidos" — as 2 palavras que faltavam para cobrir as 4 entidades reais medidas no AMO teste 00 (seção 12.1 do roadmap). Léxico, não estatística: combinar com CNPJ nulo é o chamador, nunca esta função sozinha — ver o cabeçalho da 0178 para a armadilha do balcão ambíguo.';
 
 --
 -- Name: fn_entidade_talvez_renomear(uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -6261,6 +6464,214 @@ $$;
 COMMENT ON FUNCTION public.fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid) IS 'Transforma a ambiguidade registrada por fn_upsert_entidade em pendência bloqueante, nomeando os candidatos (0153). Uma por entidade, não por documento.';
 
 --
+-- Name: fn_pendencia_entidade_nome_suspeito(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_pendencia_entidade_nome_suspeito(p_caso_id uuid, p_entidade_id uuid, p_nome text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_motivo text := 'entidade_nome_suspeito:' || p_entidade_id;
+  v_pend   uuid;
+begin
+  select id into v_pend from pendencia
+   where caso_id = p_caso_id and motivo = v_motivo and estado <> 'resolvida'
+   limit 1;
+  if v_pend is not null then return v_pend; end if;
+
+  insert into pendencia
+    (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, entidade_id, motivo)
+  values (
+    p_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
+    format('O nome "%s" tem cara de título de coluna/aba/arquivo, não de razão social — sem '
+           || 'CNPJ e sem nenhum outro nome do caso para casar (0178). NÃO foi fundida nem '
+           || 'apagada — fundir errado é pior que deixar separada, e apagar perderia a '
+           || 'proveniência dos documentos já ligados a ela. O EFEITO, enquanto a pendência '
+           || 'estiver aberta: os documentos desta pseudo-entidade ficam contabilizados FORA '
+           || 'do book de qualquer empresa real do mandato. Confira o documento: se o nome '
+           || 'certo está no conteúdo, funda com fn_fundir_entidade; se é mesmo um artefato '
+           || '(cabeçalho de planilha, aba de controle), resolva a pendência sem fundir.',
+           p_nome),
+    p_entidade_id, v_motivo)
+  returning id into v_pend;
+
+  return v_pend;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_pendencia_entidade_nome_suspeito(p_caso_id uuid, p_entidade_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_pendencia_entidade_nome_suspeito(p_caso_id uuid, p_entidade_id uuid, p_nome text) IS '0178: pendência entidade_incorreta para entidade cujo nome bate fn_entidade_nome_parece_titulo_ou_arquivo, sem CNPJ e recém-criada. Idempotente por entidade_id (motivo). Nunca funde, nunca apaga — só marca para revisão humana.';
+
+--
+-- Name: fn_pendencia_papel_no_grupo_indefinido(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_pendencia_papel_no_grupo_indefinido(p_caso_id uuid, p_entidade_id uuid, p_nome text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_motivo text := 'papel_no_grupo_indefinido:' || p_entidade_id;
+  v_pend   uuid;
+begin
+  select id into v_pend from pendencia
+   where caso_id = p_caso_id and motivo = v_motivo and estado <> 'resolvida'
+   limit 1;
+  if v_pend is not null then return v_pend; end if;
+
+  insert into pendencia
+    (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, entidade_id, motivo)
+  values (
+    p_caso_id, 'diagnostico', 'papel_no_grupo_indefinido', 'complementar', true,
+    format('A entidade "%s" ainda não tem papel no grupo (holding/operacional/veículo/coligada/'
+           || 'fora do perímetro) — ninguém decidiu ainda, e o sistema não infere isso sozinho '
+           || '(não há hierarquia de participação societária modelada — fatia 1.5, futura). '
+           || 'O EFEITO, hoje: nenhum, porque nenhum consumidor lê `papel_no_grupo` ainda — esta '
+           || 'entidade entra e sai do book exatamente como as demais. O efeito aparece nas fatias '
+           || 'seguintes do plano F1: o perímetro do combinado (1.4) e a participação societária '
+           || '(1.5) vão depender deste papel para decidir o que entra em cada agrupamento, e esta '
+           || 'entidade ficará de fora de qualquer agrupamento automático até alguém chamar '
+           || 'fn_entidade_definir_papel_no_grupo para ela.',
+           p_nome),
+    p_entidade_id, v_motivo)
+  returning id into v_pend;
+
+  return v_pend;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_pendencia_papel_no_grupo_indefinido(p_caso_id uuid, p_entidade_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_pendencia_papel_no_grupo_indefinido(p_caso_id uuid, p_entidade_id uuid, p_nome text) IS '0179: pendência complementar (não bloqueia nada) para entidade sem papel no grupo. Idempotente por entidade_id (motivo). Nunca decide o papel — só marca a ausência, regra 1 do CLAUDE.md.';
+
+--
+-- Name: fn_perimetro_definir_escopo(uuid, uuid, text, date, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_caso_da_entidade uuid;
+  v_novo_id          uuid;
+begin
+  if p_desde is null then
+    raise exception 'p_desde não pode ser nulo — todo intervalo de perímetro tem início';
+  end if;
+
+  select caso_id into v_caso_da_entidade from entidade where id = p_entidade_id;
+  if v_caso_da_entidade is null then
+    raise exception 'entidade % não encontrada', p_entidade_id;
+  end if;
+  if v_caso_da_entidade <> p_caso_id then
+    raise exception 'entidade % não pertence ao caso %', p_entidade_id, p_caso_id;
+  end if;
+
+  -- A MUDANÇA de perímetro no meio do mandato: o intervalo anterior GANHA UM FIM, não é
+  -- sobrescrito. Sem esta linha, uma segunda chamada para o mesmo (caso, entidade, escopo)
+  -- violaria `perimetro_atual_unico` (dois "vigente" ao mesmo tempo) em vez de fechar o
+  -- primeiro — é esta a MEDIÇÃO NÃO-VAZIA do cabeçalho desta migration.
+  update perimetro
+     set ate = p_desde - 1
+   where caso_id = p_caso_id and entidade_id = p_entidade_id and escopo = p_escopo
+     and ate is null;
+
+  insert into perimetro (caso_id, entidade_id, escopo, desde, ate)
+  values (p_caso_id, p_entidade_id, p_escopo, p_desde, null)
+  returning id into v_novo_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (p_autor, 'perimetro_escopo_definido', 'entidade:' || p_entidade_id,
+          jsonb_build_object('caso_id', p_caso_id, 'escopo', p_escopo, 'desde', p_desde));
+
+  return v_novo_id;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text) IS '0180: o ÚNICO caminho de escrita de `perimetro` — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo desta fatia). Fecha o intervalo aberto anterior do mesmo (caso, entidade, escopo) com `ate = p_desde - 1` em vez de sobrescrever — é a mudança de perímetro no meio do mandato que o roadmap cita (fatia 1.4). Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''). NÃO deriva nada de entidade.papel_no_grupo (0179) — ligar as duas fatias é decisão de F4, fora do escopo desta migration.';
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: entidade; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entidade (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid NOT NULL,
+    razao_social text NOT NULL,
+    cnpj text,
+    papel_no_grupo public.entidade_papel_no_grupo,
+    controladora_id uuid,
+    percentual_participacao numeric(6,3),
+    CONSTRAINT entidade_nao_controla_a_si_mesma CHECK (((controladora_id IS NULL) OR (controladora_id <> id))),
+    CONSTRAINT entidade_percentual_valido CHECK (((percentual_participacao IS NULL) OR ((percentual_participacao > (0)::numeric) AND (percentual_participacao <= (100)::numeric))))
+);
+
+--
+-- Name: COLUMN entidade.papel_no_grupo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entidade.papel_no_grupo IS '0179: enum entidade_papel_no_grupo (antes: text livre, NULL em todo caso — 0001 a 0178). NULL continua sendo o estado inicial de TODA entidade nova (fn_upsert_entidade nunca o passa no insert) — a ausência é honesta enquanto ninguém decidir, e fn_pendencia_papel_no_grupo_indefinido marca essa ausência sem afirmar hierarquia nenhuma. Só fn_entidade_definir_papel_no_grupo escreve aqui.';
+
+--
+-- Name: COLUMN entidade.controladora_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entidade.controladora_id IS '0181 (fatia 1.5 do plano F1): a controladora DIRETA desta entidade — no máximo UMA, aqui. NÃO é um grafo completo de participação societária: sócios minoritários múltiplos e participação cruzada NÃO cabem neste modelo simples, e isso é deliberado (ver cabeçalho da 0181) — é a cadeia de controle que a F4 (consolidação/intercompany) vai percorrer subindo por esta coluna. NULL por padrão em toda entidade nova (fn_upsert_entidade nunca o passa no insert) — não há contrato social lido pelo pipeline hoje para inferir isto automaticamente (regra 1 do CLAUDE.md). Só `fn_entidade_definir_participacao` escreve aqui, e só depois de perguntar a `fn_entidade_criaria_ciclo_participacao` se o ciclo se fecharia.';
+
+--
+-- Name: COLUMN entidade.percentual_participacao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entidade.percentual_participacao IS '0181: o percentual que `controladora_id` detém desta entidade, em (0, 100]. NULL sempre que `controladora_id` for NULL (percentual sem controladora não significa nada — `fn_entidade_definir_participacao` recusa a combinação inversa). `numeric(6,3)`: até 999,999% de headroom não faz sentido para um percentual real, mas a precisão cobre 100,000 com folga de formatação sem exigir um tipo mais estreito — ajustar depois é uma migration aditiva se algum dado real pedir mais casas.';
+
+--
+-- Name: CONSTRAINT entidade_nao_controla_a_si_mesma ON entidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT entidade_nao_controla_a_si_mesma ON public.entidade IS '0181: recusa `controladora_id = id` mesmo por INSERT/UPDATE direto, sem passar pela função — é o ciclo de UM salto (o caso trivial que `fn_entidade_criaria_ciclo_participacao` também pega, mas o `check` protege o caminho que não chama a função nenhuma).';
+
+--
+-- Name: CONSTRAINT entidade_percentual_valido ON entidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT entidade_percentual_valido ON public.entidade IS '0181: percentual de participação tem de estar em (0, 100] — zero ou negativo não é participação, e mais de 100% não existe. Protege INSERT/UPDATE direto, mesma doutrina do `perimetro_intervalo_valido` da 0180.';
+
+--
+-- Name: fn_perimetro_vigente(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date DEFAULT CURRENT_DATE) RETURNS SETOF public.entidade
+    LANGUAGE sql STABLE
+    AS $$
+  select e.*
+    from perimetro p
+    join entidade e on e.id = p.entidade_id
+   where p.caso_id = p_caso_id
+     and p.escopo = p_escopo
+     and p.desde <= p_data
+     and (p.ate is null or p.ate >= p_data)
+   order by e.razao_social;
+$$;
+
+--
+-- Name: FUNCTION fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date) IS '0180: quem está no escopo de um COMBINADO numa data (padrão: hoje). Consumidor mínimo de `perimetro` — prova que desde/ate respondem "quem estava dentro em 30/06" diferente de "quem está dentro hoje" depois de uma troca de escopo. O consumidor REAL (o combinado calculado respeitando o perímetro) é F1.6/F4, fora do escopo desta fatia — ver seção 12.3 do roadmap.';
+
+--
 -- Name: fn_periodo_canonico(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6515,10 +6926,6 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_premissa_valores_sugeridos(p_codigo text, p_ano_inicial integer, p_anos integer) IS 'Valores por ano que o Focus afirma para uma premissa macro (mediana da coleta mais recente de cada ano). Ano sem expectativa publicada fica FORA — ausência é ausência.';
-
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
 
 --
 -- Name: premissa_catalogo; Type: TABLE; Schema: public; Owner: -
@@ -11033,6 +11440,30 @@ begin
                                'cnpj', v_cnpj));
   end if;
 
+  -- 0178: NEM CNPJ NEM CANDIDATO NENHUM CASOU, e o nome tem cara de
+  -- título/coluna/aba/arquivo — a CONJUNÇÃO que separa isso do balcão
+  -- ambíguo real (que também chega sem CNPJ por este mesmo `insert`, mas com
+  -- nome vindo do CONTEÚDO do documento, não de um título). Não recusa o
+  -- `insert` (o documento não pode ficar sem entidade — perderia
+  -- proveniência) e não funde com nada — só marca para revisão humana.
+  -- MEDIDO (`Supabase/test/entidade_titulo_suspeito.test.sql`): os 4 nomes
+  -- reais do AMO teste 00 (Empresas, Vencidos, Status Extratos, Controle
+  -- Extratos Ofx) batem aqui; um nome real de empresa do mesmo mandato,
+  -- AMOBELEZA COMERCIO DIGITAL E OFFLINE LTDA (com CNPJ), não passa por este
+  -- `if` porque `v_cnpj` não é nulo — nem chega a ser avaliado contra o léxico.
+  if v_cnpj is null and fn_entidade_nome_parece_titulo_ou_arquivo(trim(p_nome)) then
+    perform fn_pendencia_entidade_nome_suspeito(p_caso_id, v_id, trim(p_nome));
+  end if;
+
+  -- 0179: TODA entidade nasce aqui com papel_no_grupo NULL por construção (a
+  -- coluna não é passada no insert acima) — marca a ausência, incondicional,
+  -- porque não existe sinal automático para decidir o papel (fatia 1.3;
+  -- roadmap, seção 12.1: sem participacao/hierarquia modelada). Vale tanto
+  -- para a entidade real quanto para a suspeita de título/arquivo logo acima
+  -- e para o balcão ambíguo (0153/0162, 0175-0177) — são sinais diferentes, e
+  -- é honesto os dois estarem abertos ao mesmo tempo.
+  perform fn_pendencia_papel_no_grupo_indefinido(p_caso_id, v_id, trim(p_nome));
+
   return v_id;
 end;
 $$;
@@ -11041,7 +11472,7 @@ $$;
 -- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj. 0176: o ramo (0) não devolve mais um balcão ambíguo (0162/0175) direto para OUTRA empresa — trata o CNPJ como ausente e registra a colisão (fn_pendencia_cnpj_colide_balcao). 0177: essa colisão só é registrada quando quem chegou NÃO é, ela própria, o mesmo balcão — um segundo documento do PRÓPRIO balcão (mesmo nome, mesmo CNPJ) não abre pendência falsa; segue pelo caminho normal.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj. 0176: o ramo (0) não devolve mais um balcão ambíguo (0162/0175) direto para OUTRA empresa — trata o CNPJ como ausente e registra a colisão (fn_pendencia_cnpj_colide_balcao). 0177: essa colisão só é registrada quando quem chegou NÃO é, ela própria, o mesmo balcão — um segundo documento do PRÓPRIO balcão (mesmo nome, mesmo CNPJ) não abre pendência falsa; segue pelo caminho normal. 0178: uma entidade NOVA (nenhum candidato casou), sem CNPJ, com nome que bate fn_entidade_nome_parece_titulo_ou_arquivo, ainda é criada (documento não perde dona) mas ganha pendência entidade_incorreta/entidade_nome_suspeito para revisão humana — nunca fundida nem apagada. 0179: toda entidade nova (real, suspeita ou balcão) ganha também a pendência papel_no_grupo_indefinido, incondicional — não há sinal automático para classificar o papel no grupo.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11949,18 +12380,6 @@ COMMENT ON COLUMN public.documento_versao.fingerprint_extracao IS 'Impressão do
 COMMENT ON COLUMN public.documento_versao.fatos_avaliados_em IS 'Quando esta versão foi lida à procura de fatos materiais (0149). NULL = ainda não foi — e nesse caso os fatos da versão anterior continuam valendo na tela. Preenchida mesmo quando a leitura não achou nada: é o que distingue "sem fatos" de "não processada".';
 
 --
--- Name: entidade; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.entidade (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    caso_id uuid NOT NULL,
-    razao_social text NOT NULL,
-    cnpj text,
-    papel_no_grupo text
-);
-
---
 -- Name: estagio_autonomia; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12630,6 +13049,39 @@ COMMENT ON COLUMN public.pergunta_catalogo.prioridade IS '1 crítica … 4 conte
 COMMENT ON COLUMN public.pergunta_catalogo.gatilho_descricao IS 'O gatilho nas palavras da ENTREGA, inclusive quando pede espécie que ainda não existe. Fato, não configuração: é daqui que as espécies futuras (reconciliação, comparação, limiar…) saem.';
 
 --
+-- Name: perimetro; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.perimetro (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid NOT NULL,
+    entidade_id uuid NOT NULL,
+    escopo text NOT NULL,
+    desde date NOT NULL,
+    ate date,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT perimetro_intervalo_valido CHECK (((ate IS NULL) OR (ate >= desde)))
+);
+
+--
+-- Name: TABLE perimetro; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.perimetro IS '0180 (fatia 1.4 do plano F1): quem entra no COMBINADO de um caso, por escopo e por intervalo de tempo. `escopo` é texto livre (o nome do combinado — não há vocabulário fechado medido ainda, mesmo raciocínio de `periodo.tipo`). `ate` NULL = ainda vigente. NÃO é derivada de `entidade.papel_no_grupo` (0179) — ligar as duas é decisão de F4 (consolidação), fora do escopo desta migration. O único caminho de escrita é `fn_perimetro_definir_escopo`.';
+
+--
+-- Name: COLUMN perimetro.escopo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.perimetro.escopo IS '0180: o nome do COMBINADO a que este período de perímetro pertence (texto livre, como `periodo.tipo`) — inventar um enum aqui seria estrutura sem medição (regra 1 do CLAUDE.md).';
+
+--
+-- Name: COLUMN perimetro.ate; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.perimetro.ate IS '0180: NULL = ainda vigente. Trocar o escopo de uma entidade (fn_perimetro_definir_escopo) FECHA este campo no intervalo anterior — nunca sobrescreve silenciosamente — porque um perímetro sem data mente sobre o exercício anterior (roadmap, fatia 1.4).';
+
+--
 -- Name: periodo; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13008,6 +13460,13 @@ ALTER TABLE ONLY public.pergunta_catalogo
     ADD CONSTRAINT pergunta_catalogo_pkey PRIMARY KEY (codigo);
 
 --
+-- Name: perimetro perimetro_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perimetro
+    ADD CONSTRAINT perimetro_pkey PRIMARY KEY (id);
+
+--
 -- Name: periodo periodo_caso_id_tipo_referencia_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13252,6 +13711,18 @@ CREATE INDEX idx_pendencia_caso ON public.pendencia USING btree (caso_id);
 CREATE INDEX idx_pendencia_estado ON public.pendencia USING btree (estado);
 
 --
+-- Name: idx_perimetro_caso; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_perimetro_caso ON public.perimetro USING btree (caso_id);
+
+--
+-- Name: idx_perimetro_entidade; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_perimetro_entidade ON public.perimetro USING btree (entidade_id);
+
+--
 -- Name: idx_periodo_caso; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13268,6 +13739,12 @@ CREATE INDEX idx_reconciliacao_caso ON public.reconciliacao USING btree (caso_id
 --
 
 CREATE UNIQUE INDEX idx_rubrica_classe_unica ON public.rubrica_classe USING btree (padrao, COALESCE(secao_canonica, ''::text), COALESCE(tipo_taxonomia, ''::text), versao);
+
+--
+-- Name: perimetro_atual_unico; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX perimetro_atual_unico ON public.perimetro USING btree (caso_id, entidade_id, escopo) WHERE (ate IS NULL);
 
 --
 -- Name: decisao trg_auto_promover_dial; Type: TRIGGER; Schema: public; Owner: -
@@ -13509,6 +13986,13 @@ ALTER TABLE ONLY public.entidade
     ADD CONSTRAINT entidade_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
 
 --
+-- Name: entidade entidade_controladora_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entidade
+    ADD CONSTRAINT entidade_controladora_id_fkey FOREIGN KEY (controladora_id) REFERENCES public.entidade(id);
+
+--
 -- Name: estagio_autonomia estagio_autonomia_medicao_rodada_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13612,6 +14096,20 @@ ALTER TABLE ONLY public.pendencia
 
 ALTER TABLE ONLY public.pergunta_catalogo
     ADD CONSTRAINT pergunta_catalogo_gatilho_tipo_taxonomia_gatilho_conceito_fkey FOREIGN KEY (gatilho_tipo_taxonomia, gatilho_conceito) REFERENCES public.taxonomia_linha_exigida(tipo_taxonomia, conceito);
+
+--
+-- Name: perimetro perimetro_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perimetro
+    ADD CONSTRAINT perimetro_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
+-- Name: perimetro perimetro_entidade_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perimetro
+    ADD CONSTRAINT perimetro_entidade_id_fkey FOREIGN KEY (entidade_id) REFERENCES public.entidade(id) ON DELETE CASCADE;
 
 --
 -- Name: periodo periodo_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -14089,6 +14587,18 @@ ALTER TABLE public.pergunta_catalogo ENABLE ROW LEVEL SECURITY;
 CREATE POLICY pergunta_catalogo_read ON public.pergunta_catalogo FOR SELECT TO authenticated USING (true);
 
 --
+-- Name: perimetro; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.perimetro ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: perimetro perimetro_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY perimetro_read ON public.perimetro FOR SELECT TO authenticated USING (true);
+
+--
 -- Name: periodo; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -14391,10 +14901,34 @@ GRANT ALL ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) TO auth
 GRANT ALL ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_entidade_cadeia_controladora(p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_cadeia_controladora(p_entidade_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_entidade_canonica_forte(p_nome text); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.fn_entidade_canonica_forte(p_nome text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
@@ -14713,6 +15247,26 @@ GRANT ALL ON FUNCTION public.fn_papel_prioridade(p_papel text) TO authenticated;
 --
 
 GRANT ALL ON FUNCTION public.fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text) TO authenticated;
+
+--
+-- Name: TABLE entidade; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.entidade TO anon;
+GRANT ALL ON TABLE public.entidade TO authenticated;
+GRANT ALL ON TABLE public.entidade TO service_role;
+
+--
+-- Name: FUNCTION fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date) TO authenticated;
 
 --
 -- Name: FUNCTION fn_periodo_por_extenso(p_tipo text, p_referencia text); Type: ACL; Schema: public; Owner: -
@@ -15070,14 +15624,6 @@ GRANT ALL ON TABLE public.documento_versao TO authenticated;
 GRANT ALL ON TABLE public.documento_versao TO service_role;
 
 --
--- Name: TABLE entidade; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.entidade TO anon;
-GRANT ALL ON TABLE public.entidade TO authenticated;
-GRANT ALL ON TABLE public.entidade TO service_role;
-
---
 -- Name: TABLE estagio_autonomia; Type: ACL; Schema: public; Owner: -
 --
 
@@ -15276,6 +15822,14 @@ GRANT ALL ON TABLE public.pendencia TO service_role;
 GRANT ALL ON TABLE public.pergunta_catalogo TO anon;
 GRANT ALL ON TABLE public.pergunta_catalogo TO authenticated;
 GRANT ALL ON TABLE public.pergunta_catalogo TO service_role;
+
+--
+-- Name: TABLE perimetro; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.perimetro TO anon;
+GRANT ALL ON TABLE public.perimetro TO authenticated;
+GRANT ALL ON TABLE public.perimetro TO service_role;
 
 --
 -- Name: TABLE periodo; Type: ACL; Schema: public; Owner: -

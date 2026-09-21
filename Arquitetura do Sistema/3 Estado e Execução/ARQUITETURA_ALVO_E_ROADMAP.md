@@ -495,6 +495,60 @@ continuidade operacional e ressalva. Expor numa tela custa pouco e não depende 
 | **Dono** | as rodadas reais — concordância se mede contra veredito de PRODUÇÃO, e só o dono dispara o formulário |
 | **Custo** | rodada paga e repetida por definição (a mesma entrada, várias vezes). Estime com `N8N/medir-custo-book.mjs` e fixe o teto de rodadas ANTES de começar |
 
+### F3b — COMPLETUDE POR LINHA: nenhuma linha faltando, nenhuma linha inventada
+
+**ESTA FASE NÃO É NOVA — ela estava ÓRFÃ.** O plano inteiro existe desde 01/09/2026 em
+`PLANO_LINHA_A_LINHA.md`, escrito a pedido do dono depois da rodada do araucária, e **este
+roadmap nunca o citou**. Um plano correto que o arquivo de "o que falta, em que ordem" não
+conhece tem exatamente a mesma aparência de um plano que não existe — é a regra 7 aplicada a
+documento em vez de a estágio. Encaixado aqui em 18/09/2026, quando o dono descreveu de novo,
+com outras palavras, o mecanismo que o plano já desenhava.
+
+| | |
+|---|---|
+| **Objetivo** | Que "todas as linhas foram extraídas" deixe de ser estatística e vire **aritmética** |
+| **Estado** | 🟡 Fase 0 do plano PARCIALMENTE FECHADA (01/09); Fases 1–5 não começaram |
+| **Dep.** | F0 · **paralelizável com F1/F2**, e é a única fase que toca o `SYSTEM_PROMPT` e o schema da linha |
+| **Risco** | Médio-alto — toca extração, fatiamento, schema, migration e guardas · **Esforço** G |
+| **Aceite financeiro** | os 3 documentos do araucária acusam buraco NOMEADO, e o número de linhas sem destino bate com 97−68, 150−102 e 20−13 |
+
+**Por que ela é a resposta ao que o aceite da 0.5 não mede.** O aceite conta documentos que
+produziram alguma linha. A pergunta do dono — *"a cada 100.000 que entram, pelo menos 99.900
+extraídas"* — é sobre LINHAS dentro de cada documento, e hoje isso é indecidível: não há
+coordenada comum entre o texto que entra e as linhas que saem, então nenhuma afirmação da forma
+"a linha 42 do documento virou esta conta" pode ser feita. **O limiar de 85%, a régua e o
+instrumento de blocos são todos substitutos trabalhando em volta dessa coordenada que falta.**
+
+As cinco fases, na ordem do plano (o detalhe, com os números medidos, está lá — não duplicar aqui):
+
+| Fase | O que entrega |
+|---|---|
+| **1** | A coordenada: texto NUMERADO ao lado do PDF (não no lugar dele), e `ln` obrigatório no schema da linha |
+| **2** | A bijeção: o modelo declara `descartadas` com motivo, e a guarda vira aritmética — buraco, duplicação e invenção de origem viram BLOQUEANTE nomeado pelo número da linha |
+| **3** | A literalidade: `vt` cobrado como o `tr` dos fatos — trecho literal da linha citada. É a primeira vez que "criar dado" fica detectável |
+| **4** | **Re-perguntar só o buraco** — "leia SÓ as linhas 23 a 51", com teto de 1 re-pergunta por documento |
+| **5** | Medir cada guarda não-vazia (regra 2) |
+
+**A Fase 4 é o fallback que o dono pediu em 18/09, e o plano a desenha melhor do que o pedido.**
+O pedido era: quando a régua conta 50 e a IA devolve 30, extrair de novo. O plano re-pergunta
+**só as linhas sem destino** — bloco pequeno, resposta pequena, custo proporcional ao defeito, em
+vez de pagar o documento inteiro de novo e poder voltar com outro buraco. **Mas ela depende das
+Fases 2 e 3**: sem a bijeção não existe "o buraco", existe só uma diferença entre dois números,
+e re-perguntar contra uma diferença é re-extrair o documento inteiro com outro nome.
+
+**E há um ganho que responde à desconfiança do dono sobre qual das duas partes está errada.** Hoje,
+quando a régua diz 50 e a IA diz "não havia número", não há como saber quem errou — foi
+exatamente o impasse dos três documentos da fatia 0.5. Com a Fase 2, **a régua deixa de ser
+juíza**: o modelo declara linha a linha o que é conta e o que é cabeçalho, e a régua vira uma
+segunda opinião sobre a MESMA linha. Onde as duas discordam é o sinal, e o sinal aponta para uma
+linha específica que um humano abre e confere em segundos — em vez de um percentual sobre o
+documento todo.
+
+**O que ela explicitamente NÃO resolve** (está no plano, e vale repetir para não vender demais):
+não garante que o modelo LEIA certo. Garante que ele declare o destino de cada linha e que o
+valor seja literal. Valor lido errado, mas literalmente copiado da linha certa, passa — e
+continua sendo trabalho das guardas de valor.
+
 ### F4 — CONTA CANÔNICA, HIERARQUIA E RESOLUÇÃO (intervenção central)
 
 | | |
@@ -606,8 +660,12 @@ Dez fases no caminho crítico. **Duas dominam o custo: F4 e F7.** Tudo mais é a
 paralelizável.
 
 ### Paralelização POSSÍVEL
-- **F1 ∥ F2 ∥ F3** — conjuntos de arquivos disjuntos (entidade / taxonomia / provedor). Onda
-  paralela legítima pelo critério de `Arquitetura do Sistema/5 Prompts/03-onda-paralela.md`.
+- **F1 ∥ F2 ∥ F3 ∥ F3b** — conjuntos de arquivos disjuntos (entidade / taxonomia / provedor /
+  contrato de extração). Onda paralela legítima pelo critério de
+  `Arquitetura do Sistema/5 Prompts/03-onda-paralela.md`. **A F3b tem a ressalva de ser a única
+  das quatro que toca o `SYSTEM_PROMPT` e o schema da linha** — se a F3 (provedor) mexer no
+  mesmo prompt na mesma onda, os conjuntos deixam de ser disjuntos e as duas param de ser
+  paralelizáveis. Conferir antes de despachar, não durante.
 - **F9 ∥ F10 ∥ F11** após o MODEL GATE.
 - **F5** ∥ final de F4.
 - **F17** distribuída, sempre.
@@ -762,7 +820,100 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 - Reprocessar os 75 documentos sem linha (73 `extracao_falhou`, 72 por billing).
 - **É o primeiro dado honesto do sistema:** a primeira rodada em que o código testado é o executado.
 - **Entregável:** ≥95% dos documentos com linha; o que falhar, falha por razão nova e documentada.
+
+> **O 98% foi levantado e DEVOLVIDO a 95% no mesmo dia (18/09/2026), e o motivo é a parte que
+> interessa.** O dono subiu para 98%, depois reverteu com o argumento certo: *"ele não serve de
+> nada se estiver faltando linhas nos documentos que conseguiu extrair"*. Está correto, e nomeia
+> o limite deste aceite — **ele conta DOCUMENTOS que produziram alguma linha, e é cego para
+> quantas linhas faltaram dentro de cada um.** Um documento de 97 linhas que devolveu 68 conta
+> aqui como sucesso, exatamente igual a um que devolveu as 97.
+>
+> Subir 95 → 98 apertaria a régua que já é a certa para o que ela mede (a fatia 0.2/0.3
+> funcionaram: zero silencioso, zero não processado) e continuaria sem medir o que o dono quer
+> garantir. **A garantia que ele descreveu — "a cada 100.000 que entram, pelo menos 99.900
+> extraídas" — não é este número, é outro, e já tem plano escrito:
+> `PLANO_LINHA_A_LINHA.md`.** Ver a seção "A completude por linha" abaixo.
+>
+> A unidade também ficou decidida: é o DOCUMENTO. "98% das linhas extraídas" exigiria gabarito
+> por documento, que num mandato real não existe — só nos dois books sintéticos. Aceite cujo
+> número ninguém consegue conferir é pior que um aceite mais frouxo.
 - *Risco: baixo. É a validação de que 0.2 e 0.3 funcionaram.*
+
+> **ACEITE DADO PELO DONO em 18/09/2026, com a medição abaixo na mesa.** Os 94,9% ficam 0,1 ponto
+> abaixo do critério, e o dono julgou que isso cai na margem de erro — decisão dele, tomada vendo
+> o número e a decomposição, não por arredondamento de ninguém. O que sustenta o julgamento não é
+> o 0,1: é que **as duas colunas que importam são ZERO** (nenhuma falha silenciosa, nenhum
+> documento não processado), e toda a diferença é declarada e nominada.
+>
+> **Os 6 documentos NÃO ficam perdoados — ficam DIFERIDOS, com endereço.** Decisão do dono na
+> mesma passada: "devem ser corrigidos sim, e toda a rodada também deve ser otimizada e corrigida
+> ao extremo, mas não agora, e sim nas outras fases específicas". Endereço de cada um:
+> os 4 artefatos de planilha e as 2 certidões com contradição régua × IA são **F3b** (completude
+> por linha, que é o que torna a contradição decidível); a classificação errada dos 3 arquivos como
+> `EXTRATO_BANCARIO` é **F2**; e o `padrao_suspeito` que gera o falso-positivo é **F4**.
+>
+> **A F0 está FECHADA.** Os quatro critérios: geral (sonda verde em produção, execução #10),
+> técnico (portões medidos, CI reprova se produção divergir), de produto (escopo + duas ADRs) e
+> financeiro (este, aceito acima).
+
+**MEDIDO EM PRODUÇÃO, 18/09/2026 — o aceite fica 0,1 ponto abaixo, e o dono o concedeu.** Primeira vez que a cobertura do lote
+foi lida do banco do cliente, com `Supabase/test/cobertura-do-lote.sql` contra o caso
+`AMO teste 00` (`1be52ab4-9692-4e17-b332-1dc05dcc8c70`):
+
+| | |
+|---|---|
+| documentos | **118** |
+| com linha | **112** |
+| sem linha, DECLARADO (`tem_dado_financeiro = false`, regra da `0111`) | **6** |
+| sem linha, SILENCIOSO (a extração voltou vazia e ninguém assumiu) | **0** |
+| extração nunca chamada | **0** |
+| `pct_com_linha` | **94,9%** |
+
+**94,9% reprova os 98% e reprovava também os 95% anteriores** — e o instrumento existe justamente
+para que esse número não seja lido sozinho. As duas outras colunas são a notícia boa e elas são
+fortes: **zero falha silenciosa e zero documento não processado.** Toda a diferença é declarada,
+o que quer dizer que a 0.2 e a 0.3 fizeram o que prometiam. Soma de linhas: **7.670**, que bate
+com os 7.670 campos do book entregue ao dono — a consulta conta a mesma coisa que o export.
+
+Os seis, nomeados (o aceite exige documento a documento):
+
+| Tipo | Arquivo | O que o sistema registrou |
+|---|---|---|
+| ORGANOGRAMA | `Organograma societário.xlsx` | sem `falha_motivo` — documento que por natureza não tem linha financeira |
+| EXTRATO_BANCARIO | `Controle_Extratos e OFX.xlsx` | sem `falha_motivo` |
+| EXTRATO_BANCARIO | `Status Extratos (2024,2025 e 2026).xlsx` | sem `falha_motivo` |
+| EXTRATO_BANCARIO | `Relação_Contas_AMO.xlsx` | **`falha_motivo` de cobertura: 0 de 30 linhas de conta vistas no texto** |
+| CONTRATO_SOCIAL | `Certidão 4ª Alteração - CORPORATE.pdf` | **`falha_motivo` de cobertura: 0 de 50** |
+| CONTRATO_SOCIAL | `Certidão 5ª Alteração - AMOBELEZA.pdf` | **`falha_motivo` de cobertura: 0 de 50** |
+
+**Três deles carregam uma CONTRADIÇÃO que esta medição expõe e não resolve.** O diagnóstico da IA
+disse `tem_dado_financeiro = false` ("não havia número para dar") e a régua de cobertura, que lê o
+texto do PDF sem IA, contou 30 e 50 linhas de conta nos mesmos arquivos. As duas afirmações não
+podem estar certas ao mesmo tempo. Ou a régua conta como conta o que não é (é a classe do **Bug A**,
+medido em 11/12 de falso-positivo nesta mesma rodada, diferido para F4), ou a extração deixou dado
+para trás e o `tem_dado_financeiro` está errado. **Não é decidível sem abrir os três arquivos**, e
+afirmar qualquer um dos lados aqui seria exatamente o que a regra 1 proíbe.
+
+**E há um achado que não é da F0, mas que a F2 vai cobrar:** `EXTRATO_BANCARIO` tem **3 documentos
+e ZERO linha** no mandato inteiro. O aceite financeiro da F2 diz, com todas as letras, que
+"mandato sem aging/extrato **não** é declarado pronto".
+
+**O dono respondeu, 18/09/2026, e a resposta corrige duas coisas.** Primeira: os três arquivos
+**não são extratos bancários** — "Status Extratos" tem relação com pagamento de dívidas, e os
+outros dois são controles. Estão CLASSIFICADOS como `EXTRATO_BANCARIO` e não são: é
+`tipo_incorreto`, que já tem 5 pendências abertas neste caso. Zero linha neles não é falha de
+extração. Segunda, e mais séria: **os extratos de verdade nunca foram enviados** — são os
+arquivos que começam com `CR` e `CP`, com centenas de milhares de linhas, e não passam pelo n8n.
+Isso liga direto ao limite medido na fatia 0.5 (o estouro de pilha em `push(...arr)` do nó de
+merge nativo, ~125.000–150.000 itens): o mandato não tem extrato porque a ingestão não aguenta
+o tamanho deles, não porque alguém esqueceu. **É requisito de F2 com dependência técnica não
+resolvida**, e não uma pendência administrativa. Registrado aqui para a F2 não começar supondo
+que basta pedir o arquivo ao cliente.
+
+**Pendências ainda abertas no caso: 79.** As três maiores: `divergencia_reconciliacao` 28,
+`extracao_padrao_suspeito` 12 (o Bug A), `extracao_falhou` 12. As 12 de `extracao_falhou` são
+ANTERIORES à republicação do fix do Bug C (18/09) e não se resolvem sozinhas: a função resolve a
+pendência quando o documento é reprocessado, e nenhum foi.
 
 **Achado, 16/09/2026 — o lote precisa ser dividido, e é limitação conhecida, não bug.** O dono
 tentou subir os 127 arquivos do lote em uma execução só (126,6 MB). A execução `#7834` do
@@ -835,3 +986,193 @@ sessão principal, capturando o `HEAD` na hora.
 
 Nenhuma tabela nova. Nenhuma refatoração. Nenhuma migration de arquitetura. Nenhuma camada nova.
 **F0 não constrói — ela faz com que medir volte a significar alguma coisa.**
+
+---
+
+## 12. SECOND PHASE EXECUTION PLAN — F1 (entidade e perímetro)
+
+**Escrito em 18/09/2026, com a F0 fechada.** O mesmo formato da seção 11, e pela mesma razão: uma
+fase sem fatias declaradas vira uma lista de desejos que ninguém sabe quando acabou.
+
+### 12.1 O estado REAL, medido — e ele não é o "55%" desta página
+
+O cabeçalho da F1 estima `🟡 55%` desde 09/09. **Medido em 18/09 contra o schema e contra o banco
+de produção**, o quadro é outro, e em dois pontos é pior do que a estimativa sugeria:
+
+| O que | Medido |
+|---|---|
+| Colunas de `entidade` | **cinco**: `id`, `caso_id`, `razao_social`, `cnpj`, `papel_no_grupo` |
+| `papel_no_grupo` | **existe desde a `0001`**, é `text` livre, e está **NULL nas 13 entidades** do mandato real |
+| `perimetro` (tabela) | **não existe** |
+| `participacao` (coluna) | **não existe** |
+| Funções `fn_*` sobre entidade | **15** já escritas (`fn_upsert_entidade`, `fn_fundir_entidade`, `fn_entidade_canonica_forte`, `fn_entidade_aprender_cnpj`, …) |
+| `entidade_ambigua` aberta em produção | **0** — a frente `0169`–`0177` fechou isso, e a "saída" que a F1 declarava já está atingida |
+| `entidade_incorreta` aberta em produção | **71** (e 29 resolvidas) |
+
+**Duas leituras mudam o plano.**
+
+Primeira: **`papel_no_grupo` não é um gap de schema, é um estágio desligado.** A coluna está lá há
+177 migrations e nunca foi escrita. Isso tem exatamente a aparência de "campo que existe, logo o
+papel está modelado" — a regra 7 na forma mais cara, porque quem lê o schema conclui o contrário
+do que o dado diz. Tipá-la em enum sem resolver QUEM a preenche entrega o mesmo vazio com tipo
+mais forte.
+
+Segunda, e é um defeito que esta medição descobriu: **4 das 13 entidades do mandato real não são
+entidades.** São `Empresas`, `Vencidos`, `Status Extratos` e `Controle Extratos Ofx` — cabeçalhos
+e abas de planilha que viraram pessoa jurídica. Todas com 1 documento, todas sem CNPJ. O
+`fn_upsert_entidade` aceita qualquer string que a extração chame de entidade, e não há guarda
+entre "nome próprio de empresa" e "título de coluna". As 8 entidades reais do grupo têm CNPJ; as
+4 artefatos não têm nenhum — **o sinal que as separa já está no dado**, e é isso que torna a
+fatia barata.
+
+Há ainda um caso que a medição levanta e NÃO decide: `OMNIBEAUTY … GESTAO DE MARCAS LTDA` (com
+CNPJ, 17 documentos) e `OMNIBEAUTY … GESTAO DE NEGOCIOS LTDA` (sem CNPJ, 1 documento). Ou são
+duas empresas do grupo, ou é um nome lido errado. Só o contrato social responde, e afirmar
+qualquer um dos lados aqui seria ausência virando dado.
+
+### 12.2 As fatias, em ordem, com o que destrava o quê
+
+```
+1.1 --> 1.2 --> 1.3 --> 1.4 --> 1.5
+              |--> 1.6 (paralela: só aceite, depende do dono)
+```
+
+#### Fatia 1.1 — Inventário do perímetro (medir antes de construir) · **FEITA em 18/09/2026**
+**Entregável:** `Supabase/test/perimetro-inventario.mjs` (irmão da `cobertura-do-lote.sql`, mas em
+JS porque a triagem exige normalização e distância de edição, que SQL puro não faz sem custar
+legibilidade) + `perimetro-inventario.test.mjs`, provado contra as 71 descrições REAIS lidas de
+produção em 18/09 (`Supabase/test/fixtures/entidade_incorreta_18-09-2026.json`, regra 4). Roda
+manual via `.github/workflows/perimetro-inventario.yml` (`workflow_dispatch`, não agendado — a
+entidade de um mandato muda quando o mandato muda, não no relógio, ao contrário do schema que a
+sonda confere todo dia).
+
+**As 71, 100% categorizadas — nenhuma "residual":**
+
+| Causa | N | É bug de comparação? |
+|---|---|---|
+| `normalizacao_acento_caixa_sufixo` (mesma empresa, acento/caixa/"Ltda." diferentes) | 20 | **sim** |
+| `nome_de_arquivo_ou_titulo_virou_entidade` ("Comparativo Araucaria X", "Canastra 2025x2024x2023") | 16 | não |
+| `apelido_ou_nome_fantasia_com_palavra_em_comum` ("Grupo Canastra" × razão social) | 12 | não |
+| `prefixo_comum_truncado` (nome cadastrado é prefixo do nome completo) | 10 | **sim** |
+| `sem_relacao_aparente_revisar_manualmente` ("Ar Log" × "AR TRANSPORTES…") | 4 | não |
+| `quase_igual_1_2_chars` ("ARAUGÁRIA" × "ARAUCÁRIA", 1 caractere) | 3 | **sim** |
+| `ambigua_ja_correta` (já é `entidade_ambigua`, funcionando como desenhado) | 2 | não |
+| `apelido_curto_sem_mapeamento` | 2 | não |
+| `mojibake` (encoding) | 1 | **sim** |
+| `fixture_sonda` (não é bug, não mexer — a `0162` depende dela) | 1 | não |
+
+**34 das 71 (48%) são bug de comparação** — a mesma empresa, escrita de duas formas, que deveria
+ter fechado sozinha. São as candidatas diretas da fatia 1.2. As outras 37 não são defeito de
+código: são gap de dado (apelido nunca mapeado, nome de arquivo virando cadastro) ou o sistema
+funcionando como desenhado — nenhuma das duas se resolve com a mesma correção.
+
+**Achado que muda o "por caso": não é só o AMO.** `papel_no_grupo` está NULL em **todo** caso do
+banco, inclusive os de teste — confirma que não é lacuna do mandato real, é ausência de caminho de
+escrita em qualquer lugar do pipeline (ver fatia 1.3). E os dois únicos lugares do repositório
+onde a coluna tem valor não-nulo são fixtures SQL **literais** dos books (`fixture_book_canastra.sql`,
+`fixture_book_vertentes.sql`) — dado escrito à mão para o export, não produzido por função nenhuma.
+
+**Achado fora do escopo da F1, registrado para a 1.2 não repetir a medição:** rodando o script
+contra o banco de TESTE local (122 migrations, fixtures da suíte), o classificador aplicado às
+23 pendências sintéticas ali (formato diferente das de produção) reprovou 5 como "residual" —
+corretamente: são descrições escritas para testes de migration específicos, não o formato do
+diagnóstico de IA. O script **avisa** quando isso acontece em vez de calar (regra 7).
+
+#### Fatia 1.2 — A entidade que não é entidade
+Guarda em `fn_upsert_entidade` para que cabeçalho de planilha não vire pessoa jurídica, e a
+decisão do que fazer com as 4 que já existem (fundir? marcar? apagar é perda de proveniência).
+**Medição não-vazia (regra 2):** com a guarda desligada, as 4 do mandato real têm de passar; com
+ela ligada, as 4 têm de ser recusadas ou marcadas — e o número vai na mensagem do commit.
+**A armadilha, dita antes:** o critério NÃO pode ser "sem CNPJ" sozinho. Entidade real sem CNPJ
+conhecido existe (é o caso do balcão, e as `0175`–`0177` inteiras nasceram disso). O sinal é a
+conjunção — sem CNPJ **e** com 1 documento **e** com nome que não tem forma de razão social.
+*Agente: `migrations-postgres`. Risco: médio — mexe na porta de entrada que já quebrou em produção.*
+**FEITA EM 18/09/2026** — migration `0178`, commit `ad431b9`. **APLICADA EM PRODUÇÃO em
+18/09/2026** (sonda: 0 ausentes). O backfill marcou **7** entidades no banco inteiro — previsto 7
+antes de aplicar, conferido 7 depois. A conjunção de sinais é o que segura o número: o critério
+frouxo ("sem CNPJ e 1 documento", sem o léxico) alcançaria 145.
+
+#### Fatia 1.3 — `papel_no_grupo` tipado E preenchido
+Enum (`holding`, `operacional`, `veiculo`, `coligada`, `fora_do_perimetro`), migration de
+tipagem, e — a parte que não pode ficar de fora — **quem escreve**. Sem um caminho de escrita, a
+fatia entrega o vazio de hoje com tipo mais forte.
+**Pronto quando:** as 8 entidades reais do mandato têm papel, ou têm pendência dizendo por que não.
+*Agente: `migrations-postgres`. Risco: médio.*
+**FEITA EM 18/09/2026** — migration `0179`, verificação independente concluída (banco reconstruído do zero, correção desligada/religada). Commit `14e80da`. **APLICADA EM PRODUÇÃO em 18/09/2026** (sonda: 0 ausentes). Abriu 365 pendências `papel_no_grupo_indefinido` — uma por entidade de TODO o banco, não só do mandato; 347 resolvidas em lote como ruído de caso de teste, 18 seguem abertas. Ver `.claude/memory/aplicar-migration-em-producao-pela-api.md`.
+
+#### Fatia 1.4 — `perimetro(caso, entidade, escopo, desde, ate)`
+A tabela nova. Escopo = o conjunto que entra no COMBINADO. `desde`/`ate` porque perímetro muda
+no meio do mandato, e um perímetro sem data mente sobre o exercício anterior.
+*Agente: `migrations-postgres`. Risco: baixo — aditivo.*
+**FEITA EM 18/09/2026** — migration `0180`, verificação independente concluída (idem 1.3). Colisão de duas sessões paralelas resolvida por merge (commits `5c6916a`, base `57a1814`). **APLICADA EM PRODUÇÃO em 18/09/2026** (sonda: 0 ausentes). `perimetro` nasce com 0 linhas: a tabela existe, ninguém declarou perímetro nenhum ainda — isso é decisão humana, não código faltando.
+
+#### Fatia 1.5 — Participação societária
+`entidade.participacao`, e a FK preparada que a F4 vai consumir. É a fatia que destrava
+consolidação e intercompany.
+*Agente: `migrations-postgres`. Risco: médio.*
+**FEITA EM 18/09/2026** — migration `0181`, verificação independente concluída (idem 1.3). 29 asserts novos, 4 medidos reprovando (sem a guarda de ciclo). Commit `a3381d8`. **APLICADA EM PRODUÇÃO em 18/09/2026** (sonda: 0 ausentes). `controladora_id` segue NULL nas 365 entidades — e no mandato real isso está CERTO (não há holding, ver fatia 1.6 e a memória do controle comum).
+
+#### Fatia 1.6 — O aceite financeiro (paralela, e depende do dono)
+O perímetro tem de reproduzir o COMBINADO do cliente, ou declarar a diferença.
+
+**CORRIGIDO em 18/09/2026 — a "notícia boa" registrada ontem estava ERRADA, e a medição de hoje
+a desfaz.** O único documento `COMBINADO` do mandato AMO é, na verdade, `GENERAL TABACO - BALANÇO
+2024.pdf`, ligado a **uma única entidade** (`General Tabaco Negócios e Logística Ltda`) — não ao
+grupo. O próprio sistema já tinha aberto a pendência certa (`tipo_incorreto`, aberta, "o
+documento identifica uma única entidade e um único CNPJ… não se trata de um documento
+combinado") ANTES desta sessão perguntar; a medição de ontem só não tinha olhado. **O mandato AMO
+não tem combinado real ingerido**, mesma conclusão da classe `EXTRATO_BANCARIO` (F2): o que
+existe rotulado como "o documento certo" às vezes não é. **1.6 depende do dono de verdade** —
+precisa do combinado do cliente para conferir o perímetro contra ele, como o cabeçalho da F1 já
+dizia antes de qualquer medição.
+
+**E EM 18/09/2026, À NOITE, A CAUSA DA AUSÊNCIA FOI MEDIDA — ela não é descuido do cliente.** O
+dono informou não conseguir o combinado; a investigação foi então para os CONTRATOS SOCIAIS já
+ingeridos, e eles explicam por quê: **não há holding neste grupo.** Nos 4 contratos legíveis,
+TODOS os sócios são pessoas físicas e nenhuma empresa é sócia de outra — GENERAL BUSINESS CENTER
+(Karina Souto Damasio Tascino ~50% + Rafael Teles ~50%), GENERAL TABACO (Igor Souto Damasio
+100%), GLOBAL STORE (Rafael Teles 100%), OMNIBEAUTY MARCAS (Igor Souto Damasio 60% + Leandro
+Morales Lima 20% + Roney Thiago Costa 20%). São **empresas irmãs sob controle comum**, e
+"demonstração COMBINADA" é exatamente a forma contábil desse arranjo — não exigida em formato
+padrão, logo **um grupo assim frequentemente nunca preparou uma**. A 1.6 presumia que o
+documento existiria em algum lugar; a medição diz que provavelmente nunca existiu.
+Ver `.claude/memory/grupo-por-controle-comum-sem-holding.md`.
+
+**O que a 1.6 vira, então:** enquanto o combinado do cliente não aparecer, o aceite financeiro
+da F1 fica **NÃO VERIFICADO, com o motivo declarado** (regra 1 — nunca "passou" por omissão).
+Não medido, não estimado, não substituído por uma soma que o próprio sistema faria (essa seria
+circular: compararia a nossa conta com ela mesma, e um erro de perímetro atravessaria os dois
+lados igual).
+
+**Lacunas nomeadas na mesma medição**, para não virarem buraco silencioso:
+`Certidão 5ª Alteração - AMOBELEZA.pdf` e `Certidão 4ª Alteração - CORPORATE.pdf` vieram com ZERO
+campos extraídos (as duas já tinham `extracao_falhou` aberta; a da AMOBELEZA também
+`tipo_incorreto` dizendo que é certidão, não contrato — o sistema detectou sozinho). Certidão de
+Junta não traz distribuição de quotas, mas o nome não prevê o resultado: `Certidão 5ª alteração -
+OMNIBEAUTY.pdf` extraiu 54 campos, por ser de inteiro teor. E OMNIBEAUTY DISTRIBUIDORA PR e RS
+**não têm contrato social nenhum** — pendências `item_faltante` abertas nesta rodada, motivo
+`contrato_social_ausente:<entidade_id>`. Resultado: estrutura societária medida em **4 de 8**
+entidades reais.
+
+#### Fatia 1.7 — Grupo econômico por controle comum (NOVA, nasceu da medição da 1.6)
+A `0181` modela participação como `entidade.controladora_id` — FK de EMPRESA para EMPRESA. No
+mandato real **nenhuma empresa controla outra**, então essa coluna fica NULL nas 8 por estar
+CERTA, e o sistema fica sem onde registrar que elas são um grupo. É a regra 7 outra vez: NULL
+por "o grupo é horizontal" é hoje indistinguível de NULL por "ninguém cadastrou".
+**O que falta:** uma forma de registrar o vínculo que existe de fato — controle comum por
+sócio/controlador — sem inventar uma holding que não existe.
+**Pronto quando:** as 8 entidades do mandato real podem ser reconhecidas como um grupo, e um
+`controladora_id` vazio passa a ser distinguível de um não preenchido.
+*Agente: `migrations-postgres`. Risco: médio — mexe no mesmo modelo que a 1.5 acabou de criar.*
+**NÃO INICIADA** — documentada em 18/09/2026, construção adiada por decisão do dono. A 1.5
+continua válida e correta para mandatos que TENHAM holding; esta fatia a complementa, não a
+substitui.
+
+### 12.3 O que a F1 NÃO faz, dito de propósito
+
+- **Não cria `conta_canonica`.** Identidade de CONTA é F4, e misturar as duas é o caminho mais
+  curto para uma migration que ninguém consegue reverter.
+- **Não resolve o caso OMNIBEAUTY MARCAS × NEGOCIOS.** Isso é leitura de contrato social, não
+  engenharia — a 1.1 o deixa nomeado na triagem, e alguém decide com o documento na mão.
+- **Não toca `campo_extraido`.** O roadmap proíbe paralelizar qualquer coisa que toque esse
+  caminho com a F4, e antecipar isso na F1 cria a dependência que a proibição existe para evitar.
