@@ -11,11 +11,14 @@
 --   documento_ausente          — a contraparte não foi entregue. NÃO abre
 --                                 pendência (é cobrança do checklist do Kit
 --                                 Básico, não achado de revisão).
---   precondicao_nao_satisfeita — o documento está lá e algo não foi
---                                 localizado. ABRE pendência (achado
---                                 acionável).
+--   precondicao_nao_satisfeita — como MOTIVO, significa "o emissor não
+--                                 especificou o motivo" (ver o CONTRATO no
+--                                 cabeçalho da 0186) — NÃO prova que o
+--                                 documento estava presente. ABRE pendência
+--                                 por default (motivo não especificado é
+--                                 achado acionável até prova em contrário).
 --
--- OS TRÊS ARRANJOS VÊM PELA COSTURA REAL — fn_upsert_caso,
+-- OS CENÁRIOS 1-3 VÊM PELA COSTURA REAL — fn_upsert_caso,
 -- fn_registrar_documento, fn_registrar_campos_extraidos e a própria
 -- fn_reconciliar_caixa_bp_fluxo (0031) — e não por INSERT direto em
 -- `reconciliacao`. O que está sob teste é o que uma checagem de verdade PASSA
@@ -28,6 +31,14 @@
 -- contraparte, e com 'precondicao_nao_satisfeita' DIRETO (sem motivo mais
 -- fino — é o caso que o CONTRATO da 0186 documenta) quando os dois documentos
 -- estão presentes mas o Caixa/Disponível não foi localizado.
+--
+-- O CENÁRIO 4 é diferente de propósito: chama fn_registrar_reconciliacao
+-- DIRETO, sem costura, porque o que ele prova é uma propriedade da PRÓPRIA
+-- função (validação do vocabulário de p_resultado — achado 1 da revisão
+-- independente), não o comportamento de uma checagem específica. Nenhuma
+-- checagem real passa um p_resultado desconhecido de propósito; é a função
+-- que tem de reprovar quando alguém (checagem futura, erro de digitação)
+-- passar.
 
 \set ON_ERROR_STOP on
 
@@ -140,8 +151,14 @@ begin
   perform teste_assert_motivo(v_resultado = 'precondicao_nao_satisfeita',
     'os dois documentos estão presentes, e resultado continua o mesmo texto de sempre',
     coalesce(v_resultado, '(null)'));
-  perform teste_assert_motivo(v_motivo is not null and v_motivo <> 'documento_ausente',
-    'e motivo_precondicao NÃO é documento_ausente — remédio oposto: revisar a extração/localizador',
+  -- CORRIGIDO após revisão independente (achado 7): este assert era frouxo —
+  -- "não é documento_ausente" passa com QUALQUER outra string, inclusive um
+  -- literal fora do vocabulário (o que o achado 1 mostrou fabricar
+  -- 'a checagem concluiu'). O CONTRATO diz o valor exato que
+  -- fn_reconciliar_caixa_bp_fluxo passa direto neste ramo (0031): afirme-o.
+  perform teste_assert_motivo(v_motivo = 'precondicao_nao_satisfeita',
+    'e motivo_precondicao é exatamente precondicao_nao_satisfeita — o valor que o CONTRATO diz '
+    '(remédio oposto ao cenário 1: revisar a extração/localizador, não cobrar checklist)',
     coalesce(v_motivo, '(null)'));
 
   select count(*) into v_n from pendencia
@@ -192,6 +209,42 @@ begin
   perform teste_assert_motivo(v_motivo is null,
     'e motivo_precondicao fica NULL — não há precondição nenhuma para nomear',
     coalesce(v_motivo, '(null)'));
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso uuid;
+  v_erro boolean := false;
+  v_msg  text;
+  v_n    int;
+begin
+  raise notice '--- 4. p_resultado FORA do vocabulário: REPROVA ALTO, não fabrica sucesso (achado 1) ---';
+  v_caso := (fn_upsert_caso('0186: vocabulario de resultado'))::uuid;
+
+  -- 'linha_nao_localizado' — uma letra fora do contrato ('...ado' em vez de
+  -- '...ada', que é 'linha_nao_localizada'). Chamada DIRETA de propósito (ver
+  -- o cabeçalho): a validação é responsabilidade da própria função, não de
+  -- quem a chama. entidade/período/documento nulos porque a exceção tem de
+  -- disparar ANTES de qualquer FK ser tocada.
+  begin
+    perform fn_registrar_reconciliacao(v_caso, null, null, 'teste_vocabulario', 'A', null,
+      null, null, 'linha_nao_localizado', null, null, null,
+      'p_resultado com uma letra fora do contrato — não pode virar sucesso fabricado');
+  exception when others then
+    v_erro := true;
+    get stacked diagnostics v_msg = message_text;
+  end;
+
+  perform teste_assert_motivo(v_erro,
+    'p_resultado fora do vocabulario levanta excecao (nao vira precondicoes_ok = true fabricado)',
+    coalesce(v_msg, '(nao levantou excecao nenhuma)'));
+
+  select count(*) into v_n from reconciliacao
+   where caso_id = v_caso and tipo = 'teste_vocabulario';
+  perform teste_assert_motivo(v_n = 0,
+    'e nao grava linha nenhuma em reconciliacao para o tipo de teste',
+    format('%s linha(s) gravada(s)', v_n));
 end $$;
 
 drop function teste_assert_motivo(boolean, text, text);

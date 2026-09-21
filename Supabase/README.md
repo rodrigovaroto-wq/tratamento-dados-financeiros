@@ -311,19 +311,43 @@ supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_
 # A 0186 acrescenta reconciliacao.motivo_precondicao e reemite
 # fn_registrar_reconciliacao para gravá-la — resultado NÃO muda de
 # vocabulário (continua 'precondicao_nao_satisfeita'), só passa a existir uma
-# coluna nova com o motivo verdadeiro. Ela também faz um BACKFILL a partir de
-# evento_auditoria para as linhas de reconciliacao já gravadas com
-# precondicoes_ok = false. Meça o alcance ANTES de aplicar (lição da 0179,
+# coluna nova com o motivo que o emissor passou antes do achatamento. Ela
+# também: (a) VALIDA o vocabulário de p_resultado e levanta exceção para
+# valor desconhecido (achado da revisão: um erro de digitação fabricava
+# precondicoes_ok = true); (b) faz um BACKFILL a partir de evento_auditoria
+# para as linhas de reconciliacao já gravadas com precondicoes_ok = false.
+#
+# CORRIGIDO após revisão independente: a consulta que este README mandava
+# rodar ANTES de aplicar usava a coluna motivo_precondicao — que só existe
+# DEPOIS que esta mesma migration roda ("column does not exist" para quem
+# tentasse medir antes, e aplicar sem medir é o que a 0179 custou caro,
 # .claude/memory/aplicar-migration-em-producao-pela-api.md — 365 pendências
-# onde se previam 13), com uma consulta somente leitura:
-#   select count(*) from reconciliacao
-#     where precondicoes_ok = false and motivo_precondicao is null;
-# No banco de TESTE (recém-migrado, sem fixture) esse número é ZERO — a
-# tabela reconciliacao está vazia no instante em que a migration roda. Em
-# PRODUÇÃO ele é desconhecido: a medição de 21/09/2026 que abriu esta fatia
-# contou 1.926 linhas com precondicoes_ok = false (ESTADO.md, topo), então o
-# backfill tem chance real de tocar milhares de linhas — decida se roda como
-# está ou em lote depois de medir.
+# onde se previam 13). Meça o alcance com as duas consultas abaixo, que RODAM
+# ANTES do apply:
+#   -- (a) o total que a migration mexe:
+#   select count(*) from reconciliacao where precondicoes_ok = false;
+#   -- (b) quantas o backfill alcançaria e quantas ficariam de fora, por tipo
+#   -- (mesma junção do UPDATE da migration, com o de-para de
+#   -- caixa_bp_vs_fluxo → caixa_bp_fluxo — ver o cabeçalho da 0186):
+#   select r.tipo, count(*) as total, count(ea.id) as alcancaria_o_backfill,
+#          count(*) filter (where ea.id is null) as ficaria_null
+#     from reconciliacao r
+#     left join evento_auditoria ea
+#       on ea.entidade_ref = 'reconciliacao:' || r.id
+#      and ea.ator = 'sistema:reconciliacao'
+#      and ea.acao = 'reconciliacao_' ||
+#          case when r.tipo = 'caixa_bp_vs_fluxo' then 'caixa_bp_fluxo' else r.tipo end
+#    where r.precondicoes_ok = false
+#    group by r.tipo order by 1;
+# No banco de TESTE (recém-migrado, sem fixture) o total é ZERO — a tabela
+# reconciliacao está vazia no instante em que a migration roda. Em PRODUÇÃO
+# é desconhecido: a medição de 21/09/2026 que abriu esta fatia contou 1.926
+# linhas com precondicoes_ok = false (ESTADO.md, topo), então o backfill tem
+# chance real de tocar milhares de linhas. NÃO há "rodar como está ou em
+# lote" para escolher em tempo de apply — o backfill é um único UPDATE
+# dentro do arquivo da migration, aplicado inteiro por
+# `supabase db execute --file`; ir em lote significaria editar o ARQUIVO
+# antes de aplicar, não uma opção que a migration ofereça.
 supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql
 
 # ---------------------------------------------------------------------------

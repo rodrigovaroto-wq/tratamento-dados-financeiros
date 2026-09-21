@@ -10250,6 +10250,14 @@ declare
     'documento_ausente', 'precondicao_nao_satisfeita',
     'linha_nao_localizada', 'unidade_divergente', 'sem_periodo_par'
   ];
+  -- CORRIGIDO após revisão independente (achado mais grave: um p_resultado
+  -- fora do vocabulário virava 'a checagem concluiu' — precondicoes_ok =
+  -- TRUE, afirmação positiva e FALSA, medido passando 'linha_nao_localizado',
+  -- uma letra fora do contrato). Todo valor que QUALQUER `fn_reconciliar_*`
+  -- hoje realmente emite (grep em todas as migrations) mais os três
+  -- reservados do CONTRATO acima — nada além disso é reconhecido.
+  v_vocabulario_resultado text[] := array['ok', 'divergente', 'divergencia', 'zona_cinzenta']
+                                       || v_motivos_precondicao;
   -- 'documento_ausente' é um resultado NOSSO, para decidir a pendência; no log
   -- ele é gravado como pré-condição não satisfeita (é o que ele é).
   v_res_log          text := case when p_resultado = any(v_motivos_precondicao)
@@ -10276,6 +10284,18 @@ declare
   v_estagio_dial     text;
   v_influencia       boolean;
 begin
+  -- 0186 (achado 1 da revisão): p_resultado FORA do vocabulário conhecido
+  -- REPROVA ALTO — não vira 'a checagem concluiu' por acidente de digitação.
+  -- `raise` em vez de `check constraint` na coluna `resultado`: a tabela tem
+  -- histórico com valores legados (ok, divergente, divergencia, zona_cinzenta,
+  -- precondicao_nao_satisfeita) e um check retroativo recusaria linha antiga
+  -- ou faria o `alter table` falhar — o raise protege só a ESCRITA daqui pra
+  -- frente, sem tocar no que já está gravado.
+  if not (p_resultado = any(v_vocabulario_resultado)) then
+    raise exception 'fn_registrar_reconciliacao: p_resultado=% fora do vocabulario conhecido (%)',
+      p_resultado, array_to_string(v_vocabulario_resultado, ', ');
+  end if;
+
   -- 0127: O DIAL DA CLASSE DECIDE SE O ACHADO CHEGA À FILA DE ALGUÉM.
   --
   -- `reconciliacao_classe_bc` declarava N0 — "roda, registra a saída, mas NÃO
@@ -13159,7 +13179,7 @@ CREATE TABLE public.reconciliacao (
 -- Name: COLUMN reconciliacao.motivo_precondicao; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.reconciliacao.motivo_precondicao IS 'O motivo VERDADEIRO quando resultado = precondicao_nao_satisfeita; NULL quando a checagem concluiu. Existe porque resultado achata estados com remédios OPOSTOS no mesmo texto (documento_ausente cobra o cliente pelo checklist; linha não localizada pede olhar o localizador ou a extração) — resultado não pode carregar essa distinção sem quebrar quem já lê essa coluna (portal, export, suítes, medidores). Ver o CONTRATO no cabeçalho da 0186 para a lista de valores reconhecidos.';
+COMMENT ON COLUMN public.reconciliacao.motivo_precondicao IS 'O motivo que o emissor passou ANTES do achatamento de resultado, quando a checagem NÃO concluiu; NULL quando concluiu (ok/divergente/divergencia/zona_cinzenta). documento_ausente é confiável — só é emitido quando a checagem detectou a contraparte de fato ausente (cobra o cliente pelo checklist do Kit Básico). precondicao_nao_satisfeita como MOTIVO significa apenas "o emissor não especificou o motivo" — NÃO AUTORIZA concluir que o documento estava presente: é o mesmo literal que o legado (0009/0022, antes da reescrita da 0023 de fn_reconciliar_ativo_passivo_pl) usava tanto para documento ausente quanto para documento presente com linha não localizada, e é esse literal que o backfill grava a partir de evento_auditoria para as linhas antigas. Ver o CONTRATO no cabeçalho da 0186 para a lista completa de valores reconhecidos.';
 
 --
 -- Name: rubrica_classe; Type: TABLE; Schema: public; Owner: -

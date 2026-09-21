@@ -14,18 +14,42 @@
 > disso mudou.
 >
 > Testada localmente: `Supabase/test/run.sh` do zero, verde, `Supabase/schema.sql` regravado sem
-> diff. Invariante novo em `Supabase/test/reconciliacao_motivo_precondicao.test.sql`, pela costura
+> diff. Invariante em `Supabase/test/reconciliacao_motivo_precondicao.test.sql`, pela costura
 > real (`fn_upsert_caso` → `fn_registrar_documento` → `fn_registrar_campos_extraidos` →
-> `fn_reconciliar_caixa_bp_fluxo`), não por INSERT direto — **9 asserts, medidos reprovando com a
-> correção desligada** (banco reconstruído sem a `0186`) antes de religar. Catálogo da sonda
-> acrescido (`reconciliacao_motivo_precondicao_existe`, `coluna`; e
-> `fn_registrar_reconciliacao_grava_motivo`, `corpo`, bloqueante) e `instalacao_cobertura` em
-> `0186`.
+> `fn_reconciliar_caixa_bp_fluxo`) para os cenários 1-3, e por chamada direta de
+> `fn_registrar_reconciliacao` só para o cenário 4, que a revisão acrescentou (validação de
+> vocabulário — propriedade da própria função, não de uma checagem) — **10 asserts**
+> (`grep -c "perform teste_assert_motivo"`). O commit original `cd98fe3` dizia **9**; o número
+> certo NAQUELE momento (antes da revisão acrescentar o cenário 4) já era **8** — o corpo daquele
+> commit errou a contagem duas vezes. Catálogo da sonda acrescido
+> (`reconciliacao_motivo_precondicao_existe`, `coluna`; e `fn_registrar_reconciliacao_grava_motivo`,
+> `corpo`, bloqueante) e `instalacao_cobertura` em `0186`.
+>
+> **Revisão independente reprovou a primeira versão desta migration** e achou, em ordem de
+> gravidade: (1) nenhum vocabulário amarrado em `p_resultado` — um literal errado (uma letra fora
+> do contrato) fabricava `precondicoes_ok = true`, o denominador da própria medição que abriu esta
+> fase; (2) o contrato descrevia `precondicao_nao_satisfeita` como MOTIVO afirmando "documento
+> presente", quando o legado (0009/0022) usava o mesmo literal também para documento REALMENTE
+> ausente; (3) o backfill pulava silenciosamente o tipo `caixa_bp_vs_fluxo` (renomeado para
+> `caixa_bp_fluxo` em 27/07/2026) sem sinal de execução; (4) a consulta de pré-medição no cabeçalho
+> e no README usava a própria coluna que a migration cria, e dava erro se rodada antes de aplicar;
+> (5) o marcador da sonda casava em comentários e continuava verde com a escrita desligada. Todos
+> corrigidos NA PRÓPRIA `0186` (ela não foi aplicada em banco nenhum — não há razão para uma
+> migration nova). Note também que **"a forma mais forte possível de reprovar"**, alegado no corpo
+> do `cd98fe3` para o teste medido com a correção desligada, era falso: remover a `0186` inteira e
+> o teste morrer em `column does not exist` prova só que o `alter table` rodou, não que a função
+> grava — é a forma MAIS FRACA. A forma forte (reprovar no COMPORTAMENTO, com a coluna presente e
+> `v_motivo_precondicao` trocado por `null` na função viva) foi a que a revisão de fato mediu.
+>
+> **Nenhuma tela ainda lê `motivo_precondicao`** — `grep` em `portal/src` não acha consumidor, e
+> para `documento_ausente` não existe pendência por desenho (nunca abriu, continua não abrindo).
+> Esta fatia DISPONIBILIZA o motivo na coluna; não torna a fila acionável sozinha — isso é a fatia
+> seguinte (consumir a coluna numa tela/export).
 >
 > **Escrita ≠ aplicada.** O alcance do backfill em PRODUÇÃO **não foi medido** (a regra desta
-> sessão foi zero chamada ao Supabase) — quem aplicar mede antes, com a consulta somente leitura
-> que o comentário de aplicação em `Supabase/README.md` cita, e só a sonda (`fn_instalacao_conferir`)
-> responde se `0186` está de fato instalada.
+> sessão foi zero chamada ao Supabase) — quem aplicar mede antes, com as duas consultas somente
+> leitura que o comentário de aplicação em `Supabase/README.md` cita, e só a sonda
+> (`fn_instalacao_conferir`) responde se `0186` está de fato instalada.
 
 > ## 🚨 MEDIDO 21/09/2026: a camada de reconciliação quase não CONCLUI — e uma checagem nunca concluiu
 >

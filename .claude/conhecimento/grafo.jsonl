@@ -97,6 +97,7 @@
 {"k":"n","id":"arquivo:Supabase/test/proveniencia.test.sql","t":"arquivo","f":"Supabase/test/proveniencia.test.sql","txt":"proveniencia.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/reconciliacao.test.sql","t":"arquivo","f":"Supabase/test/reconciliacao.test.sql","txt":"reconciliacao.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/reconciliacao_do_lote.test.sql","t":"arquivo","f":"Supabase/test/reconciliacao_do_lote.test.sql","txt":"reconciliacao_do_lote.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","t":"arquivo","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","txt":"reconciliacao_motivo_precondicao.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/reconferir.test.sql","t":"arquivo","f":"Supabase/test/reconferir.test.sql","txt":"reconferir.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/reextracao.test.sql","t":"arquivo","f":"Supabase/test/reextracao.test.sql","txt":"reextracao.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/rotulo_contraditorio.test.sql","t":"arquivo","f":"Supabase/test/rotulo_contraditorio.test.sql","txt":"rotulo_contraditorio.test.sql"}
@@ -347,7 +348,7 @@
 {"k":"n","id":"fn:fn_registrar_fatos","t":"fn","f":"Supabase/migrations/0149_o_fato_material_endurecido.sql","txt":"registrar fatos"}
 {"k":"n","id":"fn:fn_registrar_indice_macro","t":"fn","f":"Supabase/migrations/0025_indices_macro.sql","txt":"registrar indice macro"}
 {"k":"n","id":"fn:fn_registrar_pergunta_acao","t":"fn","f":"Supabase/migrations/0120_banco_de_perguntas.sql","txt":"registrar pergunta acao"}
-{"k":"n","id":"fn:fn_registrar_reconciliacao","t":"fn","f":"Supabase/migrations/0127_o_dial_obedecido.sql","txt":"registrar reconciliacao"}
+{"k":"n","id":"fn:fn_registrar_reconciliacao","t":"fn","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","txt":"registrar reconciliacao"}
 {"k":"n","id":"fn:fn_registrar_reconciliacao_b","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"registrar reconciliacao b"}
 {"k":"n","id":"fn:fn_registrar_transcricao_humana","t":"fn","f":"Supabase/migrations/0129_transcricao_humana_assistida.sql","txt":"registrar transcricao humana"}
 {"k":"n","id":"fn:fn_registrar_uso_lote","t":"fn","f":"Supabase/migrations/0156_o_lote_existe_antes_de_terminar.sql","txt":"registrar uso lote"}
@@ -512,6 +513,7 @@
 {"k":"n","id":"migration:0180","t":"migration","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","txt":"o perimetro que o combinado nao tinha"}
 {"k":"n","id":"migration:0181","t":"migration","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"o controle que a entidade nunca registrava"}
 {"k":"n","id":"migration:0185","t":"migration","f":"Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql","txt":"o tipo presente que ninguem conferia"}
+{"k":"n","id":"migration:0186","t":"migration","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","txt":"o motivo que o achatamento engolia"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -1155,6 +1157,11 @@
 {"k":"e","de":"arquivo:Supabase/test/reconciliacao_do_lote.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/reconciliacao_do_lote.test.sql","l":212}
 {"k":"e","de":"arquivo:Supabase/test/reconciliacao_do_lote.test.sql","rel":"CHAMA","pa":"fn:fn_valor_em_base","f":"Supabase/test/reconciliacao_do_lote.test.sql","l":93}
 {"k":"e","de":"arquivo:Supabase/test/reconciliacao_do_lote.test.sql","rel":"CHAMA","pa":"fn:fn_versao_com_extracao","f":"Supabase/test/reconciliacao_do_lote.test.sql","l":103}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_caixa_bp_fluxo","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":23}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":22}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":22}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":4}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":21}
 {"k":"e","de":"arquivo:Supabase/test/reconferir.test.sql","rel":"CHAMA","pa":"fn:fn_avaliar_guardas_extracao","f":"Supabase/test/reconferir.test.sql","l":91}
 {"k":"e","de":"arquivo:Supabase/test/reconferir.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_ativo_passivo_pl","f":"Supabase/test/reconferir.test.sql","l":67}
 {"k":"e","de":"arquivo:Supabase/test/reconferir.test.sql","rel":"CHAMA","pa":"fn:fn_reconferir_caso","f":"Supabase/test/reconferir.test.sql","l":17}
@@ -1682,6 +1689,7 @@
 {"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_cadeia_controladora","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":238}
 {"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_criaria_ciclo_participacao","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":121}
 {"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_definir_participacao","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":159}
+{"k":"e","de":"migration:0186","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","l":194}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

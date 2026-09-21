@@ -64,14 +64,34 @@
 --
 --   'documento_ausente'      — a contraparte não foi entregue. NÃO abre
 --                               pendência (checklist do Kit Básico cobra).
---   'precondicao_nao_satisfeita' — hoje é o único outro valor que as funções
---                               de checagem realmente emitem: documento
---                               presente, mas ela não especificou qual
---                               localizador/eixo falhou. É honesto gravar o
---                               próprio valor em `motivo_precondicao` — "a
---                               função não detalhou o motivo" é informação,
---                               não lacuna. ABRE pendência (documento
---                               presente é achado acionável).
+--   'precondicao_nao_satisfeita' — CORRIGIDO após revisão independente, que
+--                               achou este trecho descrevendo errado o que o
+--                               próprio valor significa (regra 1, invertida:
+--                               afirmar presença que não foi medida). Como
+--                               MOTIVO (o que fica em `motivo_precondicao`,
+--                               nunca em `resultado`), este valor significa
+--                               só "o emissor não especificou o motivo" — NADA
+--                               MAIS. É o que as funções de checagem de hoje
+--                               passam direto quando não detalham qual
+--                               localizador/eixo falhou; mas é TAMBÉM o que o
+--                               legado (0009/0022 de fn_reconciliar_ativo_-
+--                               passivo_pl, antes da reescrita da 0023) usava
+--                               tanto para "nenhum Balanço classificado para
+--                               esta entidade/período" (documento
+--                               REALMENTE ausente) quanto para "documento
+--                               presente, Ativo Total não localizado" — o
+--                               MESMO literal para os dois. Por isso este
+--                               valor NÃO AUTORIZA concluir que o documento
+--                               estava presente — nem hoje, e principalmente
+--                               não nas linhas que o BACKFILL grava a partir
+--                               de `evento_auditoria` antigo, onde a origem é
+--                               exatamente esse legado achatado na fonte. ABRE
+--                               pendência por default (ver `v_abre_pendencia`
+--                               abaixo) não porque o documento certamente
+--                               estava lá, mas porque motivo não especificado
+--                               é tratado como achado acionável até prova em
+--                               contrário — a mesma regra que os três
+--                               reservados abaixo herdam.
 --   'linha_nao_localizada'   — RESERVADO para a fatia seguinte: documento
 --                               presente, rótulo não bateu com nenhum
 --                               localizador. ABRE pendência (mesmo remédio de
@@ -102,14 +122,43 @@
 -- COSTURA REAL (registrar documento → extrair → reconciliar), não este
 -- backfill. **O alcance em PRODUÇÃO é desconhecido e não foi medido** — a
 -- lição da 0179 (`.claude/memory/aplicar-migration-em-producao-pela-api.md`,
--- 365 pendências onde se previam 13) é que quem aplica mede o `where` ANTES,
--- contra o banco real, com uma consulta somente leitura equivalente a:
+-- 365 pendências onde se previam 13) é que quem aplica mede ANTES, contra o
+-- banco real.
 --
---     select count(*) from reconciliacao
---      where precondicoes_ok = false and motivo_precondicao is null;
+-- CORRIGIDO após revisão independente: a consulta que este cabeçalho mandava
+-- rodar ANTES do apply usava `motivo_precondicao` — coluna que esta MESMA
+-- migration cria. Rodada antes do `alter table`, ela dá
+-- `ERROR: column "motivo_precondicao" does not exist`, e quem toma esse erro
+-- aplica sem medir (o passo que a 0179 custou caro). As duas consultas abaixo
+-- RODAM ANTES do apply, somente leitura:
 --
--- e só então decide se o backfill é seguro de rodar como está ou precisa de
--- lote.
+--   -- (a) o total que esta migration mexe:
+--   select count(*) from reconciliacao where precondicoes_ok = false;
+--
+--   -- (b) quantas o backfill alcançaria e quantas ficariam de fora, por tipo
+--   -- (mesma junção do UPDATE abaixo, inclusive o de-para de
+--   -- caixa_bp_vs_fluxo → caixa_bp_fluxo — ver o comentário na seção (3)):
+--   select r.tipo,
+--          count(*) as total,
+--          count(ea.id) as alcancaria_o_backfill,
+--          count(*) filter (where ea.id is null) as ficaria_null
+--     from reconciliacao r
+--     left join evento_auditoria ea
+--       on ea.entidade_ref = 'reconciliacao:' || r.id
+--      and ea.ator = 'sistema:reconciliacao'
+--      and ea.acao = 'reconciliacao_' ||
+--          case when r.tipo = 'caixa_bp_vs_fluxo' then 'caixa_bp_fluxo' else r.tipo end
+--    where r.precondicoes_ok = false
+--    group by r.tipo
+--    order by 1;
+--
+-- E não há "rodar como está ou em lote" para escolher em tempo de apply: o
+-- backfill é um único UPDATE dentro DESTE arquivo, aplicado inteiro por
+-- `supabase db execute --file` — não existe um modo de aplicar só uma parte.
+-- Se a consulta (b) mostrar um alcance grande demais para rodar de uma vez,
+-- a única forma de "ir em lote" é editar o ARQUIVO da migration antes de
+-- aplicar (por exemplo, acrescentando um `limit`/filtro ao UPDATE) — não uma
+-- escolha que a migration ofereça em si.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -120,17 +169,27 @@ alter table reconciliacao
   add column if not exists motivo_precondicao text;
 
 comment on column reconciliacao.motivo_precondicao is
-  'O motivo VERDADEIRO quando resultado = precondicao_nao_satisfeita; NULL quando a checagem '
-  'concluiu. Existe porque resultado achata estados com remédios OPOSTOS no mesmo texto '
-  '(documento_ausente cobra o cliente pelo checklist; linha não localizada pede olhar o '
-  'localizador ou a extração) — resultado não pode carregar essa distinção sem quebrar quem já '
-  'lê essa coluna (portal, export, suítes, medidores). Ver o CONTRATO no cabeçalho da 0186 para '
-  'a lista de valores reconhecidos.';
+  'O motivo que o emissor passou ANTES do achatamento de resultado, quando a checagem NÃO '
+  'concluiu; NULL quando concluiu (ok/divergente/divergencia/zona_cinzenta). documento_ausente '
+  'é confiável — só é emitido quando a checagem detectou a contraparte de fato ausente (cobra '
+  'o cliente pelo checklist do Kit Básico). precondicao_nao_satisfeita como MOTIVO significa '
+  'apenas "o emissor não especificou o motivo" — NÃO AUTORIZA concluir que o documento estava '
+  'presente: é o mesmo literal que o legado (0009/0022, antes da reescrita da 0023 de '
+  'fn_reconciliar_ativo_passivo_pl) usava tanto para documento ausente quanto para documento '
+  'presente com linha não localizada, e é esse literal que o backfill grava a partir de '
+  'evento_auditoria para as linhas antigas. Ver o CONTRATO no cabeçalho da 0186 para a lista '
+  'completa de valores reconhecidos.';
 
 -- -----------------------------------------------------------------------------
--- (2) fn_registrar_reconciliacao — REEMITIDA INTEIRA (corpo da 0127), com a
--- única mudança de comportamento sendo a gravação de motivo_precondicao. Ver
--- o marcador `motivo_precondicao` no ponto exato da mudança.
+-- (2) fn_registrar_reconciliacao — REEMITIDA INTEIRA (corpo da 0127), com
+-- duas mudanças de comportamento: a gravação de motivo_precondicao, e a
+-- validação de vocabulário do achado 1 (ver comentário logo após `begin`).
+-- O marcador que a sonda usa (catálogo, seção 4) é `, v_motivo_precondicao,`
+-- — a lista de VALUES do INSERT, não a lista de colunas nem os comentários,
+-- porque é o único ponto cujo texto muda de verdade se alguém trocar a
+-- gravação por `null` (CORRIGIDO após revisão: o marcador antigo, a palavra
+-- `motivo_precondicao` solta, casa em comentários e na lista de colunas do
+-- INSERT também — ficava verde mesmo com a escrita desligada).
 -- -----------------------------------------------------------------------------
 create or replace function fn_registrar_reconciliacao(
   p_caso_id       uuid,
@@ -164,6 +223,14 @@ declare
     'documento_ausente', 'precondicao_nao_satisfeita',
     'linha_nao_localizada', 'unidade_divergente', 'sem_periodo_par'
   ];
+  -- CORRIGIDO após revisão independente (achado mais grave: um p_resultado
+  -- fora do vocabulário virava 'a checagem concluiu' — precondicoes_ok =
+  -- TRUE, afirmação positiva e FALSA, medido passando 'linha_nao_localizado',
+  -- uma letra fora do contrato). Todo valor que QUALQUER `fn_reconciliar_*`
+  -- hoje realmente emite (grep em todas as migrations) mais os três
+  -- reservados do CONTRATO acima — nada além disso é reconhecido.
+  v_vocabulario_resultado text[] := array['ok', 'divergente', 'divergencia', 'zona_cinzenta']
+                                       || v_motivos_precondicao;
   -- 'documento_ausente' é um resultado NOSSO, para decidir a pendência; no log
   -- ele é gravado como pré-condição não satisfeita (é o que ele é).
   v_res_log          text := case when p_resultado = any(v_motivos_precondicao)
@@ -190,6 +257,18 @@ declare
   v_estagio_dial     text;
   v_influencia       boolean;
 begin
+  -- 0186 (achado 1 da revisão): p_resultado FORA do vocabulário conhecido
+  -- REPROVA ALTO — não vira 'a checagem concluiu' por acidente de digitação.
+  -- `raise` em vez de `check constraint` na coluna `resultado`: a tabela tem
+  -- histórico com valores legados (ok, divergente, divergencia, zona_cinzenta,
+  -- precondicao_nao_satisfeita) e um check retroativo recusaria linha antiga
+  -- ou faria o `alter table` falhar — o raise protege só a ESCRITA daqui pra
+  -- frente, sem tocar no que já está gravado.
+  if not (p_resultado = any(v_vocabulario_resultado)) then
+    raise exception 'fn_registrar_reconciliacao: p_resultado=% fora do vocabulario conhecido (%)',
+      p_resultado, array_to_string(v_vocabulario_resultado, ', ');
+  end if;
+
   -- 0127: O DIAL DA CLASSE DECIDE SE O ACHADO CHEGA À FILA DE ALGUÉM.
   --
   -- `reconciliacao_classe_bc` declarava N0 — "roda, registra a saída, mas NÃO
@@ -296,23 +375,59 @@ $$;
 -- com precondição falha. Ver a medição de alcance no cabeçalho: NESTE banco
 -- (recém-migrado, sem fixture) o `where` não bate linha nenhuma — é o
 -- resultado esperado, não um bug do UPDATE. Quem aplica em produção mede o
--- `where` antes, contra o banco real (consulta no cabeçalho).
+-- alcance ANTES, contra o banco real (as duas consultas no cabeçalho).
+--
+-- CORRIGIDO após revisão independente, duas coisas:
+--
+--   (a) tipo RENOMEADO sem de-para: linhas gravadas entre a 0009 e a 0023
+--       têm `reconciliacao.tipo = 'caixa_bp_vs_fluxo'`, mas o evento saiu com
+--       `acao = 'reconciliacao_caixa_bp_fluxo'` (sem o `_vs`) — a junção
+--       original (`'reconciliacao_' || r.tipo`) nunca casava essas linhas, e
+--       ficavam NULL sem erro nem aviso. MEDIDO em produção (não suposto):
+--       `caixa_bp_vs_fluxo` gravou de 22/07 a 27/07/2026 e nunca mais,
+--       nenhuma função em produção hoje menciona esse tipo, e
+--       `caixa_bp_fluxo` começou a gravar em 27/07 — é renomeação do mesmo
+--       tipo, não uma checagem distinta. O `case` abaixo mapeia o nome antigo
+--       para o atual só para montar o `acao` da junção.
+--
+--   (b) sinal POSITIVO de execução: sem isto, "0 linhas preenchidas porque a
+--       tabela estava vazia" e "0 linhas preenchidas porque os nomes não
+--       batem" eram indistinguíveis — exatamente
+--       `.claude/memory/estagio-desligado-parece-limpo.md`. O bloco abaixo
+--       conta as duas coisas e avisa com `raise notice`.
 -- -----------------------------------------------------------------------------
-with alvo as (
-  select r.id, ea.depois->>'resultado' as motivo_original
-  from reconciliacao r
-  join evento_auditoria ea
-    on ea.entidade_ref = 'reconciliacao:' || r.id
-   and ea.ator = 'sistema:reconciliacao'
-   and ea.acao = 'reconciliacao_' || r.tipo
-  where r.precondicoes_ok = false
-    and r.motivo_precondicao is null
-)
-update reconciliacao r
-   set motivo_precondicao = a.motivo_original
-  from alvo a
- where r.id = a.id
-   and a.motivo_original is not null;
+do $$
+declare
+  v_preenchidas  int;
+  v_ficaram_null int;
+begin
+  with alvo as (
+    select r.id, ea.depois->>'resultado' as motivo_original
+    from reconciliacao r
+    join evento_auditoria ea
+      on ea.entidade_ref = 'reconciliacao:' || r.id
+     and ea.ator = 'sistema:reconciliacao'
+     and ea.acao = 'reconciliacao_' ||
+         case when r.tipo = 'caixa_bp_vs_fluxo' then 'caixa_bp_fluxo' else r.tipo end
+    where r.precondicoes_ok = false
+      and r.motivo_precondicao is null
+  )
+  update reconciliacao r
+     set motivo_precondicao = a.motivo_original
+    from alvo a
+   where r.id = a.id
+     and a.motivo_original is not null;
+
+  get diagnostics v_preenchidas = row_count;
+
+  select count(*) into v_ficaram_null
+    from reconciliacao
+   where precondicoes_ok = false and motivo_precondicao is null;
+
+  raise notice '0186 backfill motivo_precondicao: % linha(s) preenchida(s), % linha(s) com '
+    'precondicoes_ok=false continuam com motivo_precondicao NULL (evento_auditoria sem match '
+    'ou depois->>''resultado'' nulo)', v_preenchidas, v_ficaram_null;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- (4) O CATÁLOGO DA SONDA
@@ -330,10 +445,16 @@ insert into instalacao_requisito
    'importante', 780),
 
   ('fn_registrar_reconciliacao_grava_motivo', '0186', 'corpo', 'fn_registrar_reconciliacao',
-   'motivo_precondicao', null,
+   ', v_motivo_precondicao,', null,
    'A coluna existe mas fn_registrar_reconciliacao é a homônima de ANTES da 0186: continua '
    'achatando o motivo original sem gravá-lo em canto nenhum acessível à fila — a distinção some '
-   'de novo, silenciosamente, mesmo com a coluna presente no schema.',
+   'de novo, silenciosamente, mesmo com a coluna presente no schema. Marcador CORRIGIDO após '
+   'revisão independente: a palavra solta "motivo_precondicao" casa em pg_get_functiondef até '
+   'com a escrita desligada (ela aparece 5x no corpo — 2 em comentários, 1 no nome da variável, '
+   '1 na lista de colunas do INSERT — sem contar a VALUES) — '
+   'medido trocando v_motivo_precondicao por null na VALUES e a sonda continuava "corpo com o '
+   'marcador". ", v_motivo_precondicao," só existe no ponto exato da gravação (a lista de '
+   'VALUES do INSERT); some se a variável deixar de ser o valor escrito.',
    'bloqueante', 781)
 
 on conflict (chave) do update
@@ -344,9 +465,12 @@ on conflict (chave) do update
 update instalacao_cobertura
    set ate_migration = '0186', revisado_em = current_date,
        observacao = 'A 0186 acrescenta reconciliacao.motivo_precondicao e reemite '
-                    'fn_registrar_reconciliacao para gravá-la (corpo da 0127 + uma mudança de '
-                    'comportamento). resultado NÃO muda de vocabulário — só motivo_precondicao '
-                    'passa a existir. O requisito de corpo usa o marcador motivo_precondicao, '
-                    'que aparece na lista de colunas do INSERT; um banco com a coluna mas com a '
-                    'função de antes da 0186 falha esse requisito e não o de coluna, que é a '
-                    'distinção que importa para quem lê o painel.';
+                    'fn_registrar_reconciliacao para gravá-la (corpo da 0127 + a gravação de '
+                    'motivo_precondicao + a validação de vocabulário do p_resultado, que '
+                    'levanta exceção — não check constraint — para valor desconhecido). '
+                    'resultado NÃO muda de vocabulário — só motivo_precondicao passa a existir. '
+                    'O requisito de corpo usa o marcador ", v_motivo_precondicao," (a lista de '
+                    'VALUES do INSERT, não a palavra solta — que casava até em comentário, com '
+                    'a escrita desligada); um banco com a coluna mas com a função de antes da '
+                    '0186 falha esse requisito e não o de coluna, que é a distinção que importa '
+                    'para quem lê o painel.';
