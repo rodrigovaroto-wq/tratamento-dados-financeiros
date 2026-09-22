@@ -55,6 +55,8 @@ cd "Dados de Teste"/book-vertentes && python3 -m pip install --quiet 'reportlab=
 # O CANASTRA TAMBÉM, e ele faltava aqui: `medir-regua-cobertura.mjs` morre em
 # "Falta .../book-canastra/pdf/METRICAS.json" sem este passo. O CI gera os DOIS.
 cd "Dados de Teste"/book-canastra && PYTHONPATH=. python3 gerar.py && cd ../..
+# O terceiro book (F2.4, distress): o gerador É o teste — 16 identidades por `assert`.
+cd "Dados de Teste"/book-distress && PYTHONPATH=. python3 gerar.py && cd ../..
 sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/main \
   -o "-c config_file=/etc/postgresql/16/main/postgresql.conf -k /tmp -p 5432" -l /tmp/pg.log start
 # O `run.sh` roda COMO postgres e REESCREVE `Supabase/schema.sql`. Num container em que
