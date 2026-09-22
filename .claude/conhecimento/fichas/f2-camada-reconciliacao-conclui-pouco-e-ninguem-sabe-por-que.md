@@ -1,4 +1,4 @@
-# F2 diagnóstico: camada de reconciliação conclui entre 0% e 40% — não verificada antes de acrescentar exigência
+# F2 diagnóstico: a camada de reconciliação conclui entre 8,3% e 67,8% — e ninguém sabe por quê
 
 **Sessão:** 99 (22/09/2026)  
 **Medição:** 21/09/2026 contra produção (banco em `0181`)  
@@ -21,7 +21,7 @@
 | `secao_fecha` | 118 | 80 | 38 | **67,8%** |
 | `duplicidade_de_rotulo` · `conflito_entre_documentos` | 221 | todos | 0 | **100%** |
 
-**Implicação:** a F2 acrescenta exigência NOVA a uma camada que conclui entre 0% e 40%. Sem diagnóstico do por quê, é construir em andar não verificado.
+**Implicação:** a F2 acrescenta exigência NOVA a uma camada cujos consumidores concluem entre 8,3% e 67,8% por caso × entidade. Sem diagnóstico do por quê, é construir em andar não verificado.
 
 ## A causa-raiz que bloqueia diagnóstico
 

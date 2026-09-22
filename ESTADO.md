@@ -56,7 +56,13 @@ E o outro lado erra junto: 22 dos 47 que "passam" se satisfazem por UMA linha re
 
 **Diagnóstico medido:** `precondicao_nao_satisfeita` confunde 4 estados — contraparte não existe (278 pares), linha não localizada (ours ou theirs), unidade divergente, período sem par. Em 1.922/1.926 linhas, `fonte_a`/`fonte_b` estão NULAS — nada a jusante consegue distinguir. **Fila não é acionável.** Para `despfin` em particular: 50 entidades com DRE que publica resultado LÍQUIDO em vez de despesa bruta — ausência real, legítima, pendência com recado errado. 254 de 283 pares não concluem; fila só mostrava 52 (a fila subestima em 5×).
 
-**Consequência:** a F2 acrescenta exigência nova a camada que conclui entre 0% e 40%. Sem saber por que não conclui, é construir em andar não verificado. Precisão de exigência não resolve — é diagnóstico estrutural que falta.
+**Consequência:** a F2 acrescenta exigência nova a uma camada cujos consumidores atuais concluem **entre 8,3% e 67,8%** por caso × entidade. Sem saber por que não concluem, é construir em andar não verificado. Precisão de exigência não resolve — é diagnóstico estrutural que falta.
+
+> **Não escreva "entre 0% e 40%".** Essa faixa já foi publicada duas vezes nesta rodada e é falsa
+> nas duas pontas: o 0% vem de `caixa_bp_vs_fluxo`, que é NOME MORTO (renomeado em 27/07/2026, nenhuma
+> função o menciona hoje) — medir um cadáver infla o alarme; e o teto de 40% vinha da métrica por
+> PERÍODO, que superestimava, enquanto por caso × entidade `ativo_passivo_pl` está em 57,1% e
+> `secao_fecha` em 67,8%. A faixa honesta, já excluído o tipo morto, é **8,3% a 67,8%**.
 
 **O que fica medido para quem vier depois:** dois formatos, cita qual está citando (a métrica anterior, por período, superestimava o problema).
 
