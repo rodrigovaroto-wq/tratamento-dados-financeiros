@@ -125,6 +125,25 @@ tamanho, ~125–150 mil itens). Isso é NÃO VERIFICADO, diferente de verificado
 - `fn_conflitos_do_caso` compara número de NOTAS_EXPL/DVA/DMPL por rótulo idêntico, mas foi
   declarado "não consumidor" — decisão a revisar.
 
+### Revisão independente (`/revisar`, 22/09/2026) — três ALTOS corrigidos antes de qualquer apply
+
+Duas lentes (defeito silencioso + fidelidade do número) sobre `5bea570..HEAD`. Corrigido no próprio
+arquivo da `0187`/`0188` (commit `3542342`), porque nenhuma foi aplicada:
+
+- **ALTO — a `0188` instalava limpa sem a `0186`** e toda reconciliação morreria em runtime; o n8n
+  (`continueRegularOutput`) seguiria com ZERO reconciliações. Agora a `0188` aborta com
+  "0188 exige a 0186 aplicada antes" — provado em banco descartável.
+- **ALTO — tolerância da despfin = 50.000 × fator = R$ 50 milhões** em DRE em milhar. **Medido em
+  produção: 1 dos 33 "confere" é falso, divergência de R$ 12.400.000.** Tolerância passa para a base.
+- **ALTO — a pergunta 5.1 ao CLIENTE** dizia "(não localizado)" no arranjo real de mútuos e, em
+  outros, somava TOTAL + itens. Redesenhada sem léxico; sem saldo seguro, diz por que não apurou.
+- **MÉDIO — D6 ficava verde** se o consumidor existisse mas deixasse de ler o tipo: agora há
+  `marcador` conferido no corpo. DF_AUDITADA passou a `sem_consumidor` (2 nomeados, 28 sem).
+- **MÉDIO — textos do seed** ("17/17" em tipo com zero documento) corrigidos.
+- **Book-distress:** a MEP de 2025 saía em branco com a nota dizendo zero (`76662dc`).
+- **Latente, NÃO corrigido, medido:** receita (`50.000 × fator`) e caixa (`100 × fator`) têm o mesmo
+  vício de tolerância — **0 "confere" falsos hoje em produção** (receita no máximo 4,8%). Fatia própria.
+
 ### Onde estamos
 
 **F2 com D6 VERDE NO REPOSITÓRIO — não em produção.** Para a F2 fechar: aplicar `0186`→`0187`→
@@ -141,6 +160,7 @@ depende da F3/ingestão (extratos grandes não entram hoje).
   F3.
 - **Aceite financeiro da F2** — depende da F3/ingestão de extratos grandes.
 - **Os 6 achados registrados acima** — nenhum corrigido.
+- **Tolerância de receita e caixa multiplicada pela escala** — latente (0 falsos hoje), fatia própria.
 - **Fatia 1.7** — segue em outra sessão, `0182`–`0184` reservadas.
 
 ### O que o dono faz à mão

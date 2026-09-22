@@ -76,7 +76,8 @@ tamanho ~125–150 mil itens).
    a eliminação do COMBINADO/FATURAMENTO_24M) ou aceitar a declaração `sem_consumidor` como final.
 4. **F2.2 fino** (taxa, vencimento, covenant do MAPA_DIVIDA) — depende da F3.
 5. **Aceite financeiro da F2** — depende da F3/ingestão de extratos grandes.
-6. **Os 6 achados registrados** — nenhum corrigido ainda.
+6. **Os 6 achados registrados** — nenhum corrigido ainda. E a tolerância de receita/caixa multiplicada pela escala (mesmo vício que a revisão pegou na despfin, corrigido lá): latente, 0 falsos hoje em produção — fatia própria.
+6b. **A revisão independente desta sessão corrigiu 3 ALTOS nas `0187`/`0188` antes do apply** (commit `3542342`, detalhe no topo do `ESTADO.md`): a `0188` agora recusa ser aplicada sem a `0186`.
 7. **Fatia 1.7** — segue em outra sessão, `0182`–`0184` reservadas.
 
 ### Lições desta sessão
