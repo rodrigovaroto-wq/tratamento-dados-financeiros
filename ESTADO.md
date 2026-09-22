@@ -1,13 +1,30 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-## SESSÃO 100 (22/09/2026) — pré-condições da `0186` medidas e liberadas; `0187`+`0188` escritas; aplicação RECUSADA pelo classificador de auto mode
+## SESSÃO 100 (22/09/2026) — F2: `0186`, `0187` e `0188` APLICADAS em produção; D6 VERDE em produção
+
+> **✅ APLICADAS EM PRODUÇÃO em 22/09/2026 (fim da S100): `0186` → `0187` → `0188`**, pela API de
+> gerenciamento, com o dono aprovando cada chamada em modo de permissão manual. Pré-medição repetida
+> imediatamente antes (nada tinha mudado). Efeito MEDIDO depois de cada uma:
+>
+> | Migration | Previsto | Medido |
+> |---|---|---|
+> | `0186` | backfill 5.023/5.023, 0 NULL | **5.023 preenchidas, 0 NULL** (1.708 `documento_ausente`, 3.315 genérico); sonda 0 ausentes |
+> | `0187` | 5 resolvidas, 0 abertas, 1 ressalva intocada | **5 resolvidas, 0 abertas, 1 ressalva, 5 eventos**; **D6 VERDE EM PRODUÇÃO**: 6 `exigencia_viva` + 2 `consumidor_nomeado` + 28 `sem_consumidor_declarado` = 36, zero `SEM_COBERTURA`/`DECLARACAO_QUEBRADA`; `instalacao_sonda_saldo_mutuos` = 4 |
+> | `0188` | ~50 de 52 com o recado da DRE líquida | **48 de 52** (as 4 sem: 2 sem linha financeira, 1 juros bancários — resolve no próximo recompute do caso —, e 1 sem explicação, a mesma que a conta 50+2+1=53 da S99 não fechava); sonda 0 ausentes, cobertura `0188` |
+>
+> **Prova de que a reconciliação RODA com as funções novas** (o risco silencioso da revisão): `fn_reconciliar_caso`
+> num caso real dentro de um bloco com rollback proposital — 61 linhas em todas as checagens, motivo
+> gravado em cada precondição, uma despfin agora `zona_cinzenta` onde a tolerância de R$ 50 mi dizia
+> "confere". Nada gravado. **Os motivos específicos da 0188 aparecem nas PRÓXIMAS rodadas de cada caso** —
+> as linhas antigas ficam com o que o backfill da 0186 recuperou.
+
 
 ### Estado atual de produção e repositório
 
 | | |
 |---|---|
-| **Última migration APLICADA** | `0181_o_controle_que_a_entidade_nunca_registrava.sql` (F1.5) — sonda responde `ate_migration = 0181`, conferido em 22/09/2026 (produção, somente leitura, 0 ausentes) |
-| **Migrations PRONTAS mas NÃO APLICADAS, na ORDEM DE APLICAÇÃO** | `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte — coluna `motivo_precondicao`; pré-condições MEDIDAS em produção nesta sessão: 5.023 linhas com `precondicoes_ok=false`, backfill alcança 5.023/5.023 sem NULL, 0 eventos múltiplos/motivos conflitantes, vocabulário emitido = 6 valores todos dentro da guarda; testes verdes, aplicação RECUSADA 2× pelo classificador de permissão mesmo após autorização do dono no chat) → `0187_o_tipo_que_chegava_sem_leitor_declarado.sql` (F2 — D6 por declaração; `0185` DESCARTADA, número fica lacuna; 27 asserts) → `0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql` (F2 suporte — motivo específico por checagem, recado da DRE líquida, localizador de juros bancários; 28 asserts). `0182`–`0184` são lacuna reservada à F1.7 (outra sessão). Nenhuma das três chegou a ser aplicada — sonda segue em `0181` |
+| **Última migration APLICADA** | `0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql` — sonda responde `ate_migration = 0188`, 0 ausentes, conferido em 22/09/2026 logo após o apply |
+| **Migrations PRONTAS mas NÃO APLICADAS** | nenhuma. `0182`–`0184` são lacuna reservada à F1.7 (outra sessão); `0185` foi DESCARTADA (lacuna) |
 | **Decisão do dono, 21/09/2026** | **F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b**. Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás" |
 
 ### Entrega 1: Pré-condições da `0186` MEDIDAS contra produção e LIBERADAS — aplicação RECUSADA pelo classificador de auto mode

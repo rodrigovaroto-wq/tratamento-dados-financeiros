@@ -4,7 +4,31 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-## 🟡 SESSÃO 100 (22/09/2026) — pré-condições da `0186` medidas e liberadas; `0187`+`0188` escritas; aplicação RECUSADA pelo classificador de auto mode
+## 🟡 SESSÃO 100 (22/09/2026) — F2: `0186`, `0187` e `0188` APLICADAS em produção; D6 VERDE em produção; F2.3 é a próxima fatia
+
+> **✅ APLICADAS EM PRODUÇÃO em 22/09/2026 (fim da S100): `0186` → `0187` → `0188`**, pela API de
+> gerenciamento, com o dono aprovando cada chamada em modo de permissão manual. Pré-medição repetida
+> imediatamente antes (nada tinha mudado). Efeito MEDIDO depois de cada uma:
+>
+> | Migration | Previsto | Medido |
+> |---|---|---|
+> | `0186` | backfill 5.023/5.023, 0 NULL | **5.023 preenchidas, 0 NULL** (1.708 `documento_ausente`, 3.315 genérico); sonda 0 ausentes |
+> | `0187` | 5 resolvidas, 0 abertas, 1 ressalva intocada | **5 resolvidas, 0 abertas, 1 ressalva, 5 eventos**; **D6 VERDE EM PRODUÇÃO**: 6 `exigencia_viva` + 2 `consumidor_nomeado` + 28 `sem_consumidor_declarado` = 36, zero `SEM_COBERTURA`/`DECLARACAO_QUEBRADA`; `instalacao_sonda_saldo_mutuos` = 4 |
+> | `0188` | ~50 de 52 com o recado da DRE líquida | **48 de 52** (as 4 sem: 2 sem linha financeira, 1 juros bancários — resolve no próximo recompute do caso —, e 1 sem explicação, a mesma que a conta 50+2+1=53 da S99 não fechava); sonda 0 ausentes, cobertura `0188` |
+>
+> **Prova de que a reconciliação RODA com as funções novas** (o risco silencioso da revisão): `fn_reconciliar_caso`
+> num caso real dentro de um bloco com rollback proposital — 61 linhas em todas as checagens, motivo
+> gravado em cada precondição, uma despfin agora `zona_cinzenta` onde a tolerância de R$ 50 mi dizia
+> "confere". Nada gravado. **Os motivos específicos da 0188 aparecem nas PRÓXIMAS rodadas de cada caso** —
+> as linhas antigas ficam com o que o backfill da 0186 recuperou.
+
+> **Para a próxima sessão, em ordem:** (1) **F2.3** — a checagem que lê FAT_INTRAGRUPO (pares A→B por
+> ano contra a eliminação do COMBINADO / FATURAMENTO_24M); decisão do dono: vale, e é a próxima fatia.
+> Ao fechá-la, a declaração `sem_consumidor` de FAT_INTRAGRUPO vira `consumidor_nomeado` com marcador.
+> (2) A tolerância de receita/caixa multiplicada pela escala (latente, 0 falsos hoje). (3) Os achados
+> registrados abaixo. O aceite financeiro da F2 fica NÃO VERIFICADO até a F3 (decisão do dono).
+> PR desta sessão: ver a descrição do PR aberto a partir de `claude/inspiring-clarke-j339ju`.
+
 
 ### O que esta sessão fez, em ordem
 
@@ -68,7 +92,7 @@ tamanho ~125–150 mil itens).
 
 ### Próximos passos, em ordem
 
-1. **Aplicar `0186`→`0187`→`0188` em produção, nesta ordem** — é o que mais destrava. Precisa de
+1. ~~**Aplicar `0186`→`0187`→`0188` em produção**~~ — **FEITO no fim da sessão** (ver o bloco no topo). Precisa de
    uma regra de permissão em `settings.json` que libere a chamada de gerenciamento do Supabase
    para o auto mode, ou aplicação fora do auto mode; autorização em texto no chat não basta.
 2. **Depois de aplicar, rodar `fn_cobertura_de_tipos()` contra produção** e conferir os efeitos

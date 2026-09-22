@@ -82,7 +82,8 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
   value` exige DUAS chamadas. Backfill: meça o alcance do `where` em produção ANTES (365 × 7)
 - [O auto mode recusa aplicar migration em produção mesmo autorizado no chat](auto-mode-recusa-migration-producao.md)
   — o classificador de permissão decide por categoria de ação, não por instrução lida na hora;
-  precisa de regra em `settings.json`, não de "o dono disse que pode"
+  e recusa o agente escrever a própria regra ("Self-Modification"). Funciona: o dono passa a
+  sessão para modo manual e aprova cada chamada (0186–0188 aplicadas assim, 22/09)
 - [O mandato real não tem holding](grupo-por-controle-comum-sem-holding.md) — as 8 empresas são
   irmãs sob controle comum de PESSOAS FÍSICAS, medido nos contratos sociais; `controladora_id`
   (0181) fica NULL por estar certo, não por faltar cadastro, e é por isso que o COMBINADO do

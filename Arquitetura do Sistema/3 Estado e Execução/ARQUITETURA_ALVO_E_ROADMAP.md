@@ -470,13 +470,13 @@ F14→F16 · F15→F17 (contínua).
 | | |
 |---|---|
 | **Objetivo** | Que nenhum tipo seja ingerido sem que alguém confira se o conteúdo chegou |
-| **Estado** | 🟡 **D6 VERDE NO REPOSITÓRIO (migration `0187`), NÃO EM PRODUÇÃO** — sonda segue em `0181`. Censo D6 medido contra produção em 22/09/2026: **24 tipos com documento**, **6 com exigência viva** (lida por alguma checagem: BALANCO, DRE, COMBINADO, FATURAMENTO_24M, MAPA_DIVIDA, FLUXO_CAIXA), **18 sem**. `0187` responde D6 por DECLARAÇÃO (`taxonomia_tipo_cobertura` + `fn_cobertura_de_tipos()`), não por exigência lexical nova — a `0185` (nove exigências itemizadas) foi DESCARTADA do repositório, nunca aplicada. **Migrations `0186`→`0187`→`0188` PRONTAS, TESTADAS e — a `0186` — MEDIDAS e LIBERADAS contra produção (22/09/2026), mas nenhuma aplicada**: a aplicação foi RECUSADA duas vezes pelo classificador de permissão do auto mode, mesmo com autorização do dono no chat |
+| **Estado** | 🟢 **D6 VERDE EM PRODUÇÃO desde 22/09/2026** (`0186`→`0187`→`0188` aplicadas; `fn_cobertura_de_tipos()` em produção: 6 exigência viva + 2 consumidor nomeado + 28 declarados, 0 ruins). Falta a F2.3 (decisão do dono: vale, próxima fatia); aceite financeiro espera a F3. Censo D6 medido contra produção em 22/09/2026: **24 tipos com documento**, **6 com exigência viva** (lida por alguma checagem: BALANCO, DRE, COMBINADO, FATURAMENTO_24M, MAPA_DIVIDA, FLUXO_CAIXA), **18 sem**. `0187` responde D6 por DECLARAÇÃO (`taxonomia_tipo_cobertura` + `fn_cobertura_de_tipos()`), não por exigência lexical nova — a `0185` (nove exigências itemizadas) foi DESCARTADA do repositório, nunca aplicada. **Migrations `0186`→`0187`→`0188` PRONTAS, TESTADAS e — a `0186` — MEDIDAS e LIBERADAS contra produção (22/09/2026), mas nenhuma aplicada**: a aplicação foi RECUSADA duas vezes pelo classificador de permissão do auto mode, mesmo com autorização do dono no chat |
 | **Gap** | aplicar `0186`→`0187`→`0188` em produção e rodar `fn_cobertura_de_tipos()`; F2.2 (MAPA_DIVIDA fino) e F2.3 (consumidor real para FAT_INTRAGRUPO/CONTRATO_SOCIAL) medidas mas não construídas |
 | **Dep.** | F0 |
 | **Agentes** | `migrations-postgres`, `n8n-workflow`, **`ontologia-contabil`** (novo) |
 | **Testes** | `cobertura_de_tipos.test.sql` (27 asserts, `0187`) · `motivo_especifico.test.sql` (28 asserts, `0188`) · **terceiro book: distress** (`book-distress`, F2.4) |
 | **Risco** | Baixo — aditivo · **Impacto** Alto e subestimado · **Esforço** M |
-| **Saída** | D6 verde EM PRODUÇÃO — hoje verde só no repositório |
+| **Saída** | D6 verde EM PRODUÇÃO — ✅ atingido em 22/09/2026 |
 | **Aceite financeiro** | mandato sem aging/extrato **não** é declarado pronto — **NÃO VERIFICADO** (ver linha "Aceite" abaixo) |
 | | |
 | **D6 medido em produção (22/09/2026)** | 24 tipos com documento, 6 com exigência viva (BALANCO, DRE, COMBINADO, FATURAMENTO_24M, MAPA_DIVIDA, FLUXO_CAIXA), 18 sem. `fn_cobertura_de_tipos()` (`0187`) responde D6 de forma ESTRITA sobre todos os tipos ativos, vereditos `SEM_COBERTURA`/`DECLARACAO_QUEBRADA` — roda igual em teste e em produção, mas ainda não foi executada contra o banco real porque a `0187` não foi aplicada |
