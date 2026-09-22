@@ -52,6 +52,15 @@ def _resolve(marcador, ano, pl_sub):
     # Saldo zero de conta CALCULADA = a conta não existe no exercício (o
     # empréstimo de longo prazo em 2025, a provisão enquanto o PL é positivo, o
     # mútuo antes do contrato). Célula vazia no comparativo, nunca zero.
+    #
+    # EXCEÇÃO: a MEP. O investimento na Metalúrgica EXISTE em 2025 e vale zero
+    # — a Nota 4 diz "mantido por valor zero" e a provisão para passivo a
+    # descoberto (7.355) é a contrapartida. Em branco, a linha 2025 lia como
+    # "a conta não existia" e o texto extraído saía "- MEP 11.006 10.641": um
+    # leitor por linha punha 11.006 em 2025 (achado da revisão de 22/09/2026,
+    # regra 1 pelo avesso — zero medido apresentado como ausência).
+    if isinstance(marcador, tuple) and marcador[0] == D.MEP:
+        return v
     return v or None
 
 
