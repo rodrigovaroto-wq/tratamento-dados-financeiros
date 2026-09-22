@@ -445,6 +445,7 @@ F14→F16 · F15→F17 (contínua).
 | **Entrada** | — |
 | **Saída** | D1 verde |
 | **Aceite** | sonda zero em produção; hash publicado == gerado; `PRONTIDAO` regerado automaticamente |
+| **Decisão do dono (22/09/2026)** | F2.3 (checagem de FAT_INTRAGRUPO) VALE e é a próxima fatia após o apply; o aceite financeiro fica NÃO VERIFICADO até a F3 começar |
 | **Aceite financeiro** | reprocessar os 75 documentos sem linha da rodada "Teste 00" e obter ≥95% com linha |
 | **Aceite técnico** | CI aplica migration e falha se produção divergir; espelho cobre TODAS as categorias de portão; cada portão novo medido não-vazio |
 

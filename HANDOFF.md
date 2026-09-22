@@ -64,6 +64,8 @@ rodar `fn_cobertura_de_tipos()` em produção; decidir F2.3 ou aceitar a declara
 financeiro depende da F3/ingestão (extratos grandes do mandato AMO não entram hoje, limite de
 tamanho ~125–150 mil itens).
 
+> **DECISÕES DO DONO, 22/09/2026 (fim da S100):** (1) **F2.3 VALE** — escrever a checagem que lê FAT_INTRAGRUPO é a próxima fatia da F2, logo depois do apply das `0186`→`0187`→`0188`. (2) O **aceite financeiro da F2 fica NÃO VERIFICADO até a F3 começar** — não é pendência desta fase; reabre quando a ingestão aguentar os extratos grandes (`CR`/`CP`). (3) O apply NÃO pode ser feito pelo agente em auto mode: o classificador recusou `curl` à API ("Production Deploy") e, quando o agente acrescentou a regra de permissão ele mesmo, recusou por "Self-Modification" — a edição foi desfeita. Caminho: o dono troca o modo de permissão da sessão para manual e aprova o comando no prompt, ou aplica pelo SQL Editor do Supabase.
+
 ### Próximos passos, em ordem
 
 1. **Aplicar `0186`→`0187`→`0188` em produção, nesta ordem** — é o que mais destrava. Precisa de
