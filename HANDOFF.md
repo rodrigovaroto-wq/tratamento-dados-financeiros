@@ -4,6 +4,28 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## 🟡 SESSÃO 99 (22/09/2026) — F2 escolhida, `0185` rejeitada, `0186` pronta para aplicação
+
+### O que esta sessão fez, em ordem
+
+1. **`0186` escrita, testada com 10 asserts, revisada 3 vezes de forma independente, pronta para aplicação.** Motivo da precondição deixa de ser achatado. Coluna `reconciliacao.motivo_precondicao` guarda o motivo verdadeiro com backfill de `evento_auditoria`. Vocabulário amarrado — erro de uma letra levanta exceção agora. **CRÍTICO:** `documento_ausente` não significa "contraparte não entregue" — medido que 42 linhas de `secao_fecha` e 9 de `mutuos` têm este motivo COM o documento PRESENTE.
+
+2. **`0185` rejeitada na medição contra produção (21/09).** Nove tipos mudos ganhariam exigência `proposta` cada — teste local passou (51 asserts, 4 localizadores corrigidos). **Medição de alcance contra banco real:** 190 documentos dos 9 tipos em 14 casos, 64 com conteúdo, 17 abririam pendência — **todos os 17 TÊM o dado**. Causa-raiz: em relatório itemizado o conceito não está no rótulo — AGING_AP tem chaves `41518 - WELLA BRASIL`, ESTOQUE `2500 - ASSALA PRIME` (484 linhas), CONTINGENCIAS descrições de processo. Próximo passo é REDESENHO estrutural, não conserto de termo. A `0185` fica no repositório não aplicada.
+
+3. **Camada de reconciliação medida — os consumidores existentes concluem entre 0% e 40%.** `caixa_bp_vs_fluxo` com 0 de 33 pares, `mutuos` 8,3%, `caixa_bp_fluxo` 8,6%, `despfin` 13,8%, `receita` 21,1%, `intragrupo` 33,3%, `ativo_passivo_pl` 57,1%, `secao_fecha` 67,8%, `duplicidade`/`conflito` 100%. **Causa-raiz:** `precondicao_nao_satisfeita` confunde 4 estados (contraparte ausente, linha não localizada, unidade divergente, período sem par) com `fonte_a`/`fonte_b` NULAS em 1.922/1.926 linhas — fila não é acionável. Para `despfin` em particular: 50 entidades com DRE líquido (ausência real, legítima), pendência com recado errado. 254 de 283 pares não concluem; fila subestima em 5×.
+
+4. **DECISÃO DO DONO, 21/09/2026: F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b.** Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás".
+
+5. **Documentação:** ESTADO.md consolidado (pilha de 5 blocos em 1), MAPA_DE_EXECUCAO.md e ARQUITETURA_ALVO_E_ROADMAP.md F2 atualizados, fichas em `.claude/conhecimento/fichas/` para `0186` e medição da camada de reconciliação. Nenhum arquivo de código tocado.
+
+### O que fica para a próxima sessão
+
+- **Aplicar `0186`:** três consultas somente-leitura em `Supabase/README.md` — uma pode mandar NÃO APLICAR.
+- **Fatia 1.7:** em construção em outra sessão em paralelo, migrations `0182–0184` reservadas.
+- **F2.1 redesenho:** estrutural, não lexical (quantas linhas com valor, eixo esperado).
+- **Suspeita F2.1:** MUTUOS e FAT_INTRAGRUPO (exigências `proposta` da `0113`) também reprovam contra fixture — investigar.
+- **Diagnóstico de reconciliação:** 52 pendências de `despesa_financeira` — pendência que diga que DRE veio líquido, não consertador de checagem.
+
 ## ✅ SESSÃO 98 (18/09/2026) — F1.3/F1.4/F1.5 verificadas e aplicadas em produção; F1.6 não verificável (estrutural)
 
 Continuação da 97 no mesmo dia, mesmo branch. **Leia o topo do `ESTADO.md` antes — este é o resumo técnico de como se chegou aqui.**
