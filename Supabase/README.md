@@ -306,7 +306,22 @@ supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nu
 # e rode fn_exigencias_do_caso(caso_id) em modo LEITURA sobre os casos reais
 # encontrados, para saber quantas pendências linha_exigida_ausente novas vão
 # aparecer antes que apareçam sozinhas na fila do dono.
-supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql
+#
+# ⛔ NÃO APLIQUE A 0185. A LINHA ABAIXO ESTÁ COMENTADA DE PROPÓSITO.
+#
+# A medição de alcance acima FOI FEITA contra produção em 21/09/2026, e reprovou
+# a migration: dos 17 pares caso×tipo que ela abriria como pendência, os 17 TÊM
+# o dado. Em relatório itemizado o conceito não está no rótulo — o rótulo é o
+# ITEM (nome do fornecedor, do banco, do processo) e o conceito é o TIPO do
+# documento. Aplicar materializaria 17 pendências falsas retroativamente, no
+# primeiro recompute de cada caso. Detalhe no cabeçalho do próprio arquivo e em
+# .claude/memory/conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md.
+#
+# Por que comentada e não removida: esta lista é o que o dono copia para
+# aplicar, e o `run.sh` exige que toda migration do diretório seja citada aqui.
+# Comentada, ela continua citada (o portão passa) e deixa de rodar se o bloco for
+# colado num shell. A 0185 fica no repositório como registro até o redesenho.
+# supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql
 
 # A 0186 acrescenta reconciliacao.motivo_precondicao e reemite
 # fn_registrar_reconciliacao para gravá-la — resultado NÃO muda de
