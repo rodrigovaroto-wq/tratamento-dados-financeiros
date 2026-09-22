@@ -22,7 +22,7 @@
 --      (fn_reconciliar_por_documento → fn_reconciliar_chaves_do_documento): o
 --      md5 do retrato é o medido na 0187 (109 grupos, 10 pendências), e 58
 --      linhas saem com motivo específico.
---   3. PARTE 3, A ÚNICA EXCEÇÃO DECLARADA: DRE com "JUROS E COMISSÕES
+--   3. PARTE 3, A PRIMEIRA EXCEÇÃO DECLARADA: DRE com "JUROS E COMISSÕES
 --      BANCÁRIAS" satisfaz a exigência e a checagem despfin CONCLUI; DRE só com
 --      "JUROS DE APLICAÇÕES" (rótulo medido em produção) e "JUROS DE APLICAÇÕES
 --      BANCÁRIAS" continua NÃO satisfazendo, com o motivo linha_nao_localizada.
@@ -32,6 +32,10 @@
 --      que já existia com o texto velho é REESCRITA pelo recompute e pela
 --      reescrita dirigida; DRE só com "RESULTADO ANTES DO RESULTADO
 --      FINANCEIRO" fica com o texto de sempre, byte a byte.
+--   5. PARTE 4, A SEGUNDA EXCEÇÃO DECLARADA: a tolerância absoluta da despfin
+--      está na BASE. DRE em milhar 8.194 × mapa 5.308 sai zona_cinzenta (com a
+--      tolerância × escala eram R$ 50 milhões e saía ok); 5.308 × 5.309 em
+--      milhar (R$ 1.000) continua ok.
 --
 -- AS PERTURBAÇÕES NÃO SÃO FIXTURE DE BUG DE PRODUÇÃO (regra 4): as fixtures
 -- limpas não têm UMA linha com precondição genérica — medido: 0 de 80 grupos
@@ -624,6 +628,61 @@ begin
             'linha com outro rótulo (e corrigir na revisão) ou reenviar o arquivo completo.',
     'NEGATIVO: "RESULTADO ANTES DO RESULTADO FINANCEIRO" não é alternativa, e o texto é o de antes',
     coalesce(v_txt, '(sem pendência)'));
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso uuid;
+  v_r    jsonb;
+  v_doc  uuid;
+  v_ent  uuid;
+  v_per  uuid;
+  v_res  text;
+  v_ok   boolean;
+  v_desc text;
+begin
+  raise notice '--- 5. PARTE 4: a tolerância absoluta da despfin está na BASE, não × escala ---';
+  -- OS NÚMEROS SÃO OS DO BOOK-DISTRESS 2025 (despesa financeira 8.194 na DRE,
+  -- juros de 5.308 no mapa, os dois em milhar), que é o arranjo da linha falsa
+  -- medida em produção: diferença de R$ 2.886.000, abaixo dos R$ 50 MILHÕES
+  -- que a tolerância × fator dava, e acima de greatest(R$ 50.000, 5% de
+  -- R$ 8.194.000 = R$ 409.700). O caso é montado aqui, não é fixture de
+  -- produção (regra 4): o que se afirma é só o comportamento da tolerância.
+  v_caso := (fn_upsert_caso('0188: tolerância da despfin em milhar'))::uuid;
+  v_r := fn_registrar_documento(v_caso, 'DISTRESS LTDA.', 'anual', '2025', 'DRE', 0.95,
+    'nome_arquivo', 'supabase_storage', '0188/dre-tol.pdf', 'DRE TOL.pdf', true, 'HASH-0188-8', 'ok');
+  v_doc := (v_r->>'documento_id')::uuid;
+  perform fn_registrar_campos_extraidos((v_r->>'documento_versao_id')::uuid, jsonb_build_array(
+    jsonb_build_object('ordem',0,'chave','RECEITA OPERACIONAL BRUTA','valor_num','90000','periodo_coluna','2025','unidade','milhar','confianca','0.97'),
+    jsonb_build_object('ordem',1,'chave','DESPESAS FINANCEIRAS','valor_num','-8194','periodo_coluna','2025','unidade','milhar','confianca','0.97')
+  ), 'N2');
+  v_r := fn_registrar_documento(v_caso, 'DISTRESS LTDA.', 'anual', '2025', 'MAPA_DIVIDA', 0.95,
+    'nome_arquivo', 'supabase_storage', '0188/div-tol.pdf', 'DIVIDA TOL.pdf', true, 'HASH-0188-9', 'ok');
+  perform fn_registrar_campos_extraidos((v_r->>'documento_versao_id')::uuid, jsonb_build_array(
+    jsonb_build_object('ordem',0,'chave','Banco D - capital de giro - juros do exercício','valor_num','5308','unidade','milhar','confianca','0.97')
+  ), 'N2');
+  select entidade_id, periodo_id into v_ent, v_per from documento where id = v_doc;
+
+  v_r := fn_reconciliar_despfin_dre_vs_divida(v_caso, v_ent, v_per);
+  select precondicoes_ok, resultado, divergencia_abs::text into v_ok, v_res, v_desc
+    from reconciliacao where id = (v_r->>'reconciliacao_id')::uuid;
+  perform pg_temp.teste_assert_0188(v_ok and v_res = 'zona_cinzenta',
+    'DRE em milhar 8.194 × mapa 5.308 (R$ 2.886.000 de diferença) sai zona_cinzenta, não "confere"',
+    format('precondicoes_ok=%s resultado=%s divergencia_abs=%s', v_ok, v_res, v_desc));
+
+  -- O LADO QUE NÃO PODE QUEBRAR: arredondamento de UMA unidade da escala
+  -- (5.308 × 5.309 em milhar = R$ 1.000) continua confere.
+  update campo_extraido ce set valor_num = -5309
+    from documento_versao dv
+   where dv.documento_id = v_doc and ce.documento_versao_id = dv.id
+     and ce.chave = 'DESPESAS FINANCEIRAS';
+  v_r := fn_reconciliar_despfin_dre_vs_divida(v_caso, v_ent, v_per);
+  select precondicoes_ok, resultado into v_ok, v_res
+    from reconciliacao where id = (v_r->>'reconciliacao_id')::uuid;
+  perform pg_temp.teste_assert_0188(v_ok and v_res = 'ok',
+    'arredondamento de R$ 1.000 (5.308 × 5.309 em milhar) continua ok',
+    format('precondicoes_ok=%s resultado=%s', v_ok, v_res));
 end $$;
 
 -- =============================================================================

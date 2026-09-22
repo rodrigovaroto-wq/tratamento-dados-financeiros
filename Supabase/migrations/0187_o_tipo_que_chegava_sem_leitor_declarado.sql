@@ -64,9 +64,12 @@
 --       tipo ATIVO (todos, não só os com documento: assim o portão roda no
 --       banco de teste sem depender de fixture). D6 estrito = nenhuma linha em
 --       `SEM_COBERTURA` nem em `DECLARACAO_QUEBRADA`. A declaração envelhece de
---       dois jeitos, e os dois viram `DECLARACAO_QUEBRADA`: o consumidor
---       nomeado some de `pg_proc`, ou o tipo ganha exigência viva e a
---       declaração fica duplicando o registro.
+--       três jeitos, e os três viram `DECLARACAO_QUEBRADA`: o consumidor
+--       nomeado some de `pg_proc`; o consumidor fica mas o MARCADOR (o trecho
+--       que faz a leitura) some do corpo de `marcador_em` — achado da revisão:
+--       tirar 'BALANCETE' do despachante desligava a leitura sem que nome
+--       nenhum sumisse; ou o tipo ganha exigência viva e a declaração fica
+--       duplicando o registro.
 --   (c) Desativa (`ativo = false`, nunca delete — a FK de
 --       `pergunta_catalogo` e a trilha precisam da linha) as exigências
 --       proposta de MUTUOS e FAT_INTRAGRUPO. Para CONTRATO_SOCIAL — que NÃO é
@@ -86,17 +89,21 @@
 --       se previam 13 (`.claude/memory/aplicar-migration-em-producao-pela-api.md`)
 --       — recompute mexe em TODO o passo 2 de cada caso, não só nestes três
 --       tipos. `aceita_com_ressalva` não é tocada: é decisão humana.
---   (e) `fn_sugerir_perguntas` REEMITIDA INTEIRA (corpo da 0122), com UMA
---       mudança: o marcador {saldo_mutuos} da pergunta 5.1 soma as linhas que
---       casam os localizadores de MUTUOS/saldo_de_mutuo, e filtrava
---       `e.ativo`. Desativar a exigência sem isto faria a pergunta ao CLIENTE
---       dizer "(não localizado)" sobre um saldo que está no documento — a
---       desativação desliga a COBRANÇA, não o léxico. Medido (22/09/2026,
---       com o `and e.ativo` de volta e o assert de `perguntas.test.sql` feito
---       não-fatal para contar): 3 asserts dele reprovam — a soma "R$ 150 mil",
---       as escalas mistas e o "R$ 16.060 mil", os três com o texto "(não
---       localizado)" — e mais 1 de `instalacao.test.sql` (o requisito de corpo
---       saldo_mutuos_nao_depende_da_cobranca some).
+--   (e) O SALDO DA PERGUNTA 5.1 SEM LÉXICO: `fn_saldo_mutuos_do_documento`
+--       (pura) e `fn_saldo_mutuos_texto` (o caso), e `fn_sugerir_perguntas`
+--       REEMITIDA INTEIRA (corpo da 0122) com UMA mudança, o CTE do
+--       {saldo_mutuos}. A 0122 somava as linhas cujo rótulo casava o léxico
+--       de MUTUOS/saldo_de_mutuo; a primeira versão desta migration só tirou o
+--       filtro `e.ativo` desse léxico, e a revisão independente mediu que isso
+--       não basta: no arranjo REAL (fixture canastra, chave = par de
+--       empresas) nada casa 'mutuo' e a pergunta ao CLIENTE dizia "(não
+--       localizado)"; com item + total no documento a soma dobrava (300 em vez
+--       de 150); no documento matricial ela atravessava as colunas (20.158 em
+--       vez de 11.079). O desenho novo, no bloco (e): o documento É o
+--       conceito; coluna do exercício mais recente; linha de total geral se
+--       houver, senão a soma dos itens; e, quando não dá para determinar, a
+--       pergunta diz que não foi possível apurar e por quê. Medição (regra 2)
+--       no fim do bloco (e).
 --   (f) O catálogo da sonda.
 --
 -- O QUE ESTA MIGRATION NÃO FAZ
@@ -121,9 +128,13 @@
 -- `Supabase/test/cobertura_de_tipos.test.sql`, contra a fixture canastra. Em
 -- produção a medição de 22/09/2026 conta 5 abertas (1 MUTUOS, 3
 -- FAT_INTRAGRUPO, 1 CONTRATO_SOCIAL) + 1 MUTUOS em `aceita_com_ressalva`. As
--- quatro primeiras devem resolver; a do CONTRATO_SOCIAL só resolve se a versão
--- VIGENTE daquele documento tiver a seção preenchida. A consulta somente
--- leitura que confere isso ANTES está no `Supabase/README.md`.
+-- quatro primeiras devem resolver. A do CONTRATO_SOCIAL dependia de a versão
+-- VIGENTE daquele documento ter a seção preenchida — e isso FOI MEDIDO pela
+-- sessão principal em produção (22/09/2026, somente leitura): na versão
+-- vigente do documento 9ae9ca0b-7b6a-4fa1-bf23-ef3cc8805ffc (entidade GLOBAL
+-- STORE), 4 das 6 linhas têm `secao` com 'capital' e 'social'. Previsão: 5
+-- resolvidas, 0 abertas. A consulta somente leitura que confere isso ANTES
+-- está no `Supabase/README.md`.
 -- =============================================================================
 
 begin;
@@ -138,9 +149,20 @@ create table if not exists taxonomia_tipo_cobertura (
   motivo         text not null check (length(btrim(motivo)) > 0),
   efeito         text not null check (length(btrim(efeito)) > 0),
   declarado_em   date not null default current_date,
+  -- 0187 (revisão): O NOME NÃO PROVA A LEITURA. Um consumidor que continua em
+  -- pg_proc mas deixou de ler o tipo (o despachante tirou 'BALANCETE' da lista,
+  -- a checagem trocou de documento) mantinha a declaração verde. `marcador` é
+  -- um trecho de UMA linha que precisa aparecer no corpo publicado
+  -- (pg_get_functiondef) de `marcador_em` — o próprio consumidor, ou o
+  -- despachante que o chama para este tipo.
+  marcador       text check (marcador is null or length(btrim(marcador)) > 0),
+  marcador_em    text,
   -- consumidor nomeado SEM nome é declaração que não se confere; sem_consumidor
-  -- COM nome é contradição. As duas formas são recusadas pelo banco.
-  check ((estado = 'consumidor_nomeado') = (consumidor is not null))
+  -- COM nome é contradição. As duas formas são recusadas pelo banco — e o
+  -- mesmo vale para o marcador.
+  check ((estado = 'consumidor_nomeado') = (consumidor is not null)),
+  check ((estado = 'consumidor_nomeado') = (marcador is not null and marcador_em is not null)),
+  check ((marcador is null) = (marcador_em is null))
 );
 
 comment on table taxonomia_tipo_cobertura is
@@ -153,6 +175,13 @@ comment on column taxonomia_tipo_cobertura.consumidor is
   'Nome (proname, schema public) da função SQL que LÊ documentos do tipo e CONFERE o número. '
   'Obrigatório quando estado=consumidor_nomeado, NULL caso contrário. Se a função sumir, '
   'fn_cobertura_de_tipos devolve DECLARACAO_QUEBRADA.';
+comment on column taxonomia_tipo_cobertura.marcador is
+  'Trecho de UMA linha que precisa aparecer no corpo publicado (pg_get_functiondef, \r removido) '
+  'da função marcador_em para a declaração valer: é o que prova que ela AINDA lê o tipo. '
+  'Obrigatório quando estado=consumidor_nomeado. Some do corpo → DECLARACAO_QUEBRADA.';
+comment on column taxonomia_tipo_cobertura.marcador_em is
+  'proname (schema public) da função cujo corpo carrega o marcador — o consumidor ou o despachante '
+  'que o chama para o tipo (BALANCETE: fn_reconciliar_por_documento).';
 comment on column taxonomia_tipo_cobertura.efeito is
   'O que deixa de ser conferido por causa desta declaração (regra 1 do CLAUDE.md): "não tem '
   'consumidor" sem o efeito é ausência apresentada como dado.';
@@ -176,16 +205,27 @@ create policy taxonomia_tipo_cobertura_read on taxonomia_tipo_cobertura
 --                 balancete é também fonte de balanço em fn_reconciliar_mutuos,
 --                 fn_reconciliar_intragrupo e fn_documento_balanco — mas só
 --                 quando a entidade não tem BALANCO (ordem por array_position).
---   DF_AUDITADA → fn_reconciliar_intragrupo (0124): DF_AUDITADA está entre as
---                 fontes de balanço por entidade (BALANCO, DF_AUDITADA,
---                 BALANCETE); fn_reconciliar_mutuos (0123) idem. SÓ quando a
---                 entidade não tem BALANCO — o efeito diz isso.
+--
+-- E UM QUE NÃO ENTROU, por decisão da revisão (22/09/2026): DF_AUDITADA.
+-- fn_reconciliar_intragrupo (0124) e fn_reconciliar_mutuos (0123) só a leem
+-- como balanço SUBSTITUTO, quando a entidade não tem BALANCO — e o próprio
+-- efeito escrito na primeira versão dizia "no caso típico ninguém lê a DF".
+-- Declarar consumidor_nomeado deixava D6 verde sobre uma leitura que, no caso
+-- típico, não acontece: estágio que não roda com cara de estágio que roda
+-- (regra 7). Ela é sem_consumidor, com o fallback descrito no motivo.
+--
+-- O MARCADOR de cada consumidor é o trecho que faz a leitura, no corpo vigente:
+--   MUTUOS    → em fn_reconciliar_mutuos, a busca do documento do tipo;
+--   BALANCETE → em fn_reconciliar_por_documento, o `if v_tipo in (...)` que
+--               despacha fn_reconciliar_arvore — tirar 'BALANCETE' da lista
+--               desliga a leitura sem que o nome de função nenhum suma.
 --
 -- Todos os outros foram procurados como literal em todo corpo de função
 -- vigente (`'TIPO'`): nenhuma função os lê, ou só o desempate/realizado os lê.
-insert into taxonomia_tipo_cobertura (tipo_taxonomia, estado, consumidor, motivo, efeito, declarado_em)
+insert into taxonomia_tipo_cobertura
+  (tipo_taxonomia, estado, consumidor, motivo, efeito, declarado_em, marcador, marcador_em)
 values
-  -- ---- os três com consumidor que confere o número --------------------------
+  -- ---- os dois com consumidor que confere o número ---------------------------
   ('MUTUOS', 'consumidor_nomeado', 'fn_reconciliar_mutuos',
    'fn_reconciliar_mutuos (0123) lê a planilha de mútuos e confere o saldo contra a soma das contas '
    'de mútuo dos balanços do caso (mutuos_planilha_vs_balanco). A exigência lexical proposta da '
@@ -195,7 +235,8 @@ values
    'passa se o total bater. Mútuo com sócio fica fora (não tem espelho no mandato). Se nenhum '
    'balanço traz conta de mútuo com lado reconhecível, a checagem sai documento_ausente e NÃO abre '
    'pendência (contrato da 0186).',
-   '2026-09-22'),
+   '2026-09-22',
+   'fn_documento_por_tipo(p_caso_id, null, p_periodo_id, ''MUTUOS'')', 'fn_reconciliar_mutuos'),
   ('BALANCETE', 'consumidor_nomeado', 'fn_reconciliar_arvore',
    'fn_reconciliar_por_documento chama fn_reconciliar_arvore (0133) para todo BALANCETE: Σ filhos = '
    'total de cada seção do próprio documento (secao_fecha). Também é fonte de balanço em '
@@ -204,72 +245,91 @@ values
    'Balancete × balanço CONTA A CONTA não é conferido: um balancete cujo saldo de uma conta difere '
    'do BP da mesma entidade só aparece se o rótulo coincidir literalmente (desempate da 0151, que '
    'não é conferência). Com BALANCO presente, ativo = passivo + PL do balancete não é checado.',
-   '2026-09-22'),
-  ('DF_AUDITADA', 'consumidor_nomeado', 'fn_reconciliar_intragrupo',
-   'fn_reconciliar_intragrupo (0124) e fn_reconciliar_mutuos (0123) usam a DF auditada como fonte '
-   'de balanço por entidade (ordem BALANCO, DF_AUDITADA, BALANCETE) e conferem os saldos '
-   'intragrupo/mútuo dela. Em produção 34 documentos, só 6 com linha (22/09/2026).',
-   'SÓ é lida quando a entidade NÃO tem BALANCO — no caso típico ninguém lê a DF. Ativo = passivo + '
-   'PL da DF não é conferido (fn_documento_balanco não inclui DF_AUDITADA), e DF divergente do '
-   'balanço gerencial só aparece por rótulo coincidente (desempate 0151).',
-   '2026-09-22'),
+   '2026-09-22',
+   'v_tipo in (''BALANCO'', ''BALANCETE'', ''COMBINADO'')', 'fn_reconciliar_por_documento'),
+
+  -- ---- a DF auditada: lida só como balanço SUBSTITUTO, ninguém a confere ----
+  ('DF_AUDITADA', 'sem_consumidor', null,
+   'Nenhuma função confere a DF auditada. fn_reconciliar_intragrupo (0124) e fn_reconciliar_mutuos '
+   '(0123) só a leem como balanço SUBSTITUTO, quando a entidade não tem BALANCO (ordem BALANCO, '
+   'COMBINADO, DF_AUDITADA, BALANCETE), e mesmo aí conferem só os saldos intragrupo/mútuo. A '
+   'primeira versão da 0187 a declarava consumidor_nomeado — revisto em 22/09/2026: no caso '
+   'típico ninguém lê a DF, e o portão ficaria verde sobre uma leitura que não acontece (regra 7). '
+   'Em produção 34 documentos, só 6 com linha (22/09/2026).',
+   'DF auditada que diverge do balanço gerencial passa sem aviso (só aparece por rótulo '
+   'coincidente, no desempate da 0151, que não é conferência). Ativo = passivo + PL da DF não é '
+   'conferido (fn_documento_balanco não inclui DF_AUDITADA). Na entidade SEM BALANCO, os saldos '
+   'intragrupo/mútuo dela entram em fn_reconciliar_intragrupo/fn_reconciliar_mutuos.',
+   '2026-09-22', null, null),
 
   -- ---- os nove da 0185: relatório itemizado, ficam COMPLEMENTARES -----------
   ('AGING_AP', 'sem_consumidor', null,
-   'Relatório itemizado: o rótulo é o item (fornecedor), não o conceito. Exigência lexical medida '
-   'falsa em 17/17 (0185, reprovada, 21/09/2026). Nenhuma função SQL lê AGING_AP.',
+   'Relatório itemizado: o rótulo é o item (fornecedor — "41518 - WELLA BRASIL LTDA." no mandato '
+   'real), não o conceito. A exigência lexical da 0185 foi reprovada em 21/09/2026: AGING_AP é '
+   'parte dos 17 falsos da medição AGREGADA sobre os nove tipos (a contagem por tipo não foi '
+   'registrada). Nenhuma função SQL lê AGING_AP.',
    'Aging de contas a pagar cujo total não bate com Fornecedores do BP passa sem aviso; aging que '
    'chega só com a linha de resto ("Demais fornecedores") também.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('AGING_AR', 'sem_consumidor', null,
-   'Relatório itemizado: o rótulo é o item (cliente/sacado), não o conceito. Exigência lexical '
-   'medida falsa em 17/17 (0185, reprovada, 21/09/2026). Nenhuma função SQL lê AGING_AR.',
+   'Relatório itemizado: o rótulo é o item (cliente/sacado), não o conceito. A exigência lexical '
+   'da 0185 foi reprovada em 21/09/2026: AGING_AR é parte dos 17 falsos da medição AGREGADA sobre '
+   'os nove tipos (a contagem por tipo não foi registrada). Nenhuma função SQL lê AGING_AR.',
    'Aging de contas a receber cujo total não bate com Clientes/Contas a receber do BP passa sem '
    'aviso, e a concentração/inadimplência por faixa não é lida por ninguém.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('EXTRATO_BANCARIO', 'sem_consumidor', null,
-   'Relatório itemizado (conta × mês; o rótulo é o banco/agência). Exigência lexical medida falsa '
-   'em 17/17 (0185, reprovada, 21/09/2026). Nenhuma função SQL lê EXTRATO_BANCARIO.',
+   'Relatório itemizado (conta × mês; o rótulo é o banco — "Banco Meridional S.A."). A exigência '
+   'lexical da 0185 foi reprovada em 21/09/2026: EXTRATO_BANCARIO é parte dos 17 falsos da medição '
+   'AGREGADA sobre os nove tipos (a contagem por tipo não foi registrada). Nenhuma função SQL lê '
+   'EXTRATO_BANCARIO.',
    'Saldo de extrato que não bate com Caixa e equivalentes do BP passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('GARANTIAS', 'sem_consumidor', null,
-   'Relatório itemizado (bem/beneficiário). Exigência lexical da mesma forma medida falsa em 17/17 '
-   '(0185, reprovada, 21/09/2026). Nenhuma função SQL lê GARANTIAS; zero documentos em produção.',
+   'Relatório itemizado (bem/beneficiário). ZERO documentos em produção (22/09/2026): nada foi '
+   'medido para este tipo. Fica sem exigência pela FORMA (itemizado, o mesmo motivo que reprovou '
+   'a 0185 nos tipos que tinham documento), não por medição dele. Nenhuma função SQL lê GARANTIAS.',
    'Bem dado em garantia não é confrontado com o MAPA_DIVIDA: dívida garantida sem garantia '
    'declarada (ou o contrário) passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('AVAIS_FIANCAS', 'sem_consumidor', null,
-   'Relatório itemizado (beneficiário/obrigação). Exigência lexical da mesma forma medida falsa em '
-   '17/17 (0185, reprovada, 21/09/2026). Nenhuma função SQL lê AVAIS_FIANCAS; zero documentos em '
-   'produção.',
+   'Relatório itemizado (beneficiário/obrigação). ZERO documentos em produção (22/09/2026): nada '
+   'foi medido para este tipo. Fica sem exigência pela FORMA (itemizado, o mesmo motivo que '
+   'reprovou a 0185 nos tipos que tinham documento), não por medição dele. Nenhuma função SQL lê '
+   'AVAIS_FIANCAS.',
    'Aval ou fiança prestado pelo grupo não entra em conferência nenhuma: a dívida contingente fora '
    'do balanço não gera aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('CONTINGENCIAS', 'sem_consumidor', null,
    'Relatório itemizado (o rótulo é o processo; a seção é Trabalhista/Cível/Tributário — a palavra '
-   '"contingência" não aparece no documento). 9 dos 17 falsos da 0185 (21/09/2026). Nenhuma '
-   'função SQL lê CONTINGENCIAS.',
+   '"contingência" não aparece no documento). 9 dos 17 falsos da medição agregada da 0185 '
+   '(21/09/2026) eram deste tipo — o único com a contagem registrada. Nenhuma função SQL lê '
+   'CONTINGENCIAS.',
    'Contingência provável que não bate com Provisões do BP passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('DEBITOS_TRIB', 'sem_consumidor', null,
-   'Relatório itemizado (por tributo/competência). Exigência lexical da mesma forma medida falsa em '
-   '17/17 (0185, reprovada, 21/09/2026). Nenhuma função SQL lê DEBITOS_TRIB; zero documentos em '
-   'produção.',
+   'Relatório itemizado (por tributo/competência). ZERO documentos em produção (22/09/2026): nada '
+   'foi medido para este tipo. Fica sem exigência pela FORMA (itemizado, o mesmo motivo que '
+   'reprovou a 0185 nos tipos que tinham documento), não por medição dele. Nenhuma função SQL lê '
+   'DEBITOS_TRIB.',
    'Débito tributário/parcelamento que não bate com Tributos a recolher/parcelamentos do BP passa '
    'sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('ESTOQUE', 'sem_consumidor', null,
    'Relatório itemizado (o rótulo é o SKU — 484 linhas como "2500 - ASSALA PRIME" no mandato real). '
-   'Exigência lexical medida falsa em 17/17 (0185, reprovada, 21/09/2026). Nenhuma função SQL lê '
-   'ESTOQUE.',
+   'A exigência lexical da 0185 foi reprovada em 21/09/2026: ESTOQUE é parte dos 17 falsos da '
+   'medição AGREGADA sobre os nove tipos (a contagem por tipo não foi registrada). Nenhuma função '
+   'SQL lê ESTOQUE.',
    'Posição de estoque que não soma Estoques do BP passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('HEADCOUNT', 'sem_consumidor', null,
-   'Relatório itemizado (o rótulo é o centro de custo; a unidade é PESSOAS). Exigência lexical '
-   'medida falsa em 17/17 (0185, reprovada, 21/09/2026). Nenhuma função SQL lê HEADCOUNT.',
+   'Relatório itemizado (o rótulo é o centro de custo — "Produção - turno A"; a unidade é PESSOAS). '
+   'A exigência lexical da 0185 foi reprovada em 21/09/2026: HEADCOUNT (5 documentos em produção) é '
+   'parte dos 17 falsos da medição AGREGADA sobre os nove tipos (a contagem por tipo não foi '
+   'registrada). Nenhuma função SQL lê HEADCOUNT.',
    'Headcount não é confrontado com a despesa de pessoal da DRE: folha que cresce com quadro '
    'estável (ou o contrário) passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
 
   -- ---- os outros itemizados/relatórios sem leitor --------------------------
   ('FAT_INTRAGRUPO', 'sem_consumidor', null,
@@ -279,31 +339,31 @@ values
    'intragrupo de BALANÇO, não lê este documento.',
    'Faturamento intragrupo não é confrontado com a eliminação do COMBINADO nem com o '
    'FATURAMENTO_24M: receita intragrupo não eliminada no combinado passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('APLIC_FINANC', 'sem_consumidor', null,
    'Relatório itemizado (aplicação a aplicação; abertura analítica, 0150). Nenhuma função SQL lê '
    'APLIC_FINANC; zero documentos em produção.',
    'Posição de aplicações que não bate com Aplicações financeiras/Caixa e equivalentes do BP passa '
    'sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('RAZAO', 'sem_consumidor', null,
    'Abertura analítica lançamento a lançamento (0150). Só o desempate (fn_conflitos_do_caso, 0151) '
    'o lê, e só quando seção canônica e rótulo coincidem com outro documento — desempate não '
    'confere. fn_linhas_do_realizado o exclui (abertura_analitica).',
    'Saldo final do razão que não bate com a conta do BP passa sem aviso, salvo rótulo idêntico.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('SITUACAO_FISCAL', 'sem_consumidor', null,
    'Relatório da RFB/PGFN itemizado por débito/pendência, em boa parte não numérico. Nenhuma '
    'função SQL lê SITUACAO_FISCAL.',
    'Débito ativo ou inscrito em dívida ativa que o relatório mostra não é confrontado com '
    'DEBITOS_TRIB nem com o BP: passivo fiscal fora do balanço passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('SPED', 'sem_consumidor', null,
    'Arquivo digital (ECD/ECF) sem extração estruturada no pipeline hoje. Nenhuma função SQL lê '
    'SPED; zero documentos em produção.',
    'Nada do SPED é confrontado com as demonstrações entregues: balanço gerencial que diverge do '
    'escriturado passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
 
   -- ---- demonstrações que só o desempate/realizado leem ---------------------
   ('DVA', 'sem_consumidor', null,
@@ -312,13 +372,13 @@ values
    'soma leem, não conferem.',
    'Receita e distribuição do valor adicionado que não batem com a DRE passam sem aviso, salvo '
    'rótulo idêntico ao da DRE.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('DMPL', 'sem_consumidor', null,
    'Só fn_conflitos_do_caso (0151, desempate) e fn_linhas_do_realizado (0150) a leem; nenhuma '
    'checagem confere a DMPL contra o PL do BP.',
    'PL final da DMPL que não bate com o Patrimônio líquido do BP passa sem aviso, salvo rótulo '
    'idêntico; movimentação do PL (dividendos, aumento de capital) não é lida por ninguém.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('NOTAS_EXPL', 'sem_consumidor', null,
    'Só fn_conflitos_do_caso (0151, desempate) e fn_linhas_do_realizado (0150) a leem. Medido na '
    'fixture canastra: NOTAS_EXPL 7.825 × BALANCO 7.822 no mesmo rótulo — o desempate COMPARA, '
@@ -326,7 +386,7 @@ values
    'Nota explicativa (abertura de dívida, imobilizado, partes relacionadas) que discorda do BP só '
    'aparece quando rótulo e seção canônica coincidem; o que a nota abre e o BP não mostra não é '
    'lido.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
 
   -- ---- documentos não numéricos por natureza -------------------------------
   ('CERTIDOES', 'sem_consumidor', null,
@@ -334,42 +394,42 @@ values
    '0 com linha (22/09/2026). A 0111 já trata a ausência de linha como acerto, não como falha.',
    'Certidão POSITIVA (débito existente) não vira alerta: nada lê o conteúdo; o checklist só conta '
    'que ela chegou.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('ORGANOGRAMA', 'sem_consumidor', null,
    'Documento não numérico por natureza: 19 documentos em produção, 0 com linha (22/09/2026).',
    'A participação societária desenhada no organograma não é confrontada com '
    'entidade.controladora_id (0181) nem com o perímetro do combinado (0180).',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('CONTRATO_SOCIAL', 'sem_consumidor', null,
    'Documento de cláusulas; o único número é o capital social. A exigência proposta capital_social '
    '(0113) continua ATIVA e ganhou, na 0187, um localizador por seção — mas ela confere PRESENÇA, '
    'não o número. Nenhuma função SQL confere o valor.',
    'Capital social do contrato não é confrontado com o Capital social do BP; composição societária '
    'e cláusula de administração não são lidas por ninguém.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('DOCS_SOCIOS', 'sem_consumidor', null,
    'Documentos pessoais dos sócios (identidade, IR), não numéricos para o book e com sensibilidade '
    'LGPD. Nenhuma função SQL lê DOCS_SOCIOS; zero documentos em produção.',
    'Garantia pessoal ou patrimônio de sócio declarado não é cruzado com AVAIS_FIANCAS nem com a '
    'dívida.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('CONTRATO_DIVIDA', 'sem_consumidor', null,
    'Contrato (cláusulas de taxa, prazo, covenant, garantia) sem linha numérica padronizada. Nenhuma '
    'função SQL lê CONTRATO_DIVIDA; zero documentos em produção.',
    'Taxa, vencimento e covenants do contrato não são confrontados com o MAPA_DIVIDA: mapa que '
    'diverge do contrato passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('CONTRATOS_COM', 'sem_consumidor', null,
    'Contratos comerciais, não numéricos em linha. Nenhuma função SQL lê CONTRATOS_COM; zero '
    'documentos em produção.',
    'Exclusividade, change of control e concentração de cliente em contrato não são lidas.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('CONTRATOS_IC', 'sem_consumidor', null,
    'Contratos intercompany, não numéricos em linha. Nenhuma função SQL lê CONTRATOS_IC; zero '
    'documentos em produção.',
    'Contrato intercompany não é confrontado com FAT_INTRAGRUPO nem com os mútuos: preço de '
    'transferência e obrigação entre empresas do grupo passam sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
 
   -- ---- projeções: não são realizado -----------------------------------------
   ('FLUXO_PROJETADO', 'sem_consumidor', null,
@@ -377,18 +437,18 @@ values
    'lê FLUXO_PROJETADO; zero documentos em produção.',
    'A projeção do cliente não é comparada com o modelo do book: premissa do cliente mais otimista '
    'que a do modelo passa sem aviso.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('PLANO_NEGOCIOS', 'sem_consumidor', null,
    'Documento narrativo/projetivo. Nenhuma função SQL lê PLANO_NEGOCIOS; zero documentos em '
    'produção.',
    'Metas do plano de negócios não são confrontadas com o modelo nem com o realizado.',
-   '2026-09-22'),
+   '2026-09-22', null, null),
   ('PREMISSAS', 'sem_consumidor', null,
    'Premissas enviadas pelo cliente (documento, não premissa_catalogo). Nenhuma função SQL lê '
    'documentos PREMISSAS; zero documentos em produção.',
    'Premissa do cliente não é comparada com a premissa do modelo (premissa_catalogo, 0038): '
    'divergência entre as duas passa sem aviso.',
-   '2026-09-22')
+   '2026-09-22', null, null)
 on conflict (tipo_taxonomia) do nothing;
 
 -- -----------------------------------------------------------------------------
@@ -402,6 +462,7 @@ returns table (
   estado_declarado  text,
   consumidor        text,
   consumidor_existe boolean,
+  marcador_presente boolean,
   veredito          text
 )
 language sql stable
@@ -421,13 +482,26 @@ as $$
                 else exists (select 1 from pg_proc p
                                join pg_namespace ns on ns.oid = p.pronamespace
                               where ns.nspname = 'public' and p.proname = c.consumidor)
-           end as consumidor_existe
+           end as consumidor_existe,
+           -- 0187 (revisão): o nome em pg_proc não prova que a função AINDA lê
+           -- o tipo. O marcador precisa estar no corpo PUBLICADO, com o \r
+           -- tirado dos dois lados — produção guarda corpo com CRLF
+           -- (.claude/memory/ancora-de-texto-quebra-com-crlf.md).
+           case when c.marcador is null then null
+                else exists (select 1 from pg_proc p
+                               join pg_namespace ns on ns.oid = p.pronamespace
+                              where ns.nspname = 'public' and p.proname = c.marcador_em
+                                and p.prokind = 'f'
+                                and position(replace(c.marcador, E'\r', '')
+                                             in replace(pg_get_functiondef(p.oid), E'\r', '')) > 0)
+           end as marcador_presente
       from taxonomia_tipo_documento t
       left join vivas v on v.tipo_taxonomia = t.codigo
       left join taxonomia_tipo_cobertura c on c.tipo_taxonomia = t.codigo
      where t.ativo
   )
   select b.codigo, b.obrigatoriedade, b.n_vivas, b.estado, b.consumidor, b.consumidor_existe,
+         b.marcador_presente,
          case
            -- Duplo registro: o tipo ganhou exigência viva e a declaração ficou.
            -- Ela envelhece calada (o consumidor pode sumir, o motivo mentir), e
@@ -437,6 +511,10 @@ as $$
            when not b.declarado                          then 'SEM_COBERTURA'
            when b.estado = 'consumidor_nomeado'
             and not b.consumidor_existe                  then 'DECLARACAO_QUEBRADA'
+           -- O consumidor existe mas o trecho que faz a leitura sumiu do corpo
+           -- (do dele ou do despachante que o chama): a declaração mente.
+           when b.estado = 'consumidor_nomeado'
+            and not coalesce(b.marcador_presente, false) then 'DECLARACAO_QUEBRADA'
            when b.estado = 'consumidor_nomeado'          then 'consumidor_nomeado'
            else 'sem_consumidor_declarado'
          end
@@ -444,20 +522,29 @@ as $$
    order by b.codigo;
 $$;
 
+-- MEDIDO (regra 2, 22/09/2026): sem o ramo do marcador, 3 asserts — os 2 do
+-- bloco 3b de cobertura_de_tipos.test.sql (despachante sem 'BALANCETE' fica
+-- consumidor_nomeado; a sonda D6 fica verde) + 1 de instalacao.test.sql (o
+-- requisito cobertura_confere_marcador). Sem o check do marcador na tabela: 1
+-- (o insert de consumidor_nomeado sem marcador passa). DF_AUDITADA de volta a
+-- consumidor_nomeado: 1.
 comment on function fn_cobertura_de_tipos() is
   '0187 — portão D6. Uma linha por tipo ATIVO da taxonomia. D6 estrito = nenhuma linha com '
   'veredito SEM_COBERTURA (sem exigência viva e sem declaração) nem DECLARACAO_QUEBRADA '
-  '(consumidor nomeado que não existe em pg_proc, ou declaração para tipo que já tem exigência '
-  'viva). Não depende de documento: roda igual no banco de teste e em produção.';
+  '(consumidor nomeado que não existe em pg_proc, marcador que sumiu do corpo de marcador_em, ou '
+  'declaração para tipo que já tem exigência viva). Não depende de documento: roda igual no banco '
+  'de teste e em produção.';
 
 grant execute on function public.fn_cobertura_de_tipos() to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- (c) AS EXIGÊNCIAS LEXICAIS QUE ERAM FALSAS
 -- -----------------------------------------------------------------------------
--- A LINHA FICA (ativo=false): pergunta_catalogo tem FK para (tipo, conceito), a
--- trilha das pendências antigas cita o motivo, e fn_sugerir_perguntas continua
--- lendo os localizadores de MUTUOS como léxico do {saldo_mutuos} (ver (e)).
+-- A LINHA FICA (ativo=false): pergunta_catalogo tem FK para (tipo, conceito) e
+-- a trilha das pendências antigas cita o motivo. (A primeira versão desta
+-- migration também deixava fn_sugerir_perguntas lendo os localizadores dela
+-- como léxico do {saldo_mutuos}; desde a revisão o saldo não lê léxico
+-- nenhum — ver (e).)
 update taxonomia_linha_exigida
    set ativo = false,
        descricao = descricao || ' | DESATIVADA na 0187 (22/09/2026): relatório itemizado, o '
@@ -596,12 +683,245 @@ begin
 end $$;
 
 -- -----------------------------------------------------------------------------
--- (e) fn_sugerir_perguntas — REEMITIDA INTEIRA (corpo da 0122)
+-- (e) O SALDO DE MÚTUOS DA PERGUNTA 5.1 — o documento É o conceito
+-- -----------------------------------------------------------------------------
+-- A 0122 somava as linhas do MUTUOS cujo RÓTULO casasse o léxico da exigência
+-- MUTUOS/saldo_de_mutuo (['mutuo'] exclui ['total']). A primeira versão desta
+-- migration só tirou o filtro `e.ativo` desse léxico. A revisão independente
+-- (22/09/2026) mediu que isso não basta, porque o defeito é a premissa, não o
+-- filtro (`.claude/memory/conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md`):
+--   (a) NO ARRANJO REAL (fixture canastra, documento
+--       44444444-3333-0000-0000-000000000014 — as chaves são o PAR de empresas,
+--       "CANASTRA PARTICIPAÇÕES S.A. → CANASTRA INDÚSTRIA…" 11.160 e "… →
+--       CANASTRA COMERCIAL…" 4.900, e "TOTAL" 16.060; a palavra "mútuo" só está
+--       na seção) nenhuma linha casa 'mutuo' e a pergunta ao CLIENTE dizia
+--       "(não localizado)" — ausência apresentada como dado (regra 1);
+--   (b) com um localizador que casasse item E total, a soma contava os dois:
+--       "Mútuo a receber - Beta" 100 + "Mútuo a pagar - Gama" 50 + "Saldo total
+--       dos mútuos" 150 saía "R$ 300 mil" (certo: 150);
+--   (c) no documento MATRICIAL (Saldo 2024 7.991 / Juros 1.088 / Saldo 2025
+--       11.079 na mesma linha, 0145 "o conceito que mora na coluna") a soma
+--       atravessava as colunas: "R$ 20.158 mil" (certo: 11.079).
+--
+-- O DESENHO. Num relatório itemizado o conceito é o TIPO do documento: toda
+-- linha com valor de um MUTUOS é mútuo. O que falta decidir é só QUAIS linhas
+-- somar, e isso é estrutural, não lexical:
+--   1. A COLUNA. Uma só (ou nenhuma) → ela. Várias → a do exercício MAIS
+--      RECENTE (fn_anos_texto no cabeçalho, o mesmo de fn_coluna_periodo_do_ano);
+--      empate no ano → a única cujo cabeçalho diz "saldo". Nenhuma coluna com
+--      ano, ou empate sem "saldo" → NÃO APURA, e diz por quê.
+--   2. A LINHA DE TOTAL GERAL, se existir: rótulo com a palavra total/subtotal/
+--      soma e, tiradas as palavras de ligação (fn_tokens_estruturais, 0034/0102),
+--      nada além do vocabulário do próprio documento (saldo, mútuo, empréstimo,
+--      intragrupo, partes relacionadas, grupo, operações). "TOTAL" e "Saldo total
+--      dos mútuos" são; "Total a receber" NÃO é (é subtotal de um lado).
+--      Dois totais gerais com valores diferentes → NÃO APURA.
+--   3. SEM TOTAL GERAL: a soma dos ITENS (linhas sem a palavra total), numa
+--      escala só. Subtotal parcial nunca entra na soma. Escalas diferentes → NÃO
+--      APURA (não se soma às cegas).
+-- NÃO APURAR é uma resposta: a pergunta diz "não foi possível apurar o saldo"
+-- e o porquê — nunca um número somado de linhas que não se somam.
+--
+-- O QUE ISTO NÃO FAZ: não separa mútuo de conta corrente ou aluguel
+-- intragrupo listados na mesma planilha (fn_reconciliar_mutuos, 0123, faz isso
+-- pelos degraus de rótulo/seção, e a pergunta é sobre o perímetro das
+-- operações, não sobre a natureza), nem tira o mútuo com sócio.
+--
+-- Função PURA sobre as linhas (jsonb), separada da que lê o banco, para a
+-- sonda de instalação poder EXECUTÁ-LA sobre os três arranjos acima em
+-- produção (instalacao_sonda_saldo_mutuos) — um marcador de texto não prova
+-- comportamento, uma função executada prova (a lição da 0157).
+-- As linhas com valor, normalizadas uma vez. Indicador derivado (taxa, prazo
+-- médio — fn_papel_linha) não é saldo e não entra.
+create or replace function fn_saldo_mutuos_linhas(p_linhas jsonb)
+returns table (chave text, valor numeric, unidade text, coluna text, eh_total boolean,
+               eh_total_geral boolean)
+language sql immutable
+as $$
+  select x->>'chave', (x->>'valor')::numeric, nullif(btrim(x->>'unidade'), ''),
+         coalesce(nullif(btrim(x->>'coluna'), ''), ''),
+         t.eh_total,
+         t.eh_total and fn_tokens_estruturais(x->>'chave')
+                        <@ array['saldo','saldos','mutuo','mutuos','emprestimo','emprestimos',
+                                 'intragrupo','partes','relacionadas','grupo','operacoes',
+                                 'operacao','entre','empresas']::text[]
+    from jsonb_array_elements(coalesce(p_linhas, '[]'::jsonb)) x
+    cross join lateral (select fn_normalizar_texto(x->>'chave')
+                               ~ '(^|[^a-z])(total|totais|subtotal|soma|somatorio)([^a-z]|$)'
+                               as eh_total) t
+   where x->>'valor' is not null
+     and fn_papel_linha(x->>'chave') <> 'derivado';
+$$;
+
+create or replace function fn_saldo_mutuos_do_documento(p_linhas jsonb)
+returns jsonb
+language plpgsql immutable
+as $$
+declare
+  v_n        int;
+  v_cols     text[];
+  v_ano      int;
+  v_cand     text[];
+  v_col      text;
+  v_tot_n    int;
+  v_tot_vals numeric[];
+  v_tot_unid text[];
+  v_it_n     int;
+  v_it_unid  text[];
+  v_soma     numeric;
+begin
+  select count(*)::int, array_agg(distinct l.coluna order by l.coluna)
+    into v_n, v_cols from fn_saldo_mutuos_linhas(p_linhas) l;
+  if v_n = 0 then
+    return jsonb_build_object('valor', null, 'porque', null, 'n_linhas', 0);
+  end if;
+
+  -- 1. A COLUNA
+  if cardinality(v_cols) = 1 then
+    v_col := v_cols[1];
+  else
+    select max(a) into v_ano from unnest(v_cols) c, unnest(fn_anos_texto(c)) a;
+    if v_ano is null then
+      return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+        format('a relação tem %s colunas de valor (%s) e nenhuma diz o exercício — somá-las '
+               'misturaria saldo com juros ou com o ano anterior',
+               cardinality(v_cols), array_to_string(v_cols, ', ')));
+    end if;
+    select array_agg(c order by c) into v_cand from unnest(v_cols) c
+     where v_ano = any (fn_anos_texto(c));
+    if cardinality(v_cand) > 1 then
+      select array_agg(c order by c) into v_cand from unnest(v_cand) c
+       where fn_normalizar_texto(c) like '%saldo%';
+    end if;
+    if coalesce(cardinality(v_cand), 0) <> 1 then
+      return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+        format('a relação tem mais de uma coluna do exercício %s (%s) e nenhuma é, sozinha, a '
+               'do saldo', v_ano, array_to_string(v_cols, ', ')));
+    end if;
+    v_col := v_cand[1];
+  end if;
+
+  -- 2. O TOTAL GERAL
+  select count(*)::int, array_agg(distinct l.valor order by l.valor),
+         array_agg(distinct coalesce(l.unidade, '') order by coalesce(l.unidade, ''))
+    into v_tot_n, v_tot_vals, v_tot_unid
+    from fn_saldo_mutuos_linhas(p_linhas) l
+   where l.coluna = v_col and l.eh_total_geral;
+  if v_tot_n > 0 then
+    if cardinality(v_tot_vals) = 1 and cardinality(v_tot_unid) = 1 then
+      return jsonb_build_object('valor', v_tot_vals[1], 'unidade', nullif(v_tot_unid[1], ''),
+        'forma', 'linha_de_total', 'coluna', nullif(v_col, ''), 'n_linhas', v_n, 'porque', null);
+    end if;
+    return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+      format('a relação tem %s linhas de total geral que não concordam entre si', v_tot_n));
+  end if;
+
+  -- 3. A SOMA DOS ITENS
+  select count(*), array_agg(distinct coalesce(l.unidade, '') order by coalesce(l.unidade, '')),
+         sum(l.valor)
+    into v_it_n, v_it_unid, v_soma
+    from fn_saldo_mutuos_linhas(p_linhas) l
+   where l.coluna = v_col and not l.eh_total;
+  if v_it_n = 0 then
+    return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+      'a relação só traz subtotais parciais, sem total geral nem os itens');
+  end if;
+  if cardinality(v_it_unid) > 1 then
+    return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+      'as linhas da relação estão em escalas diferentes');
+  end if;
+  return jsonb_build_object('valor', v_soma, 'unidade', nullif(v_it_unid[1], ''),
+    'forma', 'soma_dos_itens', 'coluna', nullif(v_col, ''), 'n_itens', v_it_n,
+    'n_linhas', v_n, 'porque', null);
+end;
+$$;
+
+comment on function fn_saldo_mutuos_do_documento(jsonb) is
+  '0187 (revisão): o saldo de UMA relação de mútuos a partir das linhas com valor '
+  '([{chave, valor, unidade, coluna}]). Coluna do exercício mais recente; linha de total geral se '
+  'houver, senão a soma dos itens numa escala só. Devolve {valor, unidade, forma, coluna} ou '
+  '{valor: null, porque} quando não dá para apurar com segurança — nunca uma soma cega. Pura: a '
+  'sonda instalacao_sonda_saldo_mutuos a executa sobre literais.';
+
+-- O TEXTO DO {saldo_mutuos}, para o caso. Relação de mútuos é documento do
+-- GRUPO (fn_reconciliar_mutuos, 0123): o esperado é UMA por caso. Entre várias,
+-- valem só as do período mais recente; se ainda sobra mais de uma, não há
+-- "o" saldo do caso para citar ao cliente, e a pergunta diz isso em vez de
+-- somar relações que podem ser a mesma planilha em duas datas.
+create or replace function fn_saldo_mutuos_texto(p_caso_id uuid)
+returns text
+language sql stable
+as $$
+  with docs as (
+    select d.id, dv.nome_original,
+           (select max(a) from unnest(fn_anos_do_periodo(p.referencia)) a) as ano,
+           fn_saldo_mutuos_do_documento((
+             select jsonb_agg(jsonb_build_object('chave', ce.chave, 'valor', ce.valor_num,
+                                                 'unidade', ce.unidade,
+                                                 'coluna', ce.periodo_coluna))
+               from campo_extraido ce
+              where ce.documento_versao_id = dv.id and ce.valor_num is not null)) as r
+      from documento d
+      join documento_versao dv on dv.id = fn_versao_com_extracao(d.id)
+      left join periodo p on p.id = d.periodo_id
+     where d.caso_id = p_caso_id
+       and d.tipo_taxonomia = 'MUTUOS'
+  ),
+  com_valor as (
+    select * from docs where coalesce((r->>'n_linhas')::int, 0) > 0
+  ),
+  recentes as (
+    select * from com_valor
+     where ano is not distinct from (select max(ano) from com_valor)
+        or (select max(ano) from com_valor) is null
+  )
+  select case
+    when count(*) = 0 then null
+    when count(*) = 1 then
+      coalesce(fn_valor_pt_br(max((r->>'valor')::numeric), max(r->>'unidade')),
+               '(não foi possível apurar o saldo: ' || max(r->>'porque') || ' — conferir na relação enviada)')
+    when count(*) filter (where r->>'valor' is null) > 0 then
+      '(não foi possível apurar o saldo: ' || string_agg(nome_original || ' — ' || (r->>'porque'), '; ')
+        filter (where r->>'valor' is null) || ')'
+    when count(distinct coalesce(r->>'unidade', '')) > 1 then '(valores em escalas mistas — conferir)'
+    else format('(não foi possível apurar um saldo único: o caso tem %s relações de mútuos do mesmo '
+                'exercício — conferir qual vale)', count(*))
+  end
+  from recentes;
+$$;
+
+-- MEDIDO (regra 2, 22/09/2026, banco montado do zero com a correção
+-- desligada, contando todos os arquivos de teste sem parar no primeiro):
+--   • CTE de volta ao léxico (o corpo da primeira versão): 5 asserts — os 4 do
+--     bloco 13 de perguntas.test.sql (canastra real "(não localizado)"; item +
+--     total "R$ 300 mil"; matricial e sem-exercício "(não localizado)", porque a
+--     chave é o par de empresas) + 1 de instalacao.test.sql (o requisito de
+--     corpo saldo_mutuos_nao_depende_da_cobranca);
+--   • linha de total NÃO excluída dos itens: 3 — canastra "R$ 32.120 mil",
+--     item + total "R$ 300 mil", e a sonda instalacao_sonda_saldo_mutuos;
+--   • coluna NÃO escolhida (a primeira, qualquer que seja): 3 — matricial
+--     "R$ 1.088 mil" (a coluna de juros), sem-exercício "R$ 120 mil", e a sonda.
+comment on function fn_saldo_mutuos_texto(uuid) is
+  '0187 (revisão): o texto do marcador {saldo_mutuos} da pergunta 5.1. NULL sem relação de mútuos '
+  'com valor (a pergunta diz "(não localizado)"); o saldo em reais quando UMA relação do período '
+  'mais recente o apura; "(não foi possível apurar…)" com o motivo em qualquer outro caso.';
+
+-- O portal chama fn_sugerir_perguntas como `authenticated` (grant da 0120), e
+-- ela chama estas três: em produção o Supabase não dá EXECUTE público a função
+-- nova (ver o comentário de privilégio no Supabase/test/run.sh), e sem o grant
+-- a aba de perguntas recebe "permission denied" — a 0028 de novo.
+grant execute on function public.fn_saldo_mutuos_linhas(jsonb) to authenticated;
+grant execute on function public.fn_saldo_mutuos_do_documento(jsonb) to authenticated;
+grant execute on function public.fn_saldo_mutuos_texto(uuid) to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- (e2) fn_sugerir_perguntas — REEMITIDA INTEIRA (corpo da 0122)
 -- -----------------------------------------------------------------------------
 -- Mesma função da 0122, texto obtido por pg_get_functiondef do banco montado
 -- do zero (nunca corrigida por replace — .claude/memory/nunca-corrigir-funcao-por-replace.md),
--- com UMA mudança, marcada `0187:` no saldo_mutuos. O grant da 0120 continua
--- valendo (create or replace preserva privilégios).
+-- com UMA mudança, marcada `0187:` no saldo_mutuos: o CTE passa a ser
+-- fn_saldo_mutuos_texto (acima), e não lê mais léxico de exigência nenhuma. O
+-- grant da 0120 continua valendo (create or replace preserva privilégios).
 CREATE OR REPLACE FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid)
  RETURNS TABLE(codigo text, titulo text, prioridade integer, entidade text, entidade_id uuid, pergunta text, motivo text, risco text, impacto text, gatilho text, fonte text, ja_enviada boolean)
  LANGUAGE sql
@@ -633,50 +953,14 @@ AS $function$
       and ((pc.gatilho_especie = 'exigencia_ausente' and not x.satisfeita)
         or (pc.gatilho_especie = 'linha_presente' and x.satisfeita))
   ),
-  -- {saldo_mutuos}: soma das linhas que casam MUTUOS:saldo_de_mutuo na versão
-  -- vigente. Escala única acompanha; escalas mistas NÃO são somadas às cegas.
+  -- {saldo_mutuos}: 0187 — o saldo da relação de mútuos como a RELAÇÃO o diz
+  -- (linha de total geral, senão soma dos itens, na coluna do exercício mais
+  -- recente), ou "(não foi possível apurar…)" com o motivo. Era a soma das
+  -- linhas cujo rótulo casava o léxico MUTUOS/saldo_de_mutuo, e no arranjo
+  -- real (o rótulo é o par de empresas) nada casava: a pergunta ao cliente
+  -- dizia "(não localizado)" sobre um saldo que está no documento.
   saldo_mutuos as (
-    select case
-      when count(*) = 0 then null
-      when count(distinct coalesce(c.unidade, '')) > 1 then '(valores em escalas mistas — conferir)'
-      -- 0122: era `sum(valor)::text || ' ' || unidade`, que produzia
-      -- "16060 milhar" no texto enviado ao cliente.
-      else fn_valor_pt_br(sum(c.valor_num), max(nullif(c.unidade, '')))
-    end as txt
-    from (
-      select ce.valor_num, ce.unidade
-      from documento d
-      join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
-      where d.caso_id = p_caso_id
-        and d.tipo_taxonomia = 'MUTUOS'
-        and ce.valor_num is not null
-        and exists (
-          select 1
-          from taxonomia_linha_exigida e
-          join taxonomia_linha_localizador l on l.exigencia_id = e.id
-          -- 0187: A DESATIVAÇÃO DESLIGA A COBRANÇA, NÃO O LÉXICO. A exigência
-          -- MUTUOS/saldo_de_mutuo saiu do Portão 1 (relatório itemizado: 1 de 1
-          -- pendência aberta em produção era falsa), mas os localizadores dela
-          -- continuam sendo o que diz "esta linha é saldo de mútuo" para somar o
-          -- marcador. Com `and e.ativo`, a pergunta 5.1 ao cliente passaria a
-          -- dizer "(não localizado)" sobre um saldo que está no documento.
-          where e.tipo_taxonomia = 'MUTUOS' and e.conceito = 'saldo_de_mutuo'
-            and (e.ativo or e.conceito = 'saldo_de_mutuo')
-            and case
-              when l.contra = 'estrutural' then fn_rotulo_estrutural(ce.chave, l.termos_inclui)
-              else
-                not exists (
-                  select 1 from unnest(l.termos_inclui) t
-                  where fn_normalizar_texto(case when l.contra = 'secao'
-                                            then coalesce(ce.secao, '') else ce.chave end)
-                    not like '%' || fn_normalizar_texto(t) || '%')
-                and not exists (
-                  select 1 from unnest(l.termos_exclui) t
-                  where fn_normalizar_texto(case when l.contra = 'secao'
-                                            then coalesce(ce.secao, '') else ce.chave end)
-                    like '%' || fn_normalizar_texto(t) || '%')
-            end)
-    ) c
+    select fn_saldo_mutuos_texto(p_caso_id) as txt
   )
   select pc.codigo, pc.titulo, pc.prioridade, di.entidade, di.entidade_id,
          -- A ENTIDADE ENTRA COMO PREFIXO, e não reescrevendo o texto da entrega.
@@ -770,6 +1054,50 @@ comment on view instalacao_sonda_exigencias_0187 is
 
 grant select on instalacao_sonda_exigencias_0187 to authenticated;
 
+-- O SALDO DA PERGUNTA 5.1 COMO COMPORTAMENTO, não como texto de corpo. A
+-- primeira versão desta migration usava como marcador `(e.ativo or e.conceito
+-- = 'saldo_de_mutuo')`, que é verdadeiro por construção (o `where` logo acima
+-- já fixa o conceito) — um marcador que não prova nada. Aqui a função pura é
+-- EXECUTADA em produção sobre os arranjos que a revisão mediu, e cada linha
+-- só aparece se o resultado for o certo.
+create or replace view instalacao_sonda_saldo_mutuos as
+  with casos(arranjo, linhas, esperado) as (values
+    ('canastra_par_de_empresas_e_TOTAL', jsonb_build_array(
+       jsonb_build_object('chave', 'CANASTRA PARTICIPAÇÕES S.A. → CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.',
+                          'valor', 11160, 'unidade', 'milhar', 'coluna', '2025'),
+       jsonb_build_object('chave', 'CANASTRA PARTICIPAÇÕES S.A. → CANASTRA COMERCIAL E DISTRIBUIDORA LTDA.',
+                          'valor', 4900, 'unidade', 'milhar', 'coluna', '2025'),
+       jsonb_build_object('chave', 'TOTAL', 'valor', 16060, 'unidade', 'milhar', 'coluna', '2025')),
+     16060::numeric),
+    ('itens_e_total_geral', jsonb_build_array(
+       jsonb_build_object('chave', 'Mútuo a receber - Beta', 'valor', 100, 'unidade', 'milhar'),
+       jsonb_build_object('chave', 'Mútuo a pagar - Gama', 'valor', 50, 'unidade', 'milhar'),
+       jsonb_build_object('chave', 'Saldo total dos mútuos', 'valor', 150, 'unidade', 'milhar')),
+     150::numeric),
+    ('matricial_saldo_juros_saldo', jsonb_build_array(
+       jsonb_build_object('chave', 'Alfa → Beta', 'valor', 7991, 'unidade', 'milhar', 'coluna', 'Saldo 2024'),
+       jsonb_build_object('chave', 'Alfa → Beta', 'valor', 1088, 'unidade', 'milhar', 'coluna', 'Juros'),
+       jsonb_build_object('chave', 'Alfa → Beta', 'valor', 11079, 'unidade', 'milhar', 'coluna', 'Saldo 2025')),
+     11079::numeric),
+    ('duas_colunas_sem_exercicio', jsonb_build_array(
+       jsonb_build_object('chave', 'Alfa → Beta', 'valor', 100, 'unidade', 'milhar', 'coluna', 'Saldo inicial'),
+       jsonb_build_object('chave', 'Alfa → Beta', 'valor', 120, 'unidade', 'milhar', 'coluna', 'Saldo final')),
+     null::numeric)
+  )
+  select c.arranjo
+    from casos c
+    cross join lateral (select fn_saldo_mutuos_do_documento(c.linhas) as r) x
+   where case when c.esperado is null
+              then x.r->>'valor' is null and coalesce(x.r->>'porque', '') <> ''
+              else (x.r->>'valor')::numeric = c.esperado end;
+
+comment on view instalacao_sonda_saldo_mutuos is
+  'Sonda da 0187 (revisão): uma linha por arranjo em que fn_saldo_mutuos_do_documento dá o saldo '
+  'CERTO (canastra real 16.060; item + total 150; matricial 11.079; sem exercício → não apura). '
+  'Quatro linhas.';
+
+grant select on instalacao_sonda_saldo_mutuos to authenticated;
+
 insert into instalacao_requisito
   (chave, migration, tipo, objeto, marcador, criterio_seed, porque, severidade, ordem) values
 
@@ -798,11 +1126,28 @@ insert into instalacao_requisito
    'importante', 793),
 
   ('saldo_mutuos_nao_depende_da_cobranca', '0187', 'corpo', 'fn_sugerir_perguntas',
-   '(e.ativo or e.conceito = ''saldo_de_mutuo'')', null,
-   'Com a exigência MUTUOS/saldo_de_mutuo desativada e fn_sugerir_perguntas da 0122, a pergunta 5.1 '
-   'ao CLIENTE diz "(não localizado)" sobre um saldo de mútuo que está no documento. O marcador é '
-   'o predicado que lê o léxico mesmo com a exigência inativa.',
-   'importante', 794)
+   'select fn_saldo_mutuos_texto(p_caso_id) as txt', null,
+   'Com fn_sugerir_perguntas da 0122, o {saldo_mutuos} da pergunta 5.1 ao CLIENTE soma as linhas '
+   'cujo rótulo casa o léxico de MUTUOS/saldo_de_mutuo: no arranjo real (o rótulo é o par de '
+   'empresas) diz "(não localizado)" sobre um saldo que está no documento, e com item + total '
+   'soma os dois. O marcador é o CTE que delega ao cálculo estrutural; o comportamento dele é o '
+   'requisito seguinte.',
+   'importante', 794),
+
+  ('saldo_mutuos_estrutural', '0187', 'seed', 'instalacao_sonda_saldo_mutuos', null, 4,
+   'fn_saldo_mutuos_do_documento EXECUTADA sobre quatro arranjos: o real da canastra (par de '
+   'empresas + TOTAL → 16.060), item + total (→ 150, não 300), matricial Saldo 2024/Juros/Saldo '
+   '2025 (→ 11.079, não 20.158) e duas colunas sem exercício (→ não apura, com motivo). Menos de '
+   'quatro linhas = o saldo que vai ao cliente na pergunta 5.1 está errado nesse arranjo — select '
+   '* from instalacao_sonda_saldo_mutuos diz qual passou.',
+   'importante', 795),
+
+  ('cobertura_confere_marcador', '0187', 'corpo', 'fn_cobertura_de_tipos',
+   'and not coalesce(b.marcador_presente, false) then ''DECLARACAO_QUEBRADA''', null,
+   'Sem este ramo, o consumidor nomeado que continua em pg_proc mas deixou de ler o tipo (o '
+   'despachante tirou ''BALANCETE'' da lista) mantém a declaração verde: D6 passa sobre uma '
+   'leitura que não acontece.',
+   'importante', 796)
 
 on conflict (chave) do update
   set migration = excluded.migration, tipo = excluded.tipo, objeto = excluded.objeto,
@@ -815,8 +1160,11 @@ update instalacao_cobertura
                     'exigência viva) e fn_cobertura_de_tipos (portão D6), desativa as exigências '
                     'lexicais proposta de MUTUOS e FAT_INTRAGRUPO, acrescenta localizador por seção '
                     'a CONTRATO_SOCIAL/capital_social, resolve de forma dirigida as pendências '
-                    'abertas que ficaram falsas, e reemite fn_sugerir_perguntas para o {saldo_mutuos} '
-                    'não depender da cobrança. A 0185 NÃO existe (descartada, nunca aplicada) e '
+                    'abertas que ficaram falsas, e reemite fn_sugerir_perguntas com o {saldo_mutuos} '
+                    'estrutural (fn_saldo_mutuos_texto: o documento é o conceito, total geral ou '
+                    'soma dos itens, coluna do exercício mais recente, e "não foi possível apurar" '
+                    'com o motivo). A declaração exige marcador no corpo de quem lê. A 0185 NÃO '
+                    'existe (descartada, nunca aplicada) e '
                     '0182-0184 são lacuna reservada: o catálogo não tem requisito para elas.';
 
 commit;

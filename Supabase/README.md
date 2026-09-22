@@ -376,15 +376,65 @@ supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_e
 # Esperado em 22/09/2026: 1 MUTUOS + 3 FAT_INTRAGRUPO + 1 CONTRATO_SOCIAL
 # abertas, 1 MUTUOS aceita_com_ressalva (esta NÃO é tocada pela migration —
 # mas o próximo recompute daquele caso a resolve, como faz com toda exigência
-# desativada; ver o cabeçalho). A do CONTRATO_SOCIAL só resolve se a versão
-# VIGENTE do documento tiver a seção "…Capital social" preenchida.
+# desativada; ver o cabeçalho). A do CONTRATO_SOCIAL dependia de a versão
+# VIGENTE do documento ter a seção "…Capital social" preenchida — MEDIDO em
+# produção (22/09/2026, somente leitura): na versão vigente do documento
+# 9ae9ca0b-7b6a-4fa1-bf23-ef3cc8805ffc (GLOBAL STORE), 4 das 6 linhas têm
+# `secao` com 'capital' e 'social'. Previsão: 5 resolvidas, 0 abertas.
+#
+# CORRIGIDA após revisão independente (22/09/2026, antes de qualquer apply):
+#   (a) o {saldo_mutuos} da pergunta 5.1 deixou de ler léxico: o documento
+#       MUTUOS é o conceito — coluna do exercício mais recente, linha de total
+#       geral se houver, senão a soma dos itens; quando não dá para apurar, a
+#       pergunta diz "não foi possível apurar o saldo" e o porquê. Sonda por
+#       COMPORTAMENTO: instalacao_sonda_saldo_mutuos (4 linhas);
+#   (b) taxonomia_tipo_cobertura ganhou marcador/marcador_em: o trecho que faz a
+#       leitura precisa estar no corpo publicado (\r removido), senão
+#       DECLARACAO_QUEBRADA — o nome em pg_proc sozinho não prova a leitura;
+#   (c) DF_AUDITADA passou a sem_consumidor (só é lida como balanço substituto);
+#       consumidores nomeados: MUTUOS e BALANCETE;
+#   (d) o motivo de cada tipo diz o que foi medido PARA ELE (zero documentos =
+#       nada medido; os demais = parte dos 17 da medição agregada da 0185).
 supabase db execute --file Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql
 # DEPOIS DESTA (o raise notice é efêmero):
 #   select resolvida_por, count(*) from pendencia
 #    where tipo = 'linha_exigida_ausente' and resolvida_por = 'sistema:0187' group by 1;
 #   select * from fn_cobertura_de_tipos()
 #    where veredito in ('SEM_COBERTURA', 'DECLARACAO_QUEBRADA');   -- D6 estrito: ZERO linhas
+#   select * from instalacao_sonda_saldo_mutuos;                   -- QUATRO linhas
 
+# A 0188 EXIGE A 0186 APLICADA ANTES, e desde a revisão de 22/09/2026 ela
+# mesma diz isso: o bloco (0) aborta a instalação com "0188 exige a 0186
+# aplicada antes" se a coluna reconciliacao.motivo_precondicao não existir OU
+# se fn_registrar_reconciliacao não tiver o corpo da 0186. Sem essa guarda a
+# 0188 instalava LIMPA sobre um banco sem a 0186 (plpgsql só resolve coluna
+# quando roda) e toda fn_reconciliar_* morria depois, em runtime — e o n8n
+# (PG_RETRY continueRegularOutput) seguia com ZERO reconciliações, sem erro
+# visível. Provado num banco descartável (22/09/2026): até a 0181 + 0187, SEM
+# a 0186 → a 0188 aborta com a mensagem e não deixa nada (0 das funções
+# novas); com a guarda desligada, a mesma 0188 instalava com rc=0; aplicada a
+# 0186 → a 0188 passa, e reaplicá-la também passa. Para refazer a prova:
+#   createdb tdf_guarda; <aplicar os pré-requisitos do run.sh e as migrations
+#   0001..0181 e a 0187>; psql -d tdf_guarda -f Supabase/migrations/0188_*.sql
+#   → ERROR: 0188 exige a 0186 aplicada antes: …; dropdb tdf_guarda
+#
+# E A TOLERÂNCIA DA DESPFIN (revisão, 22/09/2026): a 0188 reemite
+# fn_reconciliar_despfin_dre_vs_divida, e a reemissão corrige
+# `p_tolerancia_abs * fator` (R$ 50 MILHÕES numa DRE em milhar) para a
+# tolerância na BASE, greatest(R$ 50.000, 5%). Medido em produção: 1 das 33
+# despfin 'ok' era falsa (R$ 12.400.000 saindo "confere"); na próxima rodada
+# daquele caso ela vira zona_cinzenta e abre pendência. Receita (0023) e caixa
+# (0031) têm o mesmo `× fator` e NÃO foram corrigidas (não medidas) — ver o
+# cabeçalho, parte 4. O alcance, somente leitura, ANTES (fonte_a/fonte_b guardam
+# o ÚLTIMO exercício comparado, então isto é aproximado para linha de vários
+# anos; esperado em 22/09/2026: 1 de 33):
+#   select count(*) as ok_hoje, count(*) filter (where abs(a - b) > greatest(50000, 0.05 * a)) as viram_zona
+#     from (select abs(fn_valor_em_base((fonte_a->>'valor')::numeric, fonte_a->>'unidade')) as a,
+#                  abs(fn_valor_em_base((fonte_b->>'soma_juros')::numeric, fonte_b->>'unidade')) as b
+#             from reconciliacao where tipo = 'despfin_dre_vs_divida' and resultado = 'ok') x;
+# E o mesmo para as duas NÃO corrigidas (troque tipo, as chaves de fonte e o piso):
+# receita_dre_vs_faturamento (greatest(50000, 5%)) e caixa_bp_fluxo (greatest(100, 0,5%)).
+#
 # A 0188 (depois da 0186 — ela usa os três motivos reservados pelo CONTRATO da
 # 0186, e a guarda de vocabulário da 0186 os aceita) faz as quatro checagens que
 # emitiam a precondição genérica passarem o motivo ESPECÍFICO quando o código o

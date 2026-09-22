@@ -32,6 +32,16 @@
 --       ("R$ 16.060 mil", nunca "16060 milhar"), janela móvel que não vira ano
 --       (L36M não é 2036) e período POR EMPRESA — a pergunta sobre a Beta não
 --       cita o exercício que só a Alfa tem.
+--   #13 (0187, revisão) O SALDO DE MÚTUOS SEM LÉXICO: o documento MUTUOS é o
+--       conceito. O arranjo REAL (fixture canastra, chave = par de empresas +
+--       "TOTAL") sai "R$ 16.060 mil", não "(não localizado)"; item + total
+--       geral sai o total (150), não a soma dos dois (300); o documento
+--       matricial (Saldo 2024 / Juros / Saldo 2025) sai só a coluna do
+--       exercício mais recente (11.079), não 20.158; duas colunas sem
+--       exercício saem "não foi possível apurar" COM o motivo, e sem número.
+--       Os arranjos 2-4 são montados aqui (regra 4): os rótulos do matricial
+--       são os que a revisão mediu; o que se afirma é só a regra de soma. Este
+--       bloco NÃO para no primeiro erro — conta, para a medição da regra 2.
 
 \set ON_ERROR_STOP on
 
@@ -374,6 +384,75 @@ begin
     'o saldo de mútuos sai em reais, com separador de milhar', left(coalesce(v_txt, 'null'), 140));
 
   raise notice 'perguntas OK — A3 dispara e A1/A2 calam; sempre só com conteúdo; marcadores resolvidos ou visíveis; saldo por escala única; linha_presente pronta para o upgrade do dono; ação humana auditada; só leitura; append-only imposto; período por ano; pergunta com o nome da empresa; par (código, empresa) único para a paginação da aba; texto ao cliente em português (0122)';
+end $$;
+
+do $$
+declare
+  c_canastra constant uuid := '11111111-3333-3333-3333-111111111111';
+  v_caso  uuid;
+  v_r     jsonb;
+  v_txt   text;
+  v_falhas int := 0;
+  procedure_ok boolean;
+begin
+  raise notice '--- 13. {saldo_mutuos} estrutural: o documento é o conceito (0187, revisão) ---';
+
+  -- (a) O ARRANJO REAL: fixture canastra, documento ...0014, sem tocar nada.
+  select s.pergunta into v_txt from fn_sugerir_perguntas(c_canastra) s where s.codigo = '5.1';
+  procedure_ok := v_txt like '%R$ 16.060 mil%' and v_txt not like '%não localizado%';
+  raise notice '% canastra real (par de empresas + TOTAL) → R$ 16.060 mil — %',
+    case when procedure_ok then 'ok   ' else 'FALHOU:' end, left(coalesce(v_txt, 'null'), 120);
+  if not coalesce(procedure_ok, false) then v_falhas := v_falhas + 1; end if;
+
+  -- (b) itens + total geral no mesmo documento.
+  v_caso := (fn_upsert_caso('Caso perguntas — mútuos com total geral'))::uuid;
+  v_r := fn_registrar_documento(v_caso, 'Total Geral Ltda', 'anual', '2025', 'MUTUOS', 0.9,
+    'nome_arquivo', 'supabase_storage', 'bucket/mut-tot.pdf', 'Mutuos Total.pdf', true, 'HASH-PG-13B', 'ok');
+  perform fn_registrar_campos_extraidos((v_r->>'documento_versao_id')::uuid, '[
+    {"chave": "Mútuo a receber - Beta", "valor_num": "100", "unidade": "milhar", "confianca": "0.9"},
+    {"chave": "Mútuo a pagar - Gama",   "valor_num": "50",  "unidade": "milhar", "confianca": "0.9"},
+    {"chave": "Saldo total dos mútuos", "valor_num": "150", "unidade": "milhar", "confianca": "0.9"}
+  ]'::jsonb, 'N0');
+  select s.pergunta into v_txt from fn_sugerir_perguntas(v_caso) s where s.codigo = '5.1';
+  procedure_ok := v_txt like '%R$ 150 mil%' and v_txt not like '%R$ 300 mil%';
+  raise notice '% item + total geral → o total (R$ 150 mil), não a soma dos dois (R$ 300 mil) — %',
+    case when procedure_ok then 'ok   ' else 'FALHOU:' end, left(coalesce(v_txt, 'null'), 120);
+  if not coalesce(procedure_ok, false) then v_falhas := v_falhas + 1; end if;
+
+  -- (c) matricial: saldo do ano anterior, juros e saldo do ano na mesma linha.
+  v_caso := (fn_upsert_caso('Caso perguntas — mútuos matricial'))::uuid;
+  v_r := fn_registrar_documento(v_caso, 'Matricial Ltda', 'anual', '2025', 'MUTUOS', 0.9,
+    'nome_arquivo', 'supabase_storage', 'bucket/mut-mat.pdf', 'Mutuos Matricial.pdf', true, 'HASH-PG-13C', 'ok');
+  perform fn_registrar_campos_extraidos((v_r->>'documento_versao_id')::uuid, '[
+    {"chave": "CANASTRA PARTICIPAÇÕES S.A. → CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.", "valor_num": "7991",  "unidade": "milhar", "periodo_coluna": "Saldo 2024", "confianca": "0.9"},
+    {"chave": "CANASTRA PARTICIPAÇÕES S.A. → CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.", "valor_num": "1088",  "unidade": "milhar", "periodo_coluna": "Juros",      "confianca": "0.9"},
+    {"chave": "CANASTRA PARTICIPAÇÕES S.A. → CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.", "valor_num": "11079", "unidade": "milhar", "periodo_coluna": "Saldo 2025", "confianca": "0.9"}
+  ]'::jsonb, 'N0');
+  select s.pergunta into v_txt from fn_sugerir_perguntas(v_caso) s where s.codigo = '5.1';
+  procedure_ok := v_txt like '%R$ 11.079 mil%' and v_txt not like '%20.158%';
+  raise notice '% matricial → só a coluna do exercício mais recente (R$ 11.079 mil), não 20.158 — %',
+    case when procedure_ok then 'ok   ' else 'FALHOU:' end, left(coalesce(v_txt, 'null'), 120);
+  if not coalesce(procedure_ok, false) then v_falhas := v_falhas + 1; end if;
+
+  -- (d) duas colunas, nenhuma com exercício: não há como escolher.
+  v_caso := (fn_upsert_caso('Caso perguntas — mútuos sem exercício'))::uuid;
+  v_r := fn_registrar_documento(v_caso, 'Sem Exercicio Ltda', 'anual', '2025', 'MUTUOS', 0.9,
+    'nome_arquivo', 'supabase_storage', 'bucket/mut-sem.pdf', 'Mutuos Sem.pdf', true, 'HASH-PG-13D', 'ok');
+  perform fn_registrar_campos_extraidos((v_r->>'documento_versao_id')::uuid, '[
+    {"chave": "Alfa → Beta", "valor_num": "100", "unidade": "milhar", "periodo_coluna": "Saldo inicial", "confianca": "0.9"},
+    {"chave": "Alfa → Beta", "valor_num": "120", "unidade": "milhar", "periodo_coluna": "Saldo final",   "confianca": "0.9"}
+  ]'::jsonb, 'N0');
+  select s.pergunta into v_txt from fn_sugerir_perguntas(v_caso) s where s.codigo = '5.1';
+  procedure_ok := v_txt like '%não foi possível apurar o saldo%' and v_txt like '%nenhuma diz o exercício%'
+                  and v_txt not like '%R$%';
+  raise notice '% sem exercício → "não foi possível apurar" com o motivo, e nenhum número — %',
+    case when procedure_ok then 'ok   ' else 'FALHOU:' end, left(coalesce(v_txt, 'null'), 200);
+  if not coalesce(procedure_ok, false) then v_falhas := v_falhas + 1; end if;
+
+  if v_falhas > 0 then
+    raise exception 'FALHOU: % assert(s) do saldo de mútuos (bloco 13) reprovaram', v_falhas;
+  end if;
+  raise notice 'perguntas #13 OK — saldo de mútuos pelo documento: real, total geral, matricial, e o não-apurável dito';
 end $$;
 
 drop function teste_assert_pg(boolean, text, text);

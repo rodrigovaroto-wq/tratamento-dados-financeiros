@@ -12,6 +12,12 @@
 --   3. A DECLARAÇÃO ENVELHECE ALTO: consumidor que não existe em pg_proc, ou
 --      declaração para tipo que já tem exigência viva, vira
 --      DECLARACAO_QUEBRADA; e o banco recusa consumidor_nomeado sem nome.
+--   3b. (revisão) O NOME NÃO BASTA: tirar 'BALANCETE' do `if v_tipo in (...)`
+--      do despachante (fn_reconciliar_por_documento, redefinida DENTRO desta
+--      transação) deixa fn_reconciliar_arvore em pg_proc e mesmo assim vira
+--      DECLARACAO_QUEBRADA; o mesmo corpo com CRLF (como produção guarda)
+--      continua valendo; o banco recusa consumidor_nomeado sem marcador; e a
+--      DF_AUDITADA é sem_consumidor (só é lida como balanço substituto).
 --   4. CONTRA A FIXTURE CANASTRA (o arranjo que produção tem — chaves = par de
 --      empresas, a palavra só na seção): MUTUOS e FAT_INTRAGRUPO deixam de
 --      aparecer como exigência não satisfeita.
@@ -73,6 +79,8 @@ declare
   v_pend_neg uuid;
   v_ver      uuid;
   v_erro     boolean;
+  v_bool2    boolean;
+  v_def      text;
 begin
   -- ===========================================================================
   raise notice '--- 1. D6 estrito no banco montado do zero ---';
@@ -147,6 +155,51 @@ begin
   end;
   perform pg_temp.teste_assert_cob(v_erro,
     'o banco recusa consumidor_nomeado SEM o nome do consumidor');
+
+  -- ===========================================================================
+  raise notice '--- 3b. o marcador: o consumidor existe, mas deixou de ler o tipo ---';
+  select veredito, marcador_presente into v_txt, v_bool
+    from fn_cobertura_de_tipos() where tipo_taxonomia = 'BALANCETE';
+  perform pg_temp.teste_assert_cob(v_txt = 'consumidor_nomeado' and v_bool,
+    'pré-condição: BALANCETE é consumidor_nomeado com o marcador no despachante',
+    format('%s / marcador=%s', v_txt, v_bool));
+
+  select pg_get_functiondef(p.oid) into v_def from pg_proc p
+    join pg_namespace ns on ns.oid = p.pronamespace
+   where ns.nspname = 'public' and p.proname = 'fn_reconciliar_por_documento';
+  perform pg_temp.teste_assert_cob(position('''BALANCO'', ''BALANCETE'', ''COMBINADO''' in v_def) > 0,
+    'pré-condição: o corpo vigente do despachante lista BALANCETE');
+
+  execute replace(v_def, '''BALANCO'', ''BALANCETE'', ''COMBINADO''', '''BALANCO'', ''COMBINADO''');
+  select veredito, consumidor_existe, marcador_presente into v_txt, v_bool, v_bool2
+    from fn_cobertura_de_tipos() where tipo_taxonomia = 'BALANCETE';
+  perform pg_temp.teste_assert_cob(v_txt = 'DECLARACAO_QUEBRADA' and v_bool and not v_bool2,
+    'despachante sem BALANCETE: fn_reconciliar_arvore EXISTE e mesmo assim DECLARACAO_QUEBRADA',
+    format('%s / existe=%s / marcador=%s', v_txt, v_bool, v_bool2));
+  select presente into v_bool from fn_instalacao_conferir() where chave = 'd6_cobertura_de_tipos_estrita';
+  perform pg_temp.teste_assert_cob(v_bool = false,
+    'e a sonda de D6 fica VERMELHA', coalesce(v_bool::text, 'null'));
+
+  -- O corpo como PRODUÇÃO o guarda (CRLF): a declaração tem de continuar valendo.
+  execute replace(v_def, E'\n', E'\r\n');
+  select veredito into v_txt from fn_cobertura_de_tipos() where tipo_taxonomia = 'BALANCETE';
+  perform pg_temp.teste_assert_cob(v_txt = 'consumidor_nomeado',
+    'o mesmo despachante com CRLF (como produção guarda) continua consumidor_nomeado', v_txt);
+  execute v_def;
+
+  v_erro := false;
+  begin
+    insert into taxonomia_tipo_cobertura (tipo_taxonomia, estado, consumidor, motivo, efeito)
+    values ('BALANCO', 'consumidor_nomeado', 'fn_reconciliar_arvore', 'teste', 'teste');
+  exception when check_violation then
+    v_erro := true;
+  end;
+  perform pg_temp.teste_assert_cob(v_erro,
+    'o banco recusa consumidor_nomeado SEM marcador — nome sem prova de leitura não é declaração');
+
+  select veredito into v_txt from fn_cobertura_de_tipos() where tipo_taxonomia = 'DF_AUDITADA';
+  perform pg_temp.teste_assert_cob(v_txt = 'sem_consumidor_declarado',
+    'DF_AUDITADA é sem_consumidor: lida só como balanço substituto, ninguém a confere', v_txt);
 
   -- ===========================================================================
   raise notice '--- 4. canastra: MUTUOS e FAT_INTRAGRUPO deixam de ser cobrados pelo rótulo ---';

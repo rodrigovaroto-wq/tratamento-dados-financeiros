@@ -1215,7 +1215,7 @@ COMMENT ON FUNCTION public.fn_cnpj_canonico(p_cnpj text) IS '14 dígitos de CNPJ
 -- Name: fn_cobertura_de_tipos(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_cobertura_de_tipos() RETURNS TABLE(tipo_taxonomia text, obrigatoriedade text, exigencias_vivas integer, estado_declarado text, consumidor text, consumidor_existe boolean, veredito text)
+CREATE FUNCTION public.fn_cobertura_de_tipos() RETURNS TABLE(tipo_taxonomia text, obrigatoriedade text, exigencias_vivas integer, estado_declarado text, consumidor text, consumidor_existe boolean, marcador_presente boolean, veredito text)
     LANGUAGE sql STABLE
     AS $$
   with vivas as (
@@ -1233,13 +1233,26 @@ CREATE FUNCTION public.fn_cobertura_de_tipos() RETURNS TABLE(tipo_taxonomia text
                 else exists (select 1 from pg_proc p
                                join pg_namespace ns on ns.oid = p.pronamespace
                               where ns.nspname = 'public' and p.proname = c.consumidor)
-           end as consumidor_existe
+           end as consumidor_existe,
+           -- 0187 (revisão): o nome em pg_proc não prova que a função AINDA lê
+           -- o tipo. O marcador precisa estar no corpo PUBLICADO, com o \r
+           -- tirado dos dois lados — produção guarda corpo com CRLF
+           -- (.claude/memory/ancora-de-texto-quebra-com-crlf.md).
+           case when c.marcador is null then null
+                else exists (select 1 from pg_proc p
+                               join pg_namespace ns on ns.oid = p.pronamespace
+                              where ns.nspname = 'public' and p.proname = c.marcador_em
+                                and p.prokind = 'f'
+                                and position(replace(c.marcador, E'\r', '')
+                                             in replace(pg_get_functiondef(p.oid), E'\r', '')) > 0)
+           end as marcador_presente
       from taxonomia_tipo_documento t
       left join vivas v on v.tipo_taxonomia = t.codigo
       left join taxonomia_tipo_cobertura c on c.tipo_taxonomia = t.codigo
      where t.ativo
   )
   select b.codigo, b.obrigatoriedade, b.n_vivas, b.estado, b.consumidor, b.consumidor_existe,
+         b.marcador_presente,
          case
            -- Duplo registro: o tipo ganhou exigência viva e a declaração ficou.
            -- Ela envelhece calada (o consumidor pode sumir, o motivo mentir), e
@@ -1249,6 +1262,10 @@ CREATE FUNCTION public.fn_cobertura_de_tipos() RETURNS TABLE(tipo_taxonomia text
            when not b.declarado                          then 'SEM_COBERTURA'
            when b.estado = 'consumidor_nomeado'
             and not b.consumidor_existe                  then 'DECLARACAO_QUEBRADA'
+           -- O consumidor existe mas o trecho que faz a leitura sumiu do corpo
+           -- (do dele ou do despachante que o chama): a declaração mente.
+           when b.estado = 'consumidor_nomeado'
+            and not coalesce(b.marcador_presente, false) then 'DECLARACAO_QUEBRADA'
            when b.estado = 'consumidor_nomeado'          then 'consumidor_nomeado'
            else 'sem_consumidor_declarado'
          end
@@ -1260,7 +1277,7 @@ $$;
 -- Name: FUNCTION fn_cobertura_de_tipos(); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_cobertura_de_tipos() IS '0187 — portão D6. Uma linha por tipo ATIVO da taxonomia. D6 estrito = nenhuma linha com veredito SEM_COBERTURA (sem exigência viva e sem declaração) nem DECLARACAO_QUEBRADA (consumidor nomeado que não existe em pg_proc, ou declaração para tipo que já tem exigência viva). Não depende de documento: roda igual no banco de teste e em produção.';
+COMMENT ON FUNCTION public.fn_cobertura_de_tipos() IS '0187 — portão D6. Uma linha por tipo ATIVO da taxonomia. D6 estrito = nenhuma linha com veredito SEM_COBERTURA (sem exigência viva e sem declaração) nem DECLARACAO_QUEBRADA (consumidor nomeado que não existe em pg_proc, marcador que sumiu do corpo de marcador_em, ou declaração para tipo que já tem exigência viva). Não depende de documento: roda igual no banco de teste e em produção.';
 
 --
 -- Name: fn_coluna_de_dimensao(text); Type: FUNCTION; Schema: public; Owner: -
@@ -8435,8 +8452,20 @@ begin
     v_b := abs(fn_valor_em_base(v_juros.soma, v_unid_div));
     v_n := v_n + 1;
     v_div := abs(v_a - v_b);
-    v_tol := greatest(p_tolerancia_abs * coalesce(fn_fator_escala(v_despfin.unidade), 1),
-                      abs(v_a) * p_tolerancia_pct);
+    -- 0188 (revisão, 22/09/2026): A TOLERÂNCIA ABSOLUTA ESTÁ NA BASE, como v_a
+    -- e v_b. Da 0023 até aqui ela era `p_tolerancia_abs * fator_da_DRE`: numa
+    -- DRE em 'milhar', os 50.000 do default viravam R$ 50 MILHÕES, e qualquer
+    -- divergência abaixo disso saía "confere". MEDIDO EM PRODUÇÃO (22/09/2026,
+    -- somente leitura): das 33 despfin com resultado 'ok', 32 conferem de
+    -- verdade com greatest(R$ 50.000, 5%) e 1 é falsa — R$ 12.400.000 de
+    -- diferença saindo "confere". fn_reconciliar_mutuos (0123) já fazia assim
+    -- ("tolerância em MOEDA BASE ... senão a checagem é mais frouxa justamente
+    -- onde os valores são maiores"). Esta é a SEGUNDA mudança de resultado
+    -- desta migration (a primeira é a parte 3) — ver o cabeçalho. MEDIDO
+    -- (regra 2): com o `× fator` de volta, 2 asserts reprovam — o bloco 5 de
+    -- motivo_especifico.test.sql (8.194 × 5.308 em milhar sai "ok") e o
+    -- requisito despfin_tolerancia_na_base de instalacao.test.sql.
+    v_tol := greatest(p_tolerancia_abs, abs(v_a) * p_tolerancia_pct);
     if v_div > v_tol then
       v_resultado := 'zona_cinzenta';
       v_partes := v_partes || format('%s: Despesa Financeira %s "%s" vs soma de %s contratos %s "%s" — diferença de %s na base',
@@ -11335,6 +11364,171 @@ $$;
 COMMENT ON FUNCTION public.fn_rotulos_candidatos(p_documento_versao_id uuid) IS 'Rótulos extraídos que poderiam ser um total de Ativo/Passivo/PL, com a coluna de entidade/período de cada um. Existe para a pendência de pré-condição poder NOMEAR o que não casou — inclusive quando o que não casou foi a COLUNA (0033).';
 
 --
+-- Name: fn_saldo_mutuos_do_documento(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_saldo_mutuos_do_documento(p_linhas jsonb) RETURNS jsonb
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+declare
+  v_n        int;
+  v_cols     text[];
+  v_ano      int;
+  v_cand     text[];
+  v_col      text;
+  v_tot_n    int;
+  v_tot_vals numeric[];
+  v_tot_unid text[];
+  v_it_n     int;
+  v_it_unid  text[];
+  v_soma     numeric;
+begin
+  select count(*)::int, array_agg(distinct l.coluna order by l.coluna)
+    into v_n, v_cols from fn_saldo_mutuos_linhas(p_linhas) l;
+  if v_n = 0 then
+    return jsonb_build_object('valor', null, 'porque', null, 'n_linhas', 0);
+  end if;
+
+  -- 1. A COLUNA
+  if cardinality(v_cols) = 1 then
+    v_col := v_cols[1];
+  else
+    select max(a) into v_ano from unnest(v_cols) c, unnest(fn_anos_texto(c)) a;
+    if v_ano is null then
+      return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+        format('a relação tem %s colunas de valor (%s) e nenhuma diz o exercício — somá-las '
+               'misturaria saldo com juros ou com o ano anterior',
+               cardinality(v_cols), array_to_string(v_cols, ', ')));
+    end if;
+    select array_agg(c order by c) into v_cand from unnest(v_cols) c
+     where v_ano = any (fn_anos_texto(c));
+    if cardinality(v_cand) > 1 then
+      select array_agg(c order by c) into v_cand from unnest(v_cand) c
+       where fn_normalizar_texto(c) like '%saldo%';
+    end if;
+    if coalesce(cardinality(v_cand), 0) <> 1 then
+      return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+        format('a relação tem mais de uma coluna do exercício %s (%s) e nenhuma é, sozinha, a '
+               'do saldo', v_ano, array_to_string(v_cols, ', ')));
+    end if;
+    v_col := v_cand[1];
+  end if;
+
+  -- 2. O TOTAL GERAL
+  select count(*)::int, array_agg(distinct l.valor order by l.valor),
+         array_agg(distinct coalesce(l.unidade, '') order by coalesce(l.unidade, ''))
+    into v_tot_n, v_tot_vals, v_tot_unid
+    from fn_saldo_mutuos_linhas(p_linhas) l
+   where l.coluna = v_col and l.eh_total_geral;
+  if v_tot_n > 0 then
+    if cardinality(v_tot_vals) = 1 and cardinality(v_tot_unid) = 1 then
+      return jsonb_build_object('valor', v_tot_vals[1], 'unidade', nullif(v_tot_unid[1], ''),
+        'forma', 'linha_de_total', 'coluna', nullif(v_col, ''), 'n_linhas', v_n, 'porque', null);
+    end if;
+    return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+      format('a relação tem %s linhas de total geral que não concordam entre si', v_tot_n));
+  end if;
+
+  -- 3. A SOMA DOS ITENS
+  select count(*), array_agg(distinct coalesce(l.unidade, '') order by coalesce(l.unidade, '')),
+         sum(l.valor)
+    into v_it_n, v_it_unid, v_soma
+    from fn_saldo_mutuos_linhas(p_linhas) l
+   where l.coluna = v_col and not l.eh_total;
+  if v_it_n = 0 then
+    return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+      'a relação só traz subtotais parciais, sem total geral nem os itens');
+  end if;
+  if cardinality(v_it_unid) > 1 then
+    return jsonb_build_object('valor', null, 'n_linhas', v_n, 'porque',
+      'as linhas da relação estão em escalas diferentes');
+  end if;
+  return jsonb_build_object('valor', v_soma, 'unidade', nullif(v_it_unid[1], ''),
+    'forma', 'soma_dos_itens', 'coluna', nullif(v_col, ''), 'n_itens', v_it_n,
+    'n_linhas', v_n, 'porque', null);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_saldo_mutuos_do_documento(p_linhas jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_saldo_mutuos_do_documento(p_linhas jsonb) IS '0187 (revisão): o saldo de UMA relação de mútuos a partir das linhas com valor ([{chave, valor, unidade, coluna}]). Coluna do exercício mais recente; linha de total geral se houver, senão a soma dos itens numa escala só. Devolve {valor, unidade, forma, coluna} ou {valor: null, porque} quando não dá para apurar com segurança — nunca uma soma cega. Pura: a sonda instalacao_sonda_saldo_mutuos a executa sobre literais.';
+
+--
+-- Name: fn_saldo_mutuos_linhas(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_saldo_mutuos_linhas(p_linhas jsonb) RETURNS TABLE(chave text, valor numeric, unidade text, coluna text, eh_total boolean, eh_total_geral boolean)
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  select x->>'chave', (x->>'valor')::numeric, nullif(btrim(x->>'unidade'), ''),
+         coalesce(nullif(btrim(x->>'coluna'), ''), ''),
+         t.eh_total,
+         t.eh_total and fn_tokens_estruturais(x->>'chave')
+                        <@ array['saldo','saldos','mutuo','mutuos','emprestimo','emprestimos',
+                                 'intragrupo','partes','relacionadas','grupo','operacoes',
+                                 'operacao','entre','empresas']::text[]
+    from jsonb_array_elements(coalesce(p_linhas, '[]'::jsonb)) x
+    cross join lateral (select fn_normalizar_texto(x->>'chave')
+                               ~ '(^|[^a-z])(total|totais|subtotal|soma|somatorio)([^a-z]|$)'
+                               as eh_total) t
+   where x->>'valor' is not null
+     and fn_papel_linha(x->>'chave') <> 'derivado';
+$_$;
+
+--
+-- Name: fn_saldo_mutuos_texto(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_saldo_mutuos_texto(p_caso_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  with docs as (
+    select d.id, dv.nome_original,
+           (select max(a) from unnest(fn_anos_do_periodo(p.referencia)) a) as ano,
+           fn_saldo_mutuos_do_documento((
+             select jsonb_agg(jsonb_build_object('chave', ce.chave, 'valor', ce.valor_num,
+                                                 'unidade', ce.unidade,
+                                                 'coluna', ce.periodo_coluna))
+               from campo_extraido ce
+              where ce.documento_versao_id = dv.id and ce.valor_num is not null)) as r
+      from documento d
+      join documento_versao dv on dv.id = fn_versao_com_extracao(d.id)
+      left join periodo p on p.id = d.periodo_id
+     where d.caso_id = p_caso_id
+       and d.tipo_taxonomia = 'MUTUOS'
+  ),
+  com_valor as (
+    select * from docs where coalesce((r->>'n_linhas')::int, 0) > 0
+  ),
+  recentes as (
+    select * from com_valor
+     where ano is not distinct from (select max(ano) from com_valor)
+        or (select max(ano) from com_valor) is null
+  )
+  select case
+    when count(*) = 0 then null
+    when count(*) = 1 then
+      coalesce(fn_valor_pt_br(max((r->>'valor')::numeric), max(r->>'unidade')),
+               '(não foi possível apurar o saldo: ' || max(r->>'porque') || ' — conferir na relação enviada)')
+    when count(*) filter (where r->>'valor' is null) > 0 then
+      '(não foi possível apurar o saldo: ' || string_agg(nome_original || ' — ' || (r->>'porque'), '; ')
+        filter (where r->>'valor' is null) || ')'
+    when count(distinct coalesce(r->>'unidade', '')) > 1 then '(valores em escalas mistas — conferir)'
+    else format('(não foi possível apurar um saldo único: o caso tem %s relações de mútuos do mesmo '
+                'exercício — conferir qual vale)', count(*))
+  end
+  from recentes;
+$$;
+
+--
+-- Name: FUNCTION fn_saldo_mutuos_texto(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_saldo_mutuos_texto(p_caso_id uuid) IS '0187 (revisão): o texto do marcador {saldo_mutuos} da pergunta 5.1. NULL sem relação de mútuos com valor (a pergunta diz "(não localizado)"); o saldo em reais quando UMA relação do período mais recente o apura; "(não foi possível apurar…)" com o motivo em qualquer outro caso.';
+
+--
 -- Name: fn_sazonalidade_do_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11542,50 +11736,14 @@ CREATE FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) RETURNS TABLE(codigo
       and ((pc.gatilho_especie = 'exigencia_ausente' and not x.satisfeita)
         or (pc.gatilho_especie = 'linha_presente' and x.satisfeita))
   ),
-  -- {saldo_mutuos}: soma das linhas que casam MUTUOS:saldo_de_mutuo na versão
-  -- vigente. Escala única acompanha; escalas mistas NÃO são somadas às cegas.
+  -- {saldo_mutuos}: 0187 — o saldo da relação de mútuos como a RELAÇÃO o diz
+  -- (linha de total geral, senão soma dos itens, na coluna do exercício mais
+  -- recente), ou "(não foi possível apurar…)" com o motivo. Era a soma das
+  -- linhas cujo rótulo casava o léxico MUTUOS/saldo_de_mutuo, e no arranjo
+  -- real (o rótulo é o par de empresas) nada casava: a pergunta ao cliente
+  -- dizia "(não localizado)" sobre um saldo que está no documento.
   saldo_mutuos as (
-    select case
-      when count(*) = 0 then null
-      when count(distinct coalesce(c.unidade, '')) > 1 then '(valores em escalas mistas — conferir)'
-      -- 0122: era `sum(valor)::text || ' ' || unidade`, que produzia
-      -- "16060 milhar" no texto enviado ao cliente.
-      else fn_valor_pt_br(sum(c.valor_num), max(nullif(c.unidade, '')))
-    end as txt
-    from (
-      select ce.valor_num, ce.unidade
-      from documento d
-      join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
-      where d.caso_id = p_caso_id
-        and d.tipo_taxonomia = 'MUTUOS'
-        and ce.valor_num is not null
-        and exists (
-          select 1
-          from taxonomia_linha_exigida e
-          join taxonomia_linha_localizador l on l.exigencia_id = e.id
-          -- 0187: A DESATIVAÇÃO DESLIGA A COBRANÇA, NÃO O LÉXICO. A exigência
-          -- MUTUOS/saldo_de_mutuo saiu do Portão 1 (relatório itemizado: 1 de 1
-          -- pendência aberta em produção era falsa), mas os localizadores dela
-          -- continuam sendo o que diz "esta linha é saldo de mútuo" para somar o
-          -- marcador. Com `and e.ativo`, a pergunta 5.1 ao cliente passaria a
-          -- dizer "(não localizado)" sobre um saldo que está no documento.
-          where e.tipo_taxonomia = 'MUTUOS' and e.conceito = 'saldo_de_mutuo'
-            and (e.ativo or e.conceito = 'saldo_de_mutuo')
-            and case
-              when l.contra = 'estrutural' then fn_rotulo_estrutural(ce.chave, l.termos_inclui)
-              else
-                not exists (
-                  select 1 from unnest(l.termos_inclui) t
-                  where fn_normalizar_texto(case when l.contra = 'secao'
-                                            then coalesce(ce.secao, '') else ce.chave end)
-                    not like '%' || fn_normalizar_texto(t) || '%')
-                and not exists (
-                  select 1 from unnest(l.termos_exclui) t
-                  where fn_normalizar_texto(case when l.contra = 'secao'
-                                            then coalesce(ce.secao, '') else ce.chave end)
-                    like '%' || fn_normalizar_texto(t) || '%')
-            end)
-    ) c
+    select fn_saldo_mutuos_texto(p_caso_id) as txt
   )
   select pc.codigo, pc.titulo, pc.prioridade, di.entidade, di.entidade_id,
          -- A ENTIDADE ENTRA COMO PREFIXO, e não reescrevendo o texto da entrega.
@@ -13306,7 +13464,7 @@ COMMENT ON COLUMN public.instalacao_requisito.marcador IS 'Para tipo=''corpo'': 
 CREATE VIEW public.instalacao_sonda_cobertura_de_tipos AS
  SELECT 1 AS d6_estrito
   WHERE (NOT (EXISTS ( SELECT 1
-           FROM public.fn_cobertura_de_tipos() c(tipo_taxonomia, obrigatoriedade, exigencias_vivas, estado_declarado, consumidor, consumidor_existe, veredito)
+           FROM public.fn_cobertura_de_tipos() c(tipo_taxonomia, obrigatoriedade, exigencias_vivas, estado_declarado, consumidor, consumidor_existe, marcador_presente, veredito)
           WHERE (c.veredito = ANY (ARRAY['SEM_COBERTURA'::text, 'DECLARACAO_QUEBRADA'::text])))));
 
 --
@@ -13580,6 +13738,29 @@ CREATE VIEW public.instalacao_sonda_rotulo_contraditorio AS
 COMMENT ON VIEW public.instalacao_sonda_rotulo_contraditorio IS '(0159) Autoteste de fn_documento_decide_sozinho, EXECUTADA por literais (função pura, sem fixture de documento nem de pendência): 1 linha só se o caso medido (COMBINADO com tipo_incorreto aberta), o caso comum (COMBINADO sem pendência, decide sozinho), o NULL (coalesce trata como ausente), o espelho da 0155 (BALANCO com tipo_incorreto continua decidindo sozinho — é a autoridade que cai, não a confiança) e o irrelevante (RAZAO, nunca se autodeclarou derivado) valem todos ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos (achado D da revisão da 0157) — esta view pega, porque o predicado É executado.';
 
 --
+-- Name: instalacao_sonda_saldo_mutuos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_saldo_mutuos AS
+ WITH casos(arranjo, linhas, esperado) AS (
+         VALUES ('canastra_par_de_empresas_e_TOTAL'::text,jsonb_build_array(jsonb_build_object('chave', 'CANASTRA PARTICIPAÇÕES S.A. → CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.', 'valor', 11160, 'unidade', 'milhar', 'coluna', '2025'), jsonb_build_object('chave', 'CANASTRA PARTICIPAÇÕES S.A. → CANASTRA COMERCIAL E DISTRIBUIDORA LTDA.', 'valor', 4900, 'unidade', 'milhar', 'coluna', '2025'), jsonb_build_object('chave', 'TOTAL', 'valor', 16060, 'unidade', 'milhar', 'coluna', '2025')),(16060)::numeric), ('itens_e_total_geral'::text,jsonb_build_array(jsonb_build_object('chave', 'Mútuo a receber - Beta', 'valor', 100, 'unidade', 'milhar'), jsonb_build_object('chave', 'Mútuo a pagar - Gama', 'valor', 50, 'unidade', 'milhar'), jsonb_build_object('chave', 'Saldo total dos mútuos', 'valor', 150, 'unidade', 'milhar')),(150)::numeric), ('matricial_saldo_juros_saldo'::text,jsonb_build_array(jsonb_build_object('chave', 'Alfa → Beta', 'valor', 7991, 'unidade', 'milhar', 'coluna', 'Saldo 2024'), jsonb_build_object('chave', 'Alfa → Beta', 'valor', 1088, 'unidade', 'milhar', 'coluna', 'Juros'), jsonb_build_object('chave', 'Alfa → Beta', 'valor', 11079, 'unidade', 'milhar', 'coluna', 'Saldo 2025')),(11079)::numeric), ('duas_colunas_sem_exercicio'::text,jsonb_build_array(jsonb_build_object('chave', 'Alfa → Beta', 'valor', 100, 'unidade', 'milhar', 'coluna', 'Saldo inicial'), jsonb_build_object('chave', 'Alfa → Beta', 'valor', 120, 'unidade', 'milhar', 'coluna', 'Saldo final')),NULL::numeric)
+        )
+ SELECT c.arranjo
+   FROM (casos c
+     CROSS JOIN LATERAL ( SELECT public.fn_saldo_mutuos_do_documento(c.linhas) AS r) x)
+  WHERE
+        CASE
+            WHEN (c.esperado IS NULL) THEN (((x.r ->> 'valor'::text) IS NULL) AND (COALESCE((x.r ->> 'porque'::text), ''::text) <> ''::text))
+            ELSE (((x.r ->> 'valor'::text))::numeric = c.esperado)
+        END;
+
+--
+-- Name: VIEW instalacao_sonda_saldo_mutuos; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_saldo_mutuos IS 'Sonda da 0187 (revisão): uma linha por arranjo em que fn_saldo_mutuos_do_documento dá o saldo CERTO (canastra real 16.060; item + total 150; matricial 11.079; sem exercício → não apura). Quatro linhas.';
+
+--
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13820,9 +14001,14 @@ CREATE TABLE public.taxonomia_tipo_cobertura (
     motivo text NOT NULL,
     efeito text NOT NULL,
     declarado_em date DEFAULT CURRENT_DATE NOT NULL,
+    marcador text,
+    marcador_em text,
     CONSTRAINT taxonomia_tipo_cobertura_check CHECK (((estado = 'consumidor_nomeado'::text) = (consumidor IS NOT NULL))),
+    CONSTRAINT taxonomia_tipo_cobertura_check1 CHECK (((estado = 'consumidor_nomeado'::text) = ((marcador IS NOT NULL) AND (marcador_em IS NOT NULL)))),
+    CONSTRAINT taxonomia_tipo_cobertura_check2 CHECK (((marcador IS NULL) = (marcador_em IS NULL))),
     CONSTRAINT taxonomia_tipo_cobertura_efeito_check CHECK ((length(btrim(efeito)) > 0)),
     CONSTRAINT taxonomia_tipo_cobertura_estado_check CHECK ((estado = ANY (ARRAY['consumidor_nomeado'::text, 'sem_consumidor'::text]))),
+    CONSTRAINT taxonomia_tipo_cobertura_marcador_check CHECK (((marcador IS NULL) OR (length(btrim(marcador)) > 0))),
     CONSTRAINT taxonomia_tipo_cobertura_motivo_check CHECK ((length(btrim(motivo)) > 0))
 );
 
@@ -13843,6 +14029,18 @@ COMMENT ON COLUMN public.taxonomia_tipo_cobertura.consumidor IS 'Nome (proname, 
 --
 
 COMMENT ON COLUMN public.taxonomia_tipo_cobertura.efeito IS 'O que deixa de ser conferido por causa desta declaração (regra 1 do CLAUDE.md): "não tem consumidor" sem o efeito é ausência apresentada como dado.';
+
+--
+-- Name: COLUMN taxonomia_tipo_cobertura.marcador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_tipo_cobertura.marcador IS 'Trecho de UMA linha que precisa aparecer no corpo publicado (pg_get_functiondef, \r removido) da função marcador_em para a declaração valer: é o que prova que ela AINDA lê o tipo. Obrigatório quando estado=consumidor_nomeado. Some do corpo → DECLARACAO_QUEBRADA.';
+
+--
+-- Name: COLUMN taxonomia_tipo_cobertura.marcador_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_tipo_cobertura.marcador_em IS 'proname (schema public) da função cujo corpo carrega o marcador — o consumidor ou o despachante que o chama para o tipo (BALANCETE: fn_reconciliar_por_documento).';
 
 --
 -- Name: taxonomia_tipo_documento; Type: TABLE; Schema: public; Owner: -
@@ -16200,6 +16398,24 @@ GRANT ALL ON FUNCTION public.fn_rotulo_contido(p_curto text, p_longo text) TO au
 GRANT ALL ON FUNCTION public.fn_rotulo_estrutural(p_chave text, p_tokens_exigidos text[]) TO authenticated;
 
 --
+-- Name: FUNCTION fn_saldo_mutuos_do_documento(p_linhas jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_saldo_mutuos_do_documento(p_linhas jsonb) TO authenticated;
+
+--
+-- Name: FUNCTION fn_saldo_mutuos_linhas(p_linhas jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_saldo_mutuos_linhas(p_linhas jsonb) TO authenticated;
+
+--
+-- Name: FUNCTION fn_saldo_mutuos_texto(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_saldo_mutuos_texto(p_caso_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_sazonalidade_do_caso(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -16596,6 +16812,14 @@ GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO service_role;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_saldo_mutuos; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_saldo_mutuos TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_saldo_mutuos TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_saldo_mutuos TO service_role;
 
 --
 -- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -

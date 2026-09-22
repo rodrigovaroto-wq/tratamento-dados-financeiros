@@ -134,7 +134,8 @@
 --   DRE:despesa_financeira cuja entidade tem a alternativa, e conta em `raise
 --   notice`. A pré-medição somente leitura está no Supabase/README.md.
 --
--- PARTE 3 — o falso C, e é a ÚNICA exceção ao invariante da parte 1.
+-- PARTE 3 — o falso C, a primeira das DUAS exceções ao invariante da parte 1
+-- (a outra é a parte 4, a tolerância).
 --
 --   Localizador ['juros','bancari'] exclui ['receita','aplicac'] na exigência
 --   DRE/despesa_financeira (origem 'codigo': o seed espelha o código) E no
@@ -154,16 +155,105 @@
 --   continua NÃO satisfazendo. Nas fixtures dos dois books nada muda (bloco 1
 --   do teste compara contra o snapshot da 0187).
 --
+-- PARTE 4 — A TOLERÂNCIA DA DESPFIN NA BASE (achado da revisão independente,
+-- 22/09/2026), a SEGUNDA exceção declarada ao invariante da parte 1.
+--
+--   Da 0023 até a 0188 escrita, fn_reconciliar_despfin_dre_vs_divida fazia
+--       v_tol := greatest(p_tolerancia_abs * fator_da_DRE, abs(v_a) * pct)
+--   com v_a e v_b JÁ na base (fn_valor_em_base). Numa DRE em 'milhar' o default
+--   de R$ 50.000 virava R$ 50 MILHÕES. MEDIDO EM PRODUÇÃO (somente leitura,
+--   22/09/2026): das 33 linhas despfin com resultado 'ok', 32 conferem de
+--   verdade com greatest(R$ 50.000, 5%) e 1 é FALSA — R$ 12.400.000 de
+--   diferença saindo "confere". Esta migration já reemite a função inteira,
+--   então a correção vai no mesmo corpo: a tolerância absoluta fica na base.
+--
+--   ISTO MUDA RESULTADO: onde a divergência está entre greatest(R$ 50.000, 5%)
+--   e R$ 50.000 × fator, 'ok' vira 'zona_cinzenta' (e abre pendência). Em
+--   produção, pela medição acima, 1 linha — só na próxima rodada do caso. Nas
+--   fixtures dos dois books nada muda: o retrato do bloco 1 e o md5 do bloco 2
+--   do teste continuam os medidos na 0187 (nenhuma despfin das fixtures
+--   concluía). Testado à parte (bloco 5 do teste): DRE em milhar 8.194 × mapa
+--   5.308 (os números do book-distress 2025) sai zona_cinzenta; 5.308 × 5.309
+--   (R$ 1.000 de arredondamento) continua ok.
+--
+--   O MESMO VÍCIO em outras duas checagens, REPORTADO e NÃO corrigido (não
+--   foram medidas contra produção — corrigir sem medir é a 0179 de novo):
+--     • fn_reconciliar_receita_dre_vs_faturamento (0023; reemitida aqui só
+--       pelo motivo): `p_tolerancia_abs * fator(unidade da receita)` com o
+--       mesmo default de 50.000 — em DRE 'milhar', R$ 50 milhões absolutos.
+--     • fn_reconciliar_caixa_bp_fluxo (0031; idem): `100 * fator(unidade do
+--       caixa)` — em 'milhar', R$ 100 mil; em 'milhão', R$ 100 milhões.
+--   Nas duas o piso percentual (5% e 0,5%) domina quando o valor é grande, e
+--   o absoluto só engole divergência quando o valor comparado é pequeno perto
+--   do piso inflado. O alcance real só a consulta de produção diz.
+--
 -- O QUE ESTA MIGRATION NÃO FAZ.
 --   • Não roda reconciliação nem recompute em caso nenhum. As linhas de
 --     `reconciliacao` já gravadas continuam com o motivo genérico — o motivo
 --     específico aparece na próxima rodada de cada caso.
---   • Não muda `resultado`, `precondicoes_ok`, o vocabulário da 0186, nem a
---     linha que decide pendência.
+--   • Não muda `resultado` nem `precondicoes_ok` fora das partes 3 e 4, nem
+--     o vocabulário da 0186, nem a linha que decide pendência.
 --   • Não é aplicada em produção por estar escrita. Quem responde é a sonda.
 -- =============================================================================
 
 begin;
+
+-- -----------------------------------------------------------------------------
+-- (0) A 0188 EXIGE A 0186 APLICADA ANTES — e diz isso NA INSTALAÇÃO, não em
+--     runtime.
+-- -----------------------------------------------------------------------------
+-- Achado da revisão independente (22/09/2026): esta migration reemite
+-- fn_registrar_reconciliacao e quatro checagens em plpgsql, e o corpo de
+-- plpgsql só resolve coluna quando RODA. Num banco sem a 0186, a 0188 instala
+-- LIMPA — e toda fn_reconciliar_* morre depois em "column motivo_precondicao
+-- does not exist" na primeira gravação. O n8n trata erro de Postgres com
+-- continueRegularOutput (N8N/build-workflow.mjs, PG_RETRY): a ingestão segue,
+-- e o caso fica com ZERO reconciliações, sem erro visível em canto nenhum. É
+-- estágio desligado com cara de estágio limpo (regra 7).
+--
+-- Duas condições, porque cada uma sozinha deixa um buraco:
+--   (a) a COLUNA reconciliacao.motivo_precondicao — sem ela o INSERT morre;
+--   (b) o CORPO da 0186 em fn_registrar_reconciliacao (o mesmo marcador do
+--       requisito `fn_registrar_reconciliacao_grava_motivo` da sonda) — a
+--       coluna pode existir por um apply parcial com a função antiga, e aí a
+--       0188 reemitiria por cima de um estado que a 0186 não validou (o
+--       vocabulário e o backfill são dela).
+-- O \r é tirado antes de procurar (`.claude/memory/ancora-de-texto-quebra-com-crlf.md`):
+-- produção guarda corpo com CRLF. Reaplicar a 0188 passa — o corpo que ela
+-- mesma emite contém o marcador.
+--
+-- Provado num banco descartável migrado até a 0181 + 0187 SEM a 0186: a 0188
+-- aborta com a mensagem abaixo e nada dela fica (0 das funções novas); com este
+-- bloco desligado, a MESMA 0188 instala com rc=0 sobre o mesmo banco (as 3
+-- funções auxiliares criadas, as checagens reemitidas e mortas); com a 0186
+-- aplicada, passa — e reaplicá-la também passa.
+-- Os comandos estão no Supabase/README.md, no bloco da 0188.
+do $$
+declare
+  v_tem_coluna boolean;
+  v_tem_corpo  boolean;
+begin
+  select exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'reconciliacao'
+                    and column_name = 'motivo_precondicao')
+    into v_tem_coluna;
+  select exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'public' and p.proname = 'fn_registrar_reconciliacao'
+                    and p.prokind = 'f'
+                    and position(', v_motivo_precondicao,'
+                                 in replace(pg_get_functiondef(p.oid), E'\r', '')) > 0)
+    into v_tem_corpo;
+  if not v_tem_coluna or not v_tem_corpo then
+    raise exception '0188 exige a 0186 aplicada antes: %',
+      concat_ws('; ',
+        case when not v_tem_coluna then 'a coluna reconciliacao.motivo_precondicao não existe' end,
+        case when not v_tem_corpo then 'fn_registrar_reconciliacao não é a da 0186 (não grava '
+                                       'v_motivo_precondicao)' end)
+      using hint = 'Aplique Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql e '
+                   'rode esta de novo. Sem a 0186, as checagens reemitidas aqui instalam e '
+                   'morrem na primeira reconciliação.';
+  end if;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- (1) OS TRÊS AUXILIARES DO MOTIVO — um lugar só para "qual motivo" e "que texto"
@@ -935,9 +1025,10 @@ on conflict (exigencia_id, ordem) do nothing;
 -- -----------------------------------------------------------------------------
 -- (6) fn_reconciliar_despfin_dre_vs_divida — REEMITIDA INTEIRA (corpo da 0023,
 -- com o comentário da 0145 que o dump preserva). Mudanças: o terceiro
--- localizador (parte 3 — a ÚNICA mudança de resultado desta migration), o
--- motivo por exercício, 'unidade_divergente' no ramo de escala, e o recado da
--- alternativa quando a DRE traz o líquido no lugar da despesa.
+-- localizador (parte 3) e a tolerância absoluta na base (parte 4) — as DUAS
+-- mudanças de resultado desta migration —, o motivo por exercício,
+-- 'unidade_divergente' no ramo de escala, e o recado da alternativa quando a
+-- DRE traz o líquido no lugar da despesa.
 -- -----------------------------------------------------------------------------
 create or replace function fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid,
   p_periodo_id uuid, p_tolerancia_abs numeric default 50000, p_tolerancia_pct numeric default 0.05)
@@ -1077,8 +1168,20 @@ begin
     v_b := abs(fn_valor_em_base(v_juros.soma, v_unid_div));
     v_n := v_n + 1;
     v_div := abs(v_a - v_b);
-    v_tol := greatest(p_tolerancia_abs * coalesce(fn_fator_escala(v_despfin.unidade), 1),
-                      abs(v_a) * p_tolerancia_pct);
+    -- 0188 (revisão, 22/09/2026): A TOLERÂNCIA ABSOLUTA ESTÁ NA BASE, como v_a
+    -- e v_b. Da 0023 até aqui ela era `p_tolerancia_abs * fator_da_DRE`: numa
+    -- DRE em 'milhar', os 50.000 do default viravam R$ 50 MILHÕES, e qualquer
+    -- divergência abaixo disso saía "confere". MEDIDO EM PRODUÇÃO (22/09/2026,
+    -- somente leitura): das 33 despfin com resultado 'ok', 32 conferem de
+    -- verdade com greatest(R$ 50.000, 5%) e 1 é falsa — R$ 12.400.000 de
+    -- diferença saindo "confere". fn_reconciliar_mutuos (0123) já fazia assim
+    -- ("tolerância em MOEDA BASE ... senão a checagem é mais frouxa justamente
+    -- onde os valores são maiores"). Esta é a SEGUNDA mudança de resultado
+    -- desta migration (a primeira é a parte 3) — ver o cabeçalho. MEDIDO
+    -- (regra 2): com o `× fator` de volta, 2 asserts reprovam — o bloco 5 de
+    -- motivo_especifico.test.sql (8.194 × 5.308 em milhar sai "ok") e o
+    -- requisito despfin_tolerancia_na_base de instalacao.test.sql.
+    v_tol := greatest(p_tolerancia_abs, abs(v_a) * p_tolerancia_pct);
     if v_div > v_tol then
       v_resultado := 'zona_cinzenta';
       v_partes := v_partes || format('%s: Despesa Financeira %s "%s" vs soma de %s contratos %s "%s" — diferença de %s na base',
@@ -1958,6 +2061,13 @@ insert into instalacao_requisito
    'de dívida — e o seed da exigência, que tem o mesmo localizador, diria o contrário da '
    'checagem (1 pendência falsa medida em produção, 22/09/2026).',
    'importante', 804),
+
+  ('despfin_tolerancia_na_base', '0188', 'corpo', 'fn_reconciliar_despfin_dre_vs_divida',
+   'v_tol := greatest(p_tolerancia_abs, abs(v_a) * p_tolerancia_pct)', null,
+   'Sem este corpo, a tolerância absoluta da despesa financeira é multiplicada pela escala da '
+   'DRE: em milhar, R$ 50 MILHÕES. Medido em produção (22/09/2026): 1 das 33 despfin "ok" era '
+   'falsa, R$ 12.400.000 de diferença saindo "confere".',
+   'importante', 815),
 
   ('motivo_especifico_receita', '0188', 'corpo', 'fn_reconciliar_receita_dre_vs_faturamento',
    'fn_motivo_precondicao_agregado(v_motivos_ano)', null,
