@@ -385,6 +385,65 @@ supabase db execute --file Supabase/migrations/0187_o_tipo_que_chegava_sem_leito
 #   select * from fn_cobertura_de_tipos()
 #    where veredito in ('SEM_COBERTURA', 'DECLARACAO_QUEBRADA');   -- D6 estrito: ZERO linhas
 
+# A 0188 (depois da 0186 — ela usa os três motivos reservados pelo CONTRATO da
+# 0186, e a guarda de vocabulário da 0186 os aceita) faz as quatro checagens que
+# emitiam a precondição genérica passarem o motivo ESPECÍFICO quando o código o
+# sabe (linha_nao_localizada / unidade_divergente / sem_periodo_par), com
+# MOTIVO e REMÉDIO na frente da descrição; reemite fn_registrar_reconciliacao só
+# para DEVOLVER o resultado achatado (o laço de períodos lê esse valor — sem
+# isso o laço pararia no primeiro período); cria taxonomia_linha_alternativa
+# (DRE/despesa_financeira: "resultado financeiro" sem "antes"); reemite
+# fn_exigencias_do_caso (DROP + CREATE: duas colunas novas, grant refeito) e
+# fn_recomputar_completude (texto pela alternativa + a descrição passa a ser
+# atualizada na pendência que já existe); acrescenta o localizador
+# ["juros","bancari"] na exigência E na checagem de despesa financeira. NÃO roda
+# reconciliação nem recompute: o motivo específico aparece na PRÓXIMA rodada de
+# cada caso, e as linhas já gravadas continuam com o genérico.
+#
+# O único UPDATE dela é dirigido: fn_reescrever_recado_linha_exigida('DRE',
+# 'despesa_financeira') reescreve SÓ a descrição das pendências ABERTAS dessa
+# exigência cuja entidade tem a alternativa. Meça o alcance ANTES, somente
+# leitura (a atribuição de entidade abaixo é a aproximada — a migration usa a de
+# fn_exigencias_do_caso; esperado em 22/09/2026: ~50 de 52):
+#   select count(*) as abertas,
+#          count(*) filter (where exists (
+#            select 1 from documento d
+#              join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
+#             where d.caso_id = p.caso_id and d.tipo_taxonomia = 'DRE'
+#               and (p.entidade_id is null or d.entidade_id = p.entidade_id)
+#               and ce.valor_num is not null
+#               and fn_normalizar_texto(ce.chave) like '%resultado%'
+#               and fn_normalizar_texto(ce.chave) like '%financeiro%'
+#               and fn_normalizar_texto(ce.chave) not like '%antes%')) as com_resultado_financeiro
+#     from pendencia p
+#    where p.tipo = 'linha_exigida_ausente' and p.estado = 'aberta'
+#      and p.motivo like 'completude:linha_exigida:DRE:despesa\_financeira%';
+# E o alcance do localizador novo (a pendência FALSA que o próximo recompute do
+# caso resolve — a migration não a resolve; esperado: 1):
+#   select count(*) from pendencia p
+#    where p.tipo = 'linha_exigida_ausente' and p.estado <> 'resolvida'
+#      and p.motivo like 'completude:linha_exigida:DRE:despesa\_financeira%'
+#      and exists (
+#        select 1 from documento d
+#          join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
+#         where d.caso_id = p.caso_id and d.tipo_taxonomia = 'DRE'
+#           and (p.entidade_id is null or d.entidade_id = p.entidade_id)
+#           and ce.valor_num is not null
+#           and fn_normalizar_texto(ce.chave) like '%juros%'
+#           and fn_normalizar_texto(ce.chave) like '%bancari%'
+#           and fn_normalizar_texto(ce.chave) not like '%receita%'
+#           and fn_normalizar_texto(ce.chave) not like '%aplicac%');
+supabase db execute --file Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql
+# DEPOIS DESTA (o raise notice com a contagem é efêmero):
+#   select descricao like '%não existe como tal%' as com_recado, count(*) from pendencia
+#    where tipo = 'linha_exigida_ausente' and estado = 'aberta'
+#      and motivo like 'completude:linha_exigida:DRE:despesa\_financeira%' group by 1;
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where migration = '0188' and not presente;                 -- ZERO linhas
+# E, depois da próxima rodada de um caso, o motivo específico aparecendo:
+#   select motivo_precondicao, count(*) from reconciliacao
+#    where not precondicoes_ok and criado_em > '<data do apply>' group by 1 order by 2 desc;
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

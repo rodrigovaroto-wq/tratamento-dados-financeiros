@@ -7,7 +7,7 @@
 | | |
 |---|---|
 | **Última migration APLICADA** | `0181_o_controle_que_a_entidade_nunca_registrava.sql` (F1.5) — sonda responde `ate_migration = 0181`, conferido em 18/09/2026 |
-| **Migrations PRONTAS mas NÃO APLICADAS** | `0187_o_tipo_que_chegava_sem_leitor_declarado.sql` (F2 — portão D6 por declaração; a `0185` foi DESCARTADA, nunca aplicada, número fica como lacuna) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte, PRONTA, testes verdes, aguarda aplicação) |
+| **Migrations PRONTAS mas NÃO APLICADAS** | `0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql` (F2 suporte — motivo específico por checagem, recado do resultado financeiro líquido, localizador de juros bancários; escrita e testada localmente, NÃO aplicada) · `0187_o_tipo_que_chegava_sem_leitor_declarado.sql` (F2 — portão D6 por declaração; a `0185` foi DESCARTADA, nunca aplicada, número fica como lacuna) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte, PRONTA, testes verdes, aguarda aplicação) |
 | **Decisão do dono, 21/09/2026** | **F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b**. Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás" |
 
 ### Entrega 1: Migration `0186` — motivo da precondição para deixar de ser jogado fora

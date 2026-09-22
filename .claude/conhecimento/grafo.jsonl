@@ -85,6 +85,7 @@
 {"k":"n","id":"arquivo:Supabase/test/modelagem_v35.test.sql","t":"arquivo","f":"Supabase/test/modelagem_v35.test.sql","txt":"modelagem_v35.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/modelagem_versao_vigente_escala.test.sql","t":"arquivo","f":"Supabase/test/modelagem_versao_vigente_escala.test.sql","txt":"modelagem_versao_vigente_escala.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/moeda.test.sql","t":"arquivo","f":"Supabase/test/moeda.test.sql","txt":"moeda.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/motivo_especifico.test.sql","t":"arquivo","f":"Supabase/test/motivo_especifico.test.sql","txt":"motivo_especifico.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/operacao.test.sql","t":"arquivo","f":"Supabase/test/operacao.test.sql","txt":"operacao.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/papel_da_linha.test.sql","t":"arquivo","f":"Supabase/test/papel_da_linha.test.sql","txt":"papel_da_linha.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/papel_por_secao.test.sql","t":"arquivo","f":"Supabase/test/papel_por_secao.test.sql","txt":"papel_por_secao.test.sql"}
@@ -229,6 +230,7 @@
 {"k":"n","id":"fn:fn_definir_modelagem","t":"fn","f":"Supabase/migrations/0038_premissas_catalogo.sql","txt":"definir modelagem"}
 {"k":"n","id":"fn:fn_desativar_premissa","t":"fn","f":"Supabase/migrations/0104_desativar_premissa.sql","txt":"desativar premissa"}
 {"k":"n","id":"fn:fn_descricao_extracao_falhou","t":"fn","f":"Supabase/migrations/0154_a_pendencia_de_cobertura_diz_a_unidade.sql","txt":"descricao extracao falhou"}
+{"k":"n","id":"fn:fn_descricao_linha_exigida","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"descricao linha exigida"}
 {"k":"n","id":"fn:fn_diagnostico_modelagem","t":"fn","f":"Supabase/migrations/0102_modelagem_versao_vigente.sql","txt":"diagnostico modelagem"}
 {"k":"n","id":"fn:fn_dial","t":"fn","f":"Supabase/migrations/0126_golden_set.sql","txt":"dial"}
 {"k":"n","id":"fn:fn_dial_auto_promover","t":"fn","f":"Supabase/migrations/0137_a_promocao_automatica_do_dial.sql","txt":"dial auto promover"}
@@ -258,7 +260,7 @@
 {"k":"n","id":"fn:fn_entidades_sao_um_grupo","t":"fn","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","txt":"entidades sao um grupo"}
 {"k":"n","id":"fn:fn_excluir_caso","t":"fn","f":"Supabase/migrations/0108_falha_de_execucao.sql","txt":"excluir caso"}
 {"k":"n","id":"fn:fn_exercicio_da_coluna","t":"fn","f":"Supabase/migrations/0150_a_premissa_sai_do_realizado_certo.sql","txt":"exercicio da coluna"}
-{"k":"n","id":"fn:fn_exigencias_do_caso","t":"fn","f":"Supabase/migrations/0157_o_combinado_que_travava_o_kit_basico.sql","txt":"exigencias do caso"}
+{"k":"n","id":"fn:fn_exigencias_do_caso","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"exigencias do caso"}
 {"k":"n","id":"fn:fn_falhas_abertas","t":"fn","f":"Supabase/migrations/0108_falha_de_execucao.sql","txt":"falhas abertas"}
 {"k":"n","id":"fn:fn_fator_escala","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"fator escala"}
 {"k":"n","id":"fn:fn_fatos_do_caso","t":"fn","f":"Supabase/migrations/0149_o_fato_material_endurecido.sql","txt":"fatos do caso"}
@@ -297,7 +299,10 @@
 {"k":"n","id":"fn:fn_mesma_entidade","t":"fn","f":"Supabase/migrations/0030_entidade_e_periodo_canonicos.sql","txt":"mesma entidade"}
 {"k":"n","id":"fn:fn_min_motivo_rejeicao","t":"fn","f":"Supabase/migrations/0106_rejeitar_pendencia.sql","txt":"min motivo rejeicao"}
 {"k":"n","id":"fn:fn_modelagem_esta_pronta","t":"fn","f":"Supabase/migrations/0158_o_pronto_que_nao_provava_cobertura.sql","txt":"modelagem esta pronta"}
+{"k":"n","id":"fn:fn_motivo_do_lado","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"motivo do lado"}
 {"k":"n","id":"fn:fn_motivo_escala_incomparavel","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"motivo escala incomparavel"}
+{"k":"n","id":"fn:fn_motivo_precondicao_agregado","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"motivo precondicao agregado"}
+{"k":"n","id":"fn:fn_motivo_precondicao_prefixo","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"motivo precondicao prefixo"}
 {"k":"n","id":"fn:fn_mudar_dial","t":"fn","f":"Supabase/migrations/0139_reafirmar_nao_apaga_medicao.sql","txt":"mudar dial"}
 {"k":"n","id":"fn:fn_mutuo_com_socio","t":"fn","f":"Supabase/migrations/0123_mutuos_a_natureza_fora_da_linha.sql","txt":"mutuo com socio"}
 {"k":"n","id":"fn:fn_natureza_intragrupo","t":"fn","f":"Supabase/migrations/0124_intragrupo_que_nao_e_mutuo.sql","txt":"natureza intragrupo"}
@@ -328,20 +333,21 @@
 {"k":"n","id":"fn:fn_radicais_rotulo","t":"fn","f":"Supabase/migrations/0103_papel_linha_tokeniza_uma_vez.sql","txt":"radicais rotulo"}
 {"k":"n","id":"fn:fn_reabrir_caso","t":"fn","f":"Supabase/migrations/0114_mandato_fechado.sql","txt":"reabrir caso"}
 {"k":"n","id":"fn:fn_reavaliar_guardas_extracao","t":"fn","f":"Supabase/migrations/0043_reconferir_o_que_ja_esta_no_banco.sql","txt":"reavaliar guardas extracao"}
-{"k":"n","id":"fn:fn_recomputar_completude","t":"fn","f":"Supabase/migrations/0157_o_combinado_que_travava_o_kit_basico.sql","txt":"recomputar completude"}
+{"k":"n","id":"fn:fn_recomputar_completude","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"recomputar completude"}
 {"k":"n","id":"fn:fn_reconciliar_arvore","t":"fn","f":"Supabase/migrations/0133_a_secao_que_nao_fecha.sql","txt":"reconciliar arvore"}
-{"k":"n","id":"fn:fn_reconciliar_ativo_passivo_pl","t":"fn","f":"Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql","txt":"reconciliar ativo passivo pl"}
-{"k":"n","id":"fn:fn_reconciliar_caixa_bp_fluxo","t":"fn","f":"Supabase/migrations/0031_caixa_por_secao.sql","txt":"reconciliar caixa bp fluxo"}
+{"k":"n","id":"fn:fn_reconciliar_ativo_passivo_pl","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar ativo passivo pl"}
+{"k":"n","id":"fn:fn_reconciliar_caixa_bp_fluxo","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar caixa bp fluxo"}
 {"k":"n","id":"fn:fn_reconciliar_caso","t":"fn","f":"Supabase/migrations/0152_a_reconciliacao_do_lote.sql","txt":"reconciliar caso"}
 {"k":"n","id":"fn:fn_reconciliar_chaves_do_documento","t":"fn","f":"Supabase/migrations/0152_a_reconciliacao_do_lote.sql","txt":"reconciliar chaves do documento"}
-{"k":"n","id":"fn:fn_reconciliar_despfin_dre_vs_divida","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"reconciliar despfin dre vs divida"}
+{"k":"n","id":"fn:fn_reconciliar_despfin_dre_vs_divida","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar despfin dre vs divida"}
 {"k":"n","id":"fn:fn_reconciliar_duplicidade","t":"fn","f":"Supabase/migrations/0144_duplicidade_e_entre_documentos.sql","txt":"reconciliar duplicidade"}
 {"k":"n","id":"fn:fn_reconciliar_intragrupo","t":"fn","f":"Supabase/migrations/0124_intragrupo_que_nao_e_mutuo.sql","txt":"reconciliar intragrupo"}
 {"k":"n","id":"fn:fn_reconciliar_mutuos","t":"fn","f":"Supabase/migrations/0123_mutuos_a_natureza_fora_da_linha.sql","txt":"reconciliar mutuos"}
 {"k":"n","id":"fn:fn_reconciliar_por_documento","t":"fn","f":"Supabase/migrations/0152_a_reconciliacao_do_lote.sql","txt":"reconciliar por documento"}
-{"k":"n","id":"fn:fn_reconciliar_receita_dre_vs_faturamento","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"reconciliar receita dre vs faturamento"}
+{"k":"n","id":"fn:fn_reconciliar_receita_dre_vs_faturamento","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar receita dre vs faturamento"}
 {"k":"n","id":"fn:fn_reconciliar_versoes_do_periodo","t":"fn","f":"Supabase/migrations/0159_o_rotulo_que_a_propria_estrutura_desmente.sql","txt":"reconciliar versoes do periodo"}
 {"k":"n","id":"fn:fn_reconferir_caso","t":"fn","f":"Supabase/migrations/0043_reconferir_o_que_ja_esta_no_banco.sql","txt":"reconferir caso"}
+{"k":"n","id":"fn:fn_reescrever_recado_linha_exigida","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reescrever recado linha exigida"}
 {"k":"n","id":"fn:fn_registrar_campos_extraidos","t":"fn","f":"Supabase/migrations/0128_classificacao_contabil_sombra.sql","txt":"registrar campos extraidos"}
 {"k":"n","id":"fn:fn_registrar_classe_override","t":"fn","f":"Supabase/migrations/0128_classificacao_contabil_sombra.sql","txt":"registrar classe override"}
 {"k":"n","id":"fn:fn_registrar_diagnostico","t":"fn","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","txt":"registrar diagnostico"}
@@ -351,7 +357,7 @@
 {"k":"n","id":"fn:fn_registrar_fatos","t":"fn","f":"Supabase/migrations/0149_o_fato_material_endurecido.sql","txt":"registrar fatos"}
 {"k":"n","id":"fn:fn_registrar_indice_macro","t":"fn","f":"Supabase/migrations/0025_indices_macro.sql","txt":"registrar indice macro"}
 {"k":"n","id":"fn:fn_registrar_pergunta_acao","t":"fn","f":"Supabase/migrations/0120_banco_de_perguntas.sql","txt":"registrar pergunta acao"}
-{"k":"n","id":"fn:fn_registrar_reconciliacao","t":"fn","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","txt":"registrar reconciliacao"}
+{"k":"n","id":"fn:fn_registrar_reconciliacao","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"registrar reconciliacao"}
 {"k":"n","id":"fn:fn_registrar_reconciliacao_b","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"registrar reconciliacao b"}
 {"k":"n","id":"fn:fn_registrar_transcricao_humana","t":"fn","f":"Supabase/migrations/0129_transcricao_humana_assistida.sql","txt":"registrar transcricao humana"}
 {"k":"n","id":"fn:fn_registrar_uso_lote","t":"fn","f":"Supabase/migrations/0156_o_lote_existe_antes_de_terminar.sql","txt":"registrar uso lote"}
@@ -518,6 +524,7 @@
 {"k":"n","id":"migration:0181","t":"migration","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"o controle que a entidade nunca registrava"}
 {"k":"n","id":"migration:0186","t":"migration","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","txt":"o motivo que o achatamento engolia"}
 {"k":"n","id":"migration:0187","t":"migration","f":"Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql","txt":"o tipo que chegava sem leitor declarado"}
+{"k":"n","id":"migration:0188","t":"migration","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"o motivo que a checagem sabia e nao dizia"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -1079,6 +1086,20 @@
 {"k":"e","de":"arquivo:Supabase/test/moeda.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/moeda.test.sql","l":42}
 {"k":"e","de":"arquivo:Supabase/test/moeda.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/moeda.test.sql","l":37}
 {"k":"e","de":"arquivo:Supabase/test/moeda.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/moeda.test.sql","l":36}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_descricao_linha_exigida","f":"Supabase/test/motivo_especifico.test.sql","l":572}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_exigencias_do_caso","f":"Supabase/test/motivo_especifico.test.sql","l":464}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_fator_escala","f":"Supabase/test/motivo_especifico.test.sql","l":151}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_motivo_escala_incomparavel","f":"Supabase/test/motivo_especifico.test.sql","l":395}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_normalizar_texto","f":"Supabase/test/motivo_especifico.test.sql","l":147}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_recomputar_completude","f":"Supabase/test/motivo_especifico.test.sql","l":575}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_caso","f":"Supabase/test/motivo_especifico.test.sql","l":9}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_chaves_do_documento","f":"Supabase/test/motivo_especifico.test.sql","l":22}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_despfin_dre_vs_divida","f":"Supabase/test/motivo_especifico.test.sql","l":475}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_por_documento","f":"Supabase/test/motivo_especifico.test.sql","l":22}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_reescrever_recado_linha_exigida","f":"Supabase/test/motivo_especifico.test.sql","l":583}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/motivo_especifico.test.sql","l":453}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/motivo_especifico.test.sql","l":449}
+{"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/motivo_especifico.test.sql","l":448}
 {"k":"e","de":"arquivo:Supabase/test/operacao.test.sql","rel":"CHAMA","pa":"fn:fn_operacao_lotes","f":"Supabase/test/operacao.test.sql","l":35}
 {"k":"e","de":"arquivo:Supabase/test/operacao.test.sql","rel":"CHAMA","pa":"fn:fn_operacao_resumo","f":"Supabase/test/operacao.test.sql","l":90}
 {"k":"e","de":"arquivo:Supabase/test/papel_da_linha.test.sql","rel":"CHAMA","pa":"fn:fn_aplicar_premissa_em_lote","f":"Supabase/test/papel_da_linha.test.sql","l":233}
@@ -1702,6 +1723,18 @@
 {"k":"e","de":"migration:0187","rel":"CRIA","pa":"fn:fn_cobertura_de_tipos","f":"Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql","l":397}
 {"k":"e","de":"migration:0187","rel":"CRIA","pa":"fn:fn_resolver_linha_exigida_superada","f":"Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql","l":497}
 {"k":"e","de":"migration:0187","rel":"CRIA","pa":"fn:fn_sugerir_perguntas","f":"Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql","l":605}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_descricao_linha_exigida","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":1568}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_exigencias_do_caso","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":1290}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_motivo_do_lado","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":177}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_motivo_precondicao_agregado","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":201}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_motivo_precondicao_prefixo","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":222}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_recomputar_completude","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":1624}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_reconciliar_ativo_passivo_pl","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":447}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_reconciliar_caixa_bp_fluxo","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":683}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_reconciliar_despfin_dre_vs_divida","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":942}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_reconciliar_receita_dre_vs_faturamento","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":1131}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_reescrever_recado_linha_exigida","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":1831}
+{"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":253}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}
