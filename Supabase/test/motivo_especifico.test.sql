@@ -116,7 +116,11 @@ $f$;
 create or replace function pg_temp.retrato_texto_0188()
 returns text
 language sql as $f$
-  select coalesce(string_agg(l, E'\n' order by l), '')
+  -- `collate "C"`: a ordem (e portanto o md5 do bloco 2) NÃO pode depender da
+  -- collation do banco. Medido em 22/09/2026: o CI (imagem postgres:16, en_US.utf8)
+  -- dava md5 8847e23c… onde o banco local (C.UTF-8) dava d8123955… — o mesmo
+  -- retrato, outra ordem. Reproduzido aqui com `collate "en-US-x-icu"`.
+  select coalesce(string_agg(l, E'\n' order by l collate "C"), '')
     from (select format('R|%s|%s|%s|%s|%s|%s|%s', caso, tipo, ent, per, ok, resultado, n) as l
             from pg_temp.retrato_rec_0188()
           union all
