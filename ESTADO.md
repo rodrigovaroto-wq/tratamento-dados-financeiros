@@ -1,15 +1,83 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-> ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL), DECISÃO PENDENTE ENTRE 1.7/F2/F3b (18/09/2026)
->
-> **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
-> - **F1.3**: `entidade.papel_no_grupo` tipado em enum + escrita explícita (`fn_entidade_definir_papel_no_grupo`) + guarda de pendência. Migration `0179`. **VERIFICADA**: reconstrução do banco do zero, correção desligada (reprova no ponto esperado), religada (todas as suítes passam).
-> - **F1.4**: tabela nova `perimetro(caso, entidade, escopo, desde, ate)` com funções de leitura/escrita. Migration `0180`. **VERIFICADA**: idem acima.
-> - **F1.5**: `entidade.controladora_id` (FK self-referencing) + `percentual_participacao`, guarda contra ciclo, funções de leitura/escrita. Migration `0181`. **VERIFICADA**: idem acima. 29 asserts novos, 4 medidos reprovando sem a guarda.
->
-> **Colisão de duas sessões paralelas em F1.4 resolvida por merge** (não rebase, não force-push) — ambas compatíveis. Ver `.claude/memory/colisao-sessoes-paralelas-mesma-branch.md`.
->
-> **F1.6 bloqueada**: depende do dono fornecer o COMBINADO real do cliente para conferir o perímetro contra ele. O mandato AMO teste 00 não tem COMBINADO real ingerido.
+## SESSÃO 99 (22/09/2026) — F2 escolhida, `0185` rejeitada na medição, `0186` pronta para aplicação
+
+### Estado atual de produção e repositório
+
+| | |
+|---|---|
+| **Última migration APLICADA** | `0181_o_controle_que_a_entidade_nunca_registrava.sql` (F1.5) — sonda responde `ate_migration = 0181`, conferido em 18/09/2026 |
+| **Migrations PRONTAS mas NÃO APLICADAS** | `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — REPROVADA na medição contra produção) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte, PRONTA, testes verdes, aguarda aplicação) |
+| **Decisão do dono, 21/09/2026** | **F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b**. Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás" |
+
+### Entrega 1: Migration `0186` — motivo da precondição para deixar de ser jogado fora
+
+**Escrita, testada localmente com suíte verde (10 asserts), revisada 3 vezes, pronta para aplicação.**
+
+`fn_registrar_reconciliacao` achatava `documento_ausente` ("contraparte não entregue") e `linha_nao_localizada` ("extração falha") no mesmo literal `precondicao_nao_satisfeita`. Coluna nova `reconciliacao.motivo_precondicao` guarda o motivo verdadeiro, com backfill de `evento_auditoria` para linhas já gravadas. Vocabulário amarrado em `p_resultado` — erro de uma letra agora levanta exceção (defende o denominador de toda a medição desta fase). `resultado` não muda de vocabulário — portal/export/suítes leem o mesmo texto sempre.
+
+**⚠️ CRÍTICO — `documento_ausente` NÃO significa "contraparte não entregue":** 42 linhas de `secao_fecha` e 9 de `mutuos_planilha_vs_balanco` têm este motivo COM o documento PRESENTE (a `0133:371` emite para "seção sem filhos", a `0123` com planilha entregue). **O motivo garante só o que o código faz: não abre pendência.** Tela que o traduza para "cobrar o documento" vai pedir o que o cliente já mandou — a causa real nunca chega à fila.
+
+Revisor independente pegou que a própria rodada de correção reintroduzia o erro invertido ("motivo afirma presença" quando documento pode estar ausente). Medido e corrigido com a forma FORTE de reprova (comportamento, não mecanismo).
+
+**Aplicação:** quem aplicar mede ANTES com as 3 consultas somente-leitura em `Supabase/README.md` — uma delas pode mandar NÃO APLICAR. A guarda de vocabulário transforma valor inesperado em exceção; a reconciliação roda no fluxo de ingestão sem tratamento de erro — um motivo desconhecido aborta a transação do caso.
+
+### Entrega 2: Migration `0185` — cobertura de tipos (F2.1) REJEITADA NA MEDIÇÃO CONTRA PRODUÇÃO
+
+**Escrita, testada localmente (51 asserts, bloco 2 contra fixture canastra), revisada para 4 localizadores que casavam `chave` em vez de `secao`. Medida contra banco real em 21/09/2026 — E REPROVADA.**
+
+Nove tipos mudos ganharam exigência `origem='proposta'` cada (padrão `0113`): AGING_AP, AGING_AR, EXTRATO_BANCARIO, GARANTIAS, AVAIS_FIANCAS, CONTINGENCIAS, DEBITOS_TRIB, ESTOQUE, HEADCOUNT.
+
+**Medição de alcance contra PRODUÇÃO (banco em 0181, somente leitura):** 190 documentos dos 9 tipos em 14 casos, 64 com conteúdo, 17 abririam `linha_exigida_ausente` — **todos os 17 TÊM o dado**. Causa-raiz, não é escolha de termo: **em relatório ITEMIZADO o conceito não está no rótulo — o rótulo é o ITEM (fornecedor, banco, processo), o conceito é o TIPO.** AGING_AP tem chaves `41518 - WELLA BRASIL`, ESTOQUE `2500 - ASSALA PRIME` (484 linhas), CONTINGENCIAS descrições de processo com seções `Trabalhista`/`Cível`/`Tributário` — nunca a palavra "contingência".
+
+E o outro lado erra junto: 22 dos 47 que "passam" se satisfazem por UMA linha residual (`Demais fornecedores`/`clientes agregados`), que é exatamente o que o aging não abre.
+
+**Armadilha de portão:** `secao` não é estável entre versões do extrator. Fixture tem `secao` preenchida, produção às vezes não — teste verde contra fixture, falso em produção (terceira vez).
+
+**Próximo passo: REDESENHO, não conserto de termo.** Para tipo itemizado a pergunta é estrutural (quantas linhas com valor, eixo esperado do relatório) ou nenhuma (assumir `item_sem_conteudo` 0036 cobre "chegou vazio"). A `0185` fica no repositório não aplicada até essa decisão. **DECISÃO DO DONO: os nove tipos ficam COMPLEMENTARES, não bloqueante.**
+
+**Suspeita aberta (NÃO investigada):** MUTUOS e FAT_INTRAGRUPO (exigências `proposta` da `0113` em produção desde então) também reprovam contra fixture — pode ser o mesmo defeito de termo/seção, mais antigo.
+
+### Medição da camada de reconciliação — o que reprovaria F2 hoje
+
+**Medido em produção (21/09), contra veredito final por caso × entidade (ela concluiu em algum período?):**
+
+| Checagem | Pares | Concluiu | Nunca | % | 
+|---|---|---|---|---|
+| `caixa_bp_vs_fluxo` | 33 | **0** | 33 | **0,0%** |
+| `mutuos` | 12 | 1 | 11 | 8,3% |
+| `caixa_bp_fluxo` | 163 | 14 | 149 | 8,6% |
+| `despfin` | 109 | 15 | 94 | 13,8% |
+| `receita` | 109 | 23 | 86 | 21,1% |
+| `intragrupo` | 12 | 4 | 8 | 33,3% |
+| `ativo_passivo_pl` | 196 | 112 | 84 | 57,1% |
+| `secao_fecha` | 118 | 80 | 38 | 67,8% |
+| `duplicidade`·`conflito` | 221 | todos | 0 | 100% |
+
+**Diagnóstico medido:** `precondicao_nao_satisfeita` confunde 4 estados — contraparte não existe (278 pares), linha não localizada (ours ou theirs), unidade divergente, período sem par. Em 1.922/1.926 linhas, `fonte_a`/`fonte_b` estão NULAS — nada a jusante consegue distinguir. **Fila não é acionável.** Para `despfin` em particular: 50 entidades com DRE que publica resultado LÍQUIDO em vez de despesa bruta — ausência real, legítima, pendência com recado errado. 254 de 283 pares não concluem; fila só mostrava 52 (a fila subestima em 5×).
+
+**Consequência:** a F2 acrescenta exigência nova a uma camada cujos consumidores atuais concluem **entre 8,3% e 67,8%** por caso × entidade. Sem saber por que não concluem, é construir em andar não verificado. Precisão de exigência não resolve — é diagnóstico estrutural que falta.
+
+> **Não escreva "entre 0% e 40%".** Essa faixa já foi publicada duas vezes nesta rodada e é falsa
+> nas duas pontas: o 0% vem de `caixa_bp_vs_fluxo`, que é NOME MORTO (renomeado em 27/07/2026, nenhuma
+> função o menciona hoje) — medir um cadáver infla o alarme; e o teto de 40% vinha da métrica por
+> PERÍODO, que superestimava, enquanto por caso × entidade `ativo_passivo_pl` está em 57,1% e
+> `secao_fecha` em 67,8%. A faixa honesta, já excluído o tipo morto, é **8,3% a 67,8%**.
+
+**O que fica medido para quem vier depois:** dois formatos, cita qual está citando (a métrica anterior, por período, superestimava o problema).
+
+### O que fica ABERTO, nomeado
+
+- **Fatia 1.7** — em construção em outra sessão em paralelo. Migrations `0182–0184` reservadas àquela sessão.
+- **Suspeita F2.1:** MUTUOS e FAT_INTRAGRUPO (exigências `proposta` da `0113`) também reprovam contra fixture — pode ser o mesmo defeito de termo, investigar com `select x.tipo, x.satisfeita from fn_exigencias_do_caso('<uuid>') x where x.origem='proposta'` contra banco de teste.
+- **As 52 pendências de despesa_financeira:** correção não é fazer checagem passar — é pendência DIZER que DRE veio líquido, mapa de dívida precisa da abertura bruta.
+- **Fatia 0185 redesenho:** estrutural, não lexical (quantas linhas com valor, eixo esperado).
+- **Fatia 1.7:** modelar controle comum por pessoa física (grupo horizontal, sem holding).
+- **F2.2–F2.4:** MAPA_DIVIDA fino · dar consumidor real a MUTUOS/FAT_INTRAGRUPO/CONTRATO_SOCIAL · terceiro book distress.
+
+### O que o dono faz à mão
+
+**Aplicar `0186`:** `supabase db execute --file Supabase/migrations/0186_...sql`, precedido de 3 consultas somente-leitura em `Supabase/README.md` — uma pode mandar NÃO APLICAR. Depois: consulta de pós-apply que conta preenchidas × NULL. **Aplicar `0185` NÃO — ficou no repositório não aplicada até redesenho.** Nenhum workflow tocado, nenhuma republicação, nenhum deploy do portal.
 >
 > **O susto do handoff anterior, registrado aqui porque é o motivo de todo este rigor**: ao
 > retomar, a sessão da fatia 1.3 encontrou no remoto DUAS versões divergentes da mesma migration

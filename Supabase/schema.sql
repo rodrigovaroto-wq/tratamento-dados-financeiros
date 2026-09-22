@@ -10240,17 +10240,62 @@ declare
   v_reconciliacao_id uuid;
   v_pendencia_id     uuid;
   v_motivo           text := 'reconciliacao:' || p_tipo;
+  -- 0186: O CONTRATO — todo motivo que o achatamento reconhece como "a
+  -- checagem não concluiu". `resultado` sai `precondicao_nao_satisfeita` para
+  -- QUALQUER um destes; o valor ORIGINAL vai para `motivo_precondicao` (ver
+  -- abaixo). Só 'documento_ausente' e 'precondicao_nao_satisfeita' têm
+  -- emissor hoje — os outros três são o contrato reservado para a fatia
+  -- seguinte, documentado no cabeçalho desta migration.
+  v_motivos_precondicao text[] := array[
+    'documento_ausente', 'precondicao_nao_satisfeita',
+    'linha_nao_localizada', 'unidade_divergente', 'sem_periodo_par'
+  ];
+  -- CORRIGIDO após revisão independente (achado mais grave: um p_resultado
+  -- fora do vocabulário virava 'a checagem concluiu' — precondicoes_ok =
+  -- TRUE, afirmação positiva e FALSA, medido passando 'linha_nao_localizado',
+  -- uma letra fora do contrato). Todo valor que QUALQUER `fn_reconciliar_*`
+  -- hoje realmente emite (grep em todas as migrations) mais os três
+  -- reservados do CONTRATO acima — nada além disso é reconhecido.
+  v_vocabulario_resultado text[] := array['ok', 'divergente', 'divergencia', 'zona_cinzenta']
+                                       || v_motivos_precondicao;
   -- 'documento_ausente' é um resultado NOSSO, para decidir a pendência; no log
   -- ele é gravado como pré-condição não satisfeita (é o que ele é).
-  v_res_log          text := case when p_resultado = 'documento_ausente'
+  v_res_log          text := case when p_resultado = any(v_motivos_precondicao)
                                   then 'precondicao_nao_satisfeita' else p_resultado end;
+  -- motivo_precondicao: o valor ORIGINAL, antes do achatamento acima — NULL
+  -- quando a checagem concluiu (v_res_log não é 'precondicao_nao_satisfeita').
+  -- Quando p_resultado já chega como 'precondicao_nao_satisfeita' (a função de
+  -- checagem não detalhou o motivo), grava esse mesmo valor: é honesto — "sem
+  -- motivo específico" é informação, não lacuna.
+  v_motivo_precondicao text := case when v_res_log = 'precondicao_nao_satisfeita'
+                                     then p_resultado else null end;
   -- 0127: a decisão passa para o corpo, porque agora ela depende do DIAL da
   -- classe — e o dial não se lê no declare sem esconder a regra.
+  --
+  -- 0186: ESTA LINHA NÃO MUDA. `documento_ausente` continua sendo o ÚNICO
+  -- motivo de precondição que NÃO abre pendência — é cobrança do checklist do
+  -- Kit Básico, não achado de revisão (0023, reafirmado pela 0127). Qualquer
+  -- motivo novo do array acima que não seja 'documento_ausente' cai do lado
+  -- de ABRE pendência por esta mesma linha, sem precisar tocá-la: documento
+  -- presente e algo não localizado é sempre achado acionável, mesmo quando o
+  -- motivo específico ainda não existe (default seguro).
   v_divergente       boolean := p_resultado not in ('ok', 'documento_ausente');
   v_abre_pendencia   boolean;
   v_estagio_dial     text;
   v_influencia       boolean;
 begin
+  -- 0186 (achado 1 da revisão): p_resultado FORA do vocabulário conhecido
+  -- REPROVA ALTO — não vira 'a checagem concluiu' por acidente de digitação.
+  -- `raise` em vez de `check constraint` na coluna `resultado`: a tabela tem
+  -- histórico com valores legados (ok, divergente, divergencia, zona_cinzenta,
+  -- precondicao_nao_satisfeita) e um check retroativo recusaria linha antiga
+  -- ou faria o `alter table` falhar — o raise protege só a ESCRITA daqui pra
+  -- frente, sem tocar no que já está gravado.
+  if not (p_resultado = any(v_vocabulario_resultado)) then
+    raise exception 'fn_registrar_reconciliacao: p_resultado=% fora do vocabulario conhecido (%)',
+      p_resultado, array_to_string(v_vocabulario_resultado, ', ');
+  end if;
+
   -- 0127: O DIAL DA CLASSE DECIDE SE O ACHADO CHEGA À FILA DE ALGUÉM.
   --
   -- `reconciliacao_classe_bc` declarava N0 — "roda, registra a saída, mas NÃO
@@ -10270,10 +10315,10 @@ begin
 
   insert into reconciliacao
     (caso_id, entidade_id, periodo_id, tipo, classe, fonte_a, fonte_b,
-     precondicoes_ok, resultado, divergencia_abs, divergencia_pct, materialidade)
+     precondicoes_ok, resultado, motivo_precondicao, divergencia_abs, divergencia_pct, materialidade)
   values (
     p_caso_id, p_entidade_id, p_periodo_id, p_tipo, p_classe, p_fonte_a, p_fonte_b,
-    v_res_log <> 'precondicao_nao_satisfeita', v_res_log,
+    v_res_log <> 'precondicao_nao_satisfeita', v_res_log, v_motivo_precondicao,
     p_divergencia_abs, p_divergencia_pct, p_materialidade
   )
   returning id into v_reconciliacao_id;
@@ -12927,6 +12972,22 @@ CREATE VIEW public.instalacao_sonda_rotulo_contraditorio AS
 COMMENT ON VIEW public.instalacao_sonda_rotulo_contraditorio IS '(0159) Autoteste de fn_documento_decide_sozinho, EXECUTADA por literais (função pura, sem fixture de documento nem de pendência): 1 linha só se o caso medido (COMBINADO com tipo_incorreto aberta), o caso comum (COMBINADO sem pendência, decide sozinho), o NULL (coalesce trata como ausente), o espelho da 0155 (BALANCO com tipo_incorreto continua decidindo sozinho — é a autoridade que cai, não a confiança) e o irrelevante (RAZAO, nunca se autodeclarou derivado) valem todos ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos (achado D da revisão da 0157) — esta view pega, porque o predicado É executado.';
 
 --
+-- Name: instalacao_sonda_tipos_mudos_f21; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_tipos_mudos_f21 AS
+ SELECT id,
+    tipo_taxonomia
+   FROM public.taxonomia_linha_exigida e
+  WHERE ((origem = 'proposta'::text) AND (tipo_taxonomia = ANY (ARRAY['AGING_AP'::text, 'AGING_AR'::text, 'EXTRATO_BANCARIO'::text, 'GARANTIAS'::text, 'AVAIS_FIANCAS'::text, 'CONTINGENCIAS'::text, 'DEBITOS_TRIB'::text, 'ESTOQUE'::text, 'HEADCOUNT'::text])));
+
+--
+-- Name: VIEW instalacao_sonda_tipos_mudos_f21; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_tipos_mudos_f21 IS 'Sonda da 0185: as nove exigências de conteúdo (F2.1) para tipos que antes não tinham NENHUMA linha em taxonomia_linha_exigida. Nove é o total — zero ou menos significa que a 0185 não foi aplicada e estes nove tipos continuam passando pela completude sem que ninguém confira o conteúdo.';
+
+--
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13110,8 +13171,15 @@ CREATE TABLE public.reconciliacao (
     divergencia_abs numeric,
     divergencia_pct numeric,
     materialidade jsonb,
-    criado_em timestamp with time zone DEFAULT now() NOT NULL
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    motivo_precondicao text
 );
+
+--
+-- Name: COLUMN reconciliacao.motivo_precondicao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.reconciliacao.motivo_precondicao IS 'O motivo que o emissor passou ANTES do achatamento de resultado, quando a checagem NÃO concluiu; NULL quando concluiu (ok/divergente/divergencia/zona_cinzenta). NENHUM DOS DOIS MOTIVOS PROVA PRESENÇA OU AUSÊNCIA DE DOCUMENTO, e quem construir tela sobre esta coluna precisa saber disso. documento_ausente NÃO é confiável como "a contraparte não foi entregue": fn_reconciliar_arvore (0133) o emite com documento_id NÃO-NULO para "este documento não tem seção com filhos", e fn_reconciliar_mutuos (0123) o emite para "planilha de mútuos presente, mas nenhum balanço traz conta de mútuo com lado reconhecível" — nos dois o documento FOI entregue. Medido no banco de teste: 42 linhas de secao_fecha e 9 de mutuos_planilha_vs_balanco com este motivo e documento presente. O que documento_ausente garante é só o que o código faz com ele: NÃO abre pendência. precondicao_nao_satisfeita como MOTIVO significa apenas "o emissor não especificou o motivo" — NÃO AUTORIZA concluir que o documento estava presente: é o mesmo literal que o legado (0009/0022, antes da reescrita da 0023 de fn_reconciliar_ativo_passivo_pl) usava tanto para documento ausente quanto para documento presente com linha não localizada, e é esse literal que o backfill grava a partir de evento_auditoria para as linhas antigas. Ver o CONTRATO no cabeçalho da 0186 para a lista completa de valores reconhecidos.';
 
 --
 -- Name: rubrica_classe; Type: TABLE; Schema: public; Owner: -
@@ -15798,6 +15866,14 @@ GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO service_role;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_tipos_mudos_f21; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO service_role;
 
 --
 -- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -
