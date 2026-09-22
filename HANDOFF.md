@@ -4,7 +4,96 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-## 🟡 SESSÃO 99 (21–22/09/2026) — F2 escolhida, `0185` reprovada, `0186` pronta e não aplicada
+## 🟡 SESSÃO 100 (22/09/2026) — pré-condições da `0186` medidas e liberadas; `0187`+`0188` escritas; aplicação RECUSADA pelo classificador de auto mode
+
+### O que esta sessão fez, em ordem
+
+1. **Mediu contra produção as 3 consultas somente-leitura da `0186`** (o passo que a sessão 99
+   deixou para "o dono fazer à mão"): 5.023 linhas com `precondicoes_ok=false` (não 1.926 — esse
+   número da sessão 99 era só de `ativo_passivo_pl`); backfill alcança 5.023/5.023 sem `NULL`; 0
+   linhas com eventos múltiplos ou motivos conflitantes; vocabulário emitido em produção = 6
+   valores (`precondicao_nao_satisfeita` 3.315, `documento_ausente` 1.708, `ok` 898,
+   `zona_cinzenta` 128, `divergente` 124, `divergencia` 69), todos dentro da guarda. Nenhuma das
+   três mandou NÃO APLICAR — a `0186` ficou LIBERADA.
+
+2. **Tentou aplicar a `0186` em produção — RECUSADA duas vezes pelo classificador de permissão do
+   auto mode** ("Production Deploy"), inclusive depois de o dono autorizar explicitamente no
+   chat. Autorização em texto não muda a regra de permissão configurada. **Nada foi aplicado**;
+   sonda segue em `0181`. Ver lição de ambiente nova em `.claude/memory/`.
+
+3. **Escreveu e testou `0187`** (commit `37de0ba`, 27 asserts): D6 por declaração —
+   `taxonomia_tipo_cobertura` (30 tipos, 3 `consumidor_nomeado` + 27 `sem_consumidor` com
+   motivo+efeito) e `fn_cobertura_de_tipos()`. Censo medido em produção: 24 tipos com documento,
+   6 com exigência viva, 18 sem. **Investigou a suspeita aberta pela sessão 99** (MUTUOS/
+   FAT_INTRAGRUPO reprovando contra fixture) — **CONFIRMADA**: as 5 pendências
+   `linha_exigida_ausente` abertas em produção de MUTUOS (1), FAT_INTRAGRUPO (3) e
+   CONTRATO_SOCIAL (1) são TODAS falsas, conferidas uma a uma. Corrigiu: MUTUOS/FAT_INTRAGRUPO
+   desativadas, CONTRATO_SOCIAL ganhou localizador de seção. `0185` DESCARTADA do repositório.
+
+4. **Escreveu e testou `0188`** (commit `f96b944`, 28 asserts): motivo específico por checagem
+   (53 linhas das fixtures perturbadas ganham motivo em vez do genérico), retorno ACHATADO para
+   não quebrar os despachantes da `0152`, `taxonomia_linha_alternativa` com o recado da DRE
+   líquida (medido: casa 71 entidades em produção), localizador de juros bancários (medido: 8
+   linhas, 4 entidades).
+
+5. **Construiu o terceiro book, `book-distress`** (commit `cc9f8f5`, F2.4): Grupo Piraquara, 3
+   entidades × 2023–2025, 14 PDFs, 262 linhas de conta, PL negativo, covenant rompido, aging e
+   extrato que batem com o BP. Determinístico (md5 idêntico em 2 gerações). Achado: A=P+PL e ΔPL
+   valem por construção (README corrigido para não prometer o que o gerador não confere).
+
+6. **Mediu F2.2 (MAPA_DIVIDA fino) e NÃO construiu**: 51 mapas com conteúdo em produção, 2.268
+   linhas; 12 com linha de juros, 12 com saldo, 0 com taxa, 0 com vencimento, 0 com covenant —
+   depende da F3 (schema da linha).
+
+7. **Não fechou F2.3** (consumidor real para FAT_INTRAGRUPO/CONTRATO_SOCIAL) — ficou declarada
+   `sem_consumidor` com efeito nomeado; escrever a checagem é desenho novo.
+
+8. **Registrou 6 achados NÃO corrigidos** nesta sessão (ver ESTADO.md, seção "Achados registrados
+   e NÃO corrigidos"): `fn_reconciliar_arvore` devolve `ok` sem nenhuma seção conferida (viola a
+   regra 7); `fn_reconciliar_caso` itera sem `order by`; `fn_reconciliar_mutuos` com escala
+   ausente termina em `documento_ausente`; `consumidor_existe` só olha `pg_proc`; DVA/DMPL na
+   soma do realizado (possível dupla contagem); `fn_conflitos_do_caso` declarada "não consumidor"
+   apesar de comparar contagem por rótulo.
+
+### Onde estamos
+
+**F2 com D6 VERDE NO REPOSITÓRIO, não em produção.** As três migrations (`0186`→`0187`→`0188`)
+estão escritas, testadas e — no caso da `0186` — medidas e liberadas contra produção, mas
+**nenhuma foi aplicada**: a sonda segue em `0181`. Para a F2 fechar: aplicar as três nesta ordem e
+rodar `fn_cobertura_de_tipos()` em produção; decidir F2.3 ou aceitar a declaração; o aceite
+financeiro depende da F3/ingestão (extratos grandes do mandato AMO não entram hoje, limite de
+tamanho ~125–150 mil itens).
+
+### Próximos passos, em ordem
+
+1. **Aplicar `0186`→`0187`→`0188` em produção, nesta ordem** — é o que mais destrava. Precisa de
+   uma regra de permissão em `settings.json` que libere a chamada de gerenciamento do Supabase
+   para o auto mode, ou aplicação fora do auto mode; autorização em texto no chat não basta.
+2. **Depois de aplicar, rodar `fn_cobertura_de_tipos()` contra produção** e conferir os efeitos
+   previstos: 5 pendências MUTUOS/FAT_INTRAGRUPO/CONTRATO_SOCIAL resolvidas, 0 abertas; ~50 de 52
+   pendências de despesa financeira com texto novo (recado da DRE líquida).
+3. **F2.3**: decidir se vale escrever uma checagem para FAT_INTRAGRUPO (pares A→B por ano contra
+   a eliminação do COMBINADO/FATURAMENTO_24M) ou aceitar a declaração `sem_consumidor` como final.
+4. **F2.2 fino** (taxa, vencimento, covenant do MAPA_DIVIDA) — depende da F3.
+5. **Aceite financeiro da F2** — depende da F3/ingestão de extratos grandes.
+6. **Os 6 achados registrados** — nenhum corrigido ainda.
+7. **Fatia 1.7** — segue em outra sessão, `0182`–`0184` reservadas.
+
+### Lições desta sessão
+
+- **O classificador de permissão do auto mode recusa aplicar migration em produção (`curl` à API
+  de gerenciamento do Supabase) mesmo com autorização explícita do dono no chat.** Autorização em
+  texto não é o mesmo que regra de permissão — precisa de entrada em `settings.json`. Ver
+  `.claude/memory/` (lição nova).
+- **`item_sem_conteudo` (`0036`/`0157`) só cobre tipo OBRIGATÓRIO.** Complementar vazio só aparece
+  via `extracao_falhou` por documento (`0111`) — relevante para qualquer fatia futura que queira
+  usar `item_sem_conteudo` como "chegou vazio" para tipo complementar (a `0185` teria caído nessa
+  armadilha se tivesse ido adiante). Ver `.claude/memory/` (lição nova).
+- **Número "1.926" da sessão 99 era parcial, não total.** Media só `ativo_passivo_pl`; o total de
+  `precondicoes_ok=false` em produção é 5.023. Reforça a regra da casa: todo número herdado de
+  uma rodada anterior se remede antes de virar decisão, não se copia.
+
+## ⚪ SESSÃO 99 (21–22/09/2026) — F2 escolhida, `0185` reprovada, `0186` pronta e não aplicada
 
 ### O que esta sessão fez, em ordem
 
