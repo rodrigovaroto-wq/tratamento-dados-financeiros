@@ -1212,6 +1212,57 @@ $_$;
 COMMENT ON FUNCTION public.fn_cnpj_canonico(p_cnpj text) IS '14 dígitos de CNPJ com o DV conferido, ou NULO. 0169: o CNPJ vai chegar de uma IA lendo PDF escaneado — um número inventado que passe como identidade funde duas empresas de verdade em silêncio, que é pior que não ter CNPJ nenhum. DV que não fecha é AUSÊNCIA, não dado.';
 
 --
+-- Name: fn_cobertura_de_tipos(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_cobertura_de_tipos() RETURNS TABLE(tipo_taxonomia text, obrigatoriedade text, exigencias_vivas integer, estado_declarado text, consumidor text, consumidor_existe boolean, veredito text)
+    LANGUAGE sql STABLE
+    AS $$
+  with vivas as (
+    select e.tipo_taxonomia, count(*)::int as n
+      from taxonomia_linha_exigida e
+     where e.ativo and e.origem = 'codigo'
+     group by e.tipo_taxonomia
+  ),
+  base as (
+    select t.codigo, t.obrigatoriedade::text as obrigatoriedade,
+           coalesce(v.n, 0) as n_vivas,
+           c.tipo_taxonomia is not null as declarado,
+           c.estado, c.consumidor,
+           case when c.consumidor is null then null
+                else exists (select 1 from pg_proc p
+                               join pg_namespace ns on ns.oid = p.pronamespace
+                              where ns.nspname = 'public' and p.proname = c.consumidor)
+           end as consumidor_existe
+      from taxonomia_tipo_documento t
+      left join vivas v on v.tipo_taxonomia = t.codigo
+      left join taxonomia_tipo_cobertura c on c.tipo_taxonomia = t.codigo
+     where t.ativo
+  )
+  select b.codigo, b.obrigatoriedade, b.n_vivas, b.estado, b.consumidor, b.consumidor_existe,
+         case
+           -- Duplo registro: o tipo ganhou exigência viva e a declaração ficou.
+           -- Ela envelhece calada (o consumidor pode sumir, o motivo mentir), e
+           -- o portão quer UMA fonte por tipo.
+           when b.n_vivas > 0 and b.declarado            then 'DECLARACAO_QUEBRADA'
+           when b.n_vivas > 0                            then 'exigencia_viva'
+           when not b.declarado                          then 'SEM_COBERTURA'
+           when b.estado = 'consumidor_nomeado'
+            and not b.consumidor_existe                  then 'DECLARACAO_QUEBRADA'
+           when b.estado = 'consumidor_nomeado'          then 'consumidor_nomeado'
+           else 'sem_consumidor_declarado'
+         end
+    from base b
+   order by b.codigo;
+$$;
+
+--
+-- Name: FUNCTION fn_cobertura_de_tipos(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_cobertura_de_tipos() IS '0187 — portão D6. Uma linha por tipo ATIVO da taxonomia. D6 estrito = nenhuma linha com veredito SEM_COBERTURA (sem exigência viva e sem declaração) nem DECLARACAO_QUEBRADA (consumidor nomeado que não existe em pg_proc, ou declaração para tipo que já tem exigência viva). Não depende de documento: roda igual no banco de teste e em produção.';
+
+--
 -- Name: fn_coluna_de_dimensao(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10665,6 +10716,95 @@ $$;
 COMMENT ON FUNCTION public.fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb) IS 'Grava (ou reescreve) o resumo de custo/cobertura de UMA execução de ingestão, e CARIMBA fechado_em (0156). Idempotente por (caso_id, execucao_ref): o Resumo de Custo roda uma vez por ramo do lote e as duas passadas trazem o total inteiro — sem isto, todo custo sairia dobrado.';
 
 --
+-- Name: fn_resolver_linha_exigida_superada(text[], text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_resolver_linha_exigida_superada(p_tipos text[], p_ator text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_caso       uuid;
+  v_vivos      text[];
+  v_p          record;
+  v_razao      text;
+  v_resolvidas int := 0;
+  v_ficaram    int := 0;
+  v_ressalva   int;
+begin
+  if p_ator is null or p_ator not like 'sistema:%' then
+    raise exception 'fn_resolver_linha_exigida_superada: p_ator precisa ser ''sistema:<quem>'' (recebeu %)', p_ator;
+  end if;
+
+  for v_caso in
+    select distinct p.caso_id
+      from pendencia p
+     where p.tipo = 'linha_exigida_ausente'
+       and p.estado = 'aberta'
+       and split_part(p.motivo, ':', 3) = any (p_tipos)
+  loop
+    select coalesce(array_agg(
+             'completude:linha_exigida:' || x.tipo_taxonomia || ':' || x.conceito
+             || case when x.entidade is not null
+                     then ':' || fn_entidade_canonica(x.entidade) else '' end), '{}')
+      into v_vivos
+      from fn_exigencias_do_caso(v_caso) x
+     where not x.satisfeita
+       and x.tipo_taxonomia = any (p_tipos);
+
+    for v_p in
+      select p.id, p.motivo
+        from pendencia p
+       where p.caso_id = v_caso
+         and p.tipo = 'linha_exigida_ausente'
+         and p.estado = 'aberta'
+         and split_part(p.motivo, ':', 3) = any (p_tipos)
+       for update
+    loop
+      if v_p.motivo = any (v_vivos) then
+        v_ficaram := v_ficaram + 1;
+        continue;
+      end if;
+
+      v_razao := case when exists (
+                        select 1 from taxonomia_linha_exigida e
+                         where e.tipo_taxonomia = split_part(v_p.motivo, ':', 3)
+                           and e.conceito = split_part(v_p.motivo, ':', 4)
+                           and e.ativo)
+                      then 'exigencia_ativa_nao_mais_ausente'
+                      else 'exigencia_inativa' end;
+
+      update pendencia
+         set estado = 'resolvida', resolvida_em = now(), resolvida_por = p_ator
+       where id = v_p.id;
+
+      insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+      values (p_ator, 'pendencia_resolvida', 'pendencia:' || v_p.id,
+              jsonb_build_object('estado', 'aberta', 'motivo', v_p.motivo),
+              jsonb_build_object('estado', 'resolvida', 'resolvida_por', p_ator,
+                                 'razao', v_razao));
+      v_resolvidas := v_resolvidas + 1;
+    end loop;
+  end loop;
+
+  select count(*) into v_ressalva
+    from pendencia p
+   where p.tipo = 'linha_exigida_ausente'
+     and p.estado = 'aceita_com_ressalva'
+     and split_part(p.motivo, ':', 3) = any (p_tipos);
+
+  return jsonb_build_object('resolvidas', v_resolvidas,
+                            'ficaram_abertas', v_ficaram,
+                            'ressalvadas_intocadas', v_ressalva);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_resolver_linha_exigida_superada(p_tipos text[], p_ator text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_resolver_linha_exigida_superada(p_tipos text[], p_ator text) IS '0187: resolve as pendências linha_exigida_ausente ABERTAS dos tipos pedidos que o Portão 1 não abriria mais hoje (exigência inativa ou satisfeita, pelo critério de fn_exigencias_do_caso), com um evento_auditoria por pendência. Não toca aceita_com_ressalva, não roda o resto da completude. Ação de migration/service_role — sem grant para o portal.';
+
+--
 -- Name: fn_revisar_documento(uuid, text, text, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11056,7 +11196,14 @@ CREATE FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) RETURNS TABLE(codigo
           select 1
           from taxonomia_linha_exigida e
           join taxonomia_linha_localizador l on l.exigencia_id = e.id
-          where e.tipo_taxonomia = 'MUTUOS' and e.conceito = 'saldo_de_mutuo' and e.ativo
+          -- 0187: A DESATIVAÇÃO DESLIGA A COBRANÇA, NÃO O LÉXICO. A exigência
+          -- MUTUOS/saldo_de_mutuo saiu do Portão 1 (relatório itemizado: 1 de 1
+          -- pendência aberta em produção era falsa), mas os localizadores dela
+          -- continuam sendo o que diz "esta linha é saldo de mútuo" para somar o
+          -- marcador. Com `and e.ativo`, a pergunta 5.1 ao cliente passaria a
+          -- dizer "(não localizado)" sobre um saldo que está no documento.
+          where e.tipo_taxonomia = 'MUTUOS' and e.conceito = 'saldo_de_mutuo'
+            and (e.ativo or e.conceito = 'saldo_de_mutuo')
             and case
               when l.contra = 'estrutural' then fn_rotulo_estrutural(ce.chave, l.termos_inclui)
               else
@@ -12786,6 +12933,22 @@ COMMENT ON COLUMN public.instalacao_requisito.porque IS 'O SINTOMA VISÍVEL da a
 COMMENT ON COLUMN public.instalacao_requisito.marcador IS 'Para tipo=''corpo'': o TRECHO que precisa aparecer em pg_get_functiondef(objeto). É a única forma de a sonda distinguir uma função corrigida de uma função homônima com o corpo velho — e essa distinção é a maior parte do catálogo, porque a maioria das migrations recentes só republica corpo.';
 
 --
+-- Name: instalacao_sonda_cobertura_de_tipos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_cobertura_de_tipos AS
+ SELECT 1 AS d6_estrito
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM public.fn_cobertura_de_tipos() c(tipo_taxonomia, obrigatoriedade, exigencias_vivas, estado_declarado, consumidor, consumidor_existe, veredito)
+          WHERE (c.veredito = ANY (ARRAY['SEM_COBERTURA'::text, 'DECLARACAO_QUEBRADA'::text])))));
+
+--
+-- Name: VIEW instalacao_sonda_cobertura_de_tipos; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_cobertura_de_tipos IS 'Sonda da 0187: uma linha = D6 estrito verde (todo tipo ativo tem exigência viva ou declaração válida em taxonomia_tipo_cobertura). Zero linhas: select * from fn_cobertura_de_tipos() where veredito in (''SEM_COBERTURA'',''DECLARACAO_QUEBRADA'') diz qual.';
+
+--
 -- Name: instalacao_sonda_combinado_estrutural; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -12812,40 +12975,6 @@ CREATE VIEW public.instalacao_sonda_entidade_balcao_ambiguo AS
 --
 
 COMMENT ON VIEW public.instalacao_sonda_entidade_balcao_ambiguo IS '(0162) Autoteste de fn_entidade_e_balcao_ambiguo, EXECUTADO contra um fixture PERMANENTE e isolado (o caso "Sonda 0162", que não é mandato real): 1 linha só se a entidade com pendência entidade_ambigua ABERTA responde true, a entidade sem pendência e a com a MESMA pendência RESOLVIDA respondem false, e o predicado não quebra para entidade inexistente nem confunde caso. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos (achado D da revisão da 0157) — esta view pega, porque o predicado É executado.';
-
---
--- Name: instalacao_sonda_modelagem_pronta; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.instalacao_sonda_modelagem_pronta AS
- SELECT 1 AS ok
-  WHERE ((public.fn_modelagem_esta_pronta(true, (6)::bigint, 0, (23)::bigint) = true) AND (public.fn_modelagem_esta_pronta(false, (6)::bigint, 0, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (0)::bigint, 0, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (6)::bigint, 1, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (6)::bigint, 0, (0)::bigint) = false));
-
---
--- Name: VIEW instalacao_sonda_modelagem_pronta; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON VIEW public.instalacao_sonda_modelagem_pronta IS '(0158) Autoteste da decisão de fn_modelagem_esta_pronta, EXECUTADA por literais (função pura, sem fixture de caso nem documento): 1 linha só se o positivo e as quatro negações — sem parâmetro, sem premissa ativa, premissa sem valor, e ZERO linha vinculada — valem todas ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos; esta view pega, porque o predicado É executado (achado D da revisão da 0157).';
-
---
--- Name: instalacao_sonda_modelagem_versao_vigente; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.instalacao_sonda_modelagem_versao_vigente AS
- SELECT 1 AS ok
-  WHERE ((( SELECT l.valor_ultimo
-           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
-          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 caixa e equivalentes'::text))) = (250)::numeric) AND (( SELECT l.n_ocorrencias
-           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
-          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 caixa e equivalentes'::text))) = 1) AND (( SELECT l.valor_ultimo
-           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
-          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 fornecedores a pagar'::text))) = (777)::numeric));
-
---
--- Name: VIEW instalacao_sonda_modelagem_versao_vigente; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON VIEW public.instalacao_sonda_modelagem_versao_vigente IS '(0164) Autoteste de fn_linhas_para_modelagem, EXECUTADO contra um fixture PERMANENTE e isolado (o caso "Sonda 0164", que não é mandato real) com dois documentos multi-versão: 1 linha só se a reextração que CORRIGE o valor (v2 substitui v1, sem somar nem duplicar) e a reextração AINDA EM ANDAMENTO (v2 sem campo_extraido, a vigente continua v1) resolvem certo ao mesmo tempo. Prova que a CTE versao_vigente (0164, join que substituiu o filtro opaco fn_versao_com_extracao) preserva a regra da 0102 — não prova que o PLANO é bom (isso é papel de Supabase/test/modelagem_versao_vigente_escala.test.sql, que só roda em CI/dev): prova que a reescrita não regrediu a semântica.';
 
 --
 -- Name: taxonomia_linha_exigida; Type: TABLE; Schema: public; Owner: -
@@ -12941,6 +13070,64 @@ COMMENT ON TABLE public.taxonomia_linha_localizador IS 'Tentativas de localizaç
 COMMENT ON COLUMN public.taxonomia_linha_localizador.contra IS '''chave'' = casa contra ce.chave (fn_valor_conceito); ''secao'' = contra ce.secao; ''coluna'' = contra ce.periodo_coluna, o cabeçalho da coluna (0145 — em documento MATRICIAL o conceito é a coluna e a linha é a entidade concreta: no mapa de dívida a chave é o contrato e "Juros do exercício (R$)" é o cabeçalho); ''estrutural'' = fn_rotulo_estrutural.';
 
 --
+-- Name: instalacao_sonda_exigencias_0187; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_exigencias_0187 AS
+ SELECT e.tipo_taxonomia,
+    e.conceito,
+    'desativada'::text AS mudanca
+   FROM public.taxonomia_linha_exigida e
+  WHERE ((e.origem = 'proposta'::text) AND (NOT e.ativo) AND (((e.tipo_taxonomia = 'MUTUOS'::text) AND (e.conceito = 'saldo_de_mutuo'::text)) OR ((e.tipo_taxonomia = 'FAT_INTRAGRUPO'::text) AND (e.conceito = 'faturamento_entre_partes'::text))))
+UNION ALL
+ SELECT e.tipo_taxonomia,
+    e.conceito,
+    'localizador_secao'::text AS mudanca
+   FROM (public.taxonomia_linha_localizador l
+     JOIN public.taxonomia_linha_exigida e ON ((e.id = l.exigencia_id)))
+  WHERE ((e.tipo_taxonomia = 'CONTRATO_SOCIAL'::text) AND (e.conceito = 'capital_social'::text) AND e.ativo AND (l.contra = 'secao'::text) AND (l.termos_inclui = ARRAY['capital'::text, 'social'::text]));
+
+--
+-- Name: VIEW instalacao_sonda_exigencias_0187; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_exigencias_0187 IS 'Sonda da 0187: MUTUOS/saldo_de_mutuo e FAT_INTRAGRUPO/faturamento_entre_partes desativadas + o localizador por seção de CONTRATO_SOCIAL/capital_social. Três linhas.';
+
+--
+-- Name: instalacao_sonda_modelagem_pronta; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_modelagem_pronta AS
+ SELECT 1 AS ok
+  WHERE ((public.fn_modelagem_esta_pronta(true, (6)::bigint, 0, (23)::bigint) = true) AND (public.fn_modelagem_esta_pronta(false, (6)::bigint, 0, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (0)::bigint, 0, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (6)::bigint, 1, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (6)::bigint, 0, (0)::bigint) = false));
+
+--
+-- Name: VIEW instalacao_sonda_modelagem_pronta; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_modelagem_pronta IS '(0158) Autoteste da decisão de fn_modelagem_esta_pronta, EXECUTADA por literais (função pura, sem fixture de caso nem documento): 1 linha só se o positivo e as quatro negações — sem parâmetro, sem premissa ativa, premissa sem valor, e ZERO linha vinculada — valem todas ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos; esta view pega, porque o predicado É executado (achado D da revisão da 0157).';
+
+--
+-- Name: instalacao_sonda_modelagem_versao_vigente; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_modelagem_versao_vigente AS
+ SELECT 1 AS ok
+  WHERE ((( SELECT l.valor_ultimo
+           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
+          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 caixa e equivalentes'::text))) = (250)::numeric) AND (( SELECT l.n_ocorrencias
+           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
+          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 caixa e equivalentes'::text))) = 1) AND (( SELECT l.valor_ultimo
+           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
+          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 fornecedores a pagar'::text))) = (777)::numeric));
+
+--
+-- Name: VIEW instalacao_sonda_modelagem_versao_vigente; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_modelagem_versao_vigente IS '(0164) Autoteste de fn_linhas_para_modelagem, EXECUTADO contra um fixture PERMANENTE e isolado (o caso "Sonda 0164", que não é mandato real) com dois documentos multi-versão: 1 linha só se a reextração que CORRIGE o valor (v2 substitui v1, sem somar nem duplicar) e a reextração AINDA EM ANDAMENTO (v2 sem campo_extraido, a vigente continua v1) resolvem certo ao mesmo tempo. Prova que a CTE versao_vigente (0164, join que substituiu o filtro opaco fn_versao_com_extracao) preserva a regra da 0102 — não prova que o PLANO é bom (isso é papel de Supabase/test/modelagem_versao_vigente_escala.test.sql, que só roda em CI/dev): prova que a reescrita não regrediu a semântica.';
+
+--
 -- Name: instalacao_sonda_passivo_bare; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -12970,22 +13157,6 @@ CREATE VIEW public.instalacao_sonda_rotulo_contraditorio AS
 --
 
 COMMENT ON VIEW public.instalacao_sonda_rotulo_contraditorio IS '(0159) Autoteste de fn_documento_decide_sozinho, EXECUTADA por literais (função pura, sem fixture de documento nem de pendência): 1 linha só se o caso medido (COMBINADO com tipo_incorreto aberta), o caso comum (COMBINADO sem pendência, decide sozinho), o NULL (coalesce trata como ausente), o espelho da 0155 (BALANCO com tipo_incorreto continua decidindo sozinho — é a autoridade que cai, não a confiança) e o irrelevante (RAZAO, nunca se autodeclarou derivado) valem todos ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos (achado D da revisão da 0157) — esta view pega, porque o predicado É executado.';
-
---
--- Name: instalacao_sonda_tipos_mudos_f21; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.instalacao_sonda_tipos_mudos_f21 AS
- SELECT id,
-    tipo_taxonomia
-   FROM public.taxonomia_linha_exigida e
-  WHERE ((origem = 'proposta'::text) AND (tipo_taxonomia = ANY (ARRAY['AGING_AP'::text, 'AGING_AR'::text, 'EXTRATO_BANCARIO'::text, 'GARANTIAS'::text, 'AVAIS_FIANCAS'::text, 'CONTINGENCIAS'::text, 'DEBITOS_TRIB'::text, 'ESTOQUE'::text, 'HEADCOUNT'::text])));
-
---
--- Name: VIEW instalacao_sonda_tipos_mudos_f21; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON VIEW public.instalacao_sonda_tipos_mudos_f21 IS 'Sonda da 0185: as nove exigências de conteúdo (F2.1) para tipos que antes não tinham NENHUMA linha em taxonomia_linha_exigida. Nove é o total — zero ou menos significa que a 0185 não foi aplicada e estes nove tipos continuam passando pela completude sem que ninguém confira o conteúdo.';
 
 --
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
@@ -13216,6 +13387,41 @@ COMMENT ON COLUMN public.rubrica_classe.padrao IS 'Casado contra fn_normalizar_t
 --
 
 COMMENT ON COLUMN public.rubrica_classe.especificidade IS 'Desempate: mais ALTO ganha. Regra com seção e tipo declarados é mais específica que a genérica, e sem desempate declarado duas regras que casam a mesma linha dariam resultado dependente da ordem em que o banco devolveu — que é a forma de erro que a 0125 corrigiu na proveniência.';
+
+--
+-- Name: taxonomia_tipo_cobertura; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.taxonomia_tipo_cobertura (
+    tipo_taxonomia text NOT NULL,
+    estado text NOT NULL,
+    consumidor text,
+    motivo text NOT NULL,
+    efeito text NOT NULL,
+    declarado_em date DEFAULT CURRENT_DATE NOT NULL,
+    CONSTRAINT taxonomia_tipo_cobertura_check CHECK (((estado = 'consumidor_nomeado'::text) = (consumidor IS NOT NULL))),
+    CONSTRAINT taxonomia_tipo_cobertura_efeito_check CHECK ((length(btrim(efeito)) > 0)),
+    CONSTRAINT taxonomia_tipo_cobertura_estado_check CHECK ((estado = ANY (ARRAY['consumidor_nomeado'::text, 'sem_consumidor'::text]))),
+    CONSTRAINT taxonomia_tipo_cobertura_motivo_check CHECK ((length(btrim(motivo)) > 0))
+);
+
+--
+-- Name: TABLE taxonomia_tipo_cobertura; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.taxonomia_tipo_cobertura IS '0187 (portão D6): para cada tipo ATIVO sem exigência viva (taxonomia_linha_exigida ativa com origem=codigo), QUEM confere o número dele — ou a declaração de que ninguém confere, com o motivo e o EFEITO (o que passa sem aviso). Desempate (fn_conflitos_do_caso, 0151) e soma para premissa (fn_linhas_do_realizado, 0150) NÃO contam como consumidor: leem, não conferem. Conferida por fn_cobertura_de_tipos().';
+
+--
+-- Name: COLUMN taxonomia_tipo_cobertura.consumidor; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_tipo_cobertura.consumidor IS 'Nome (proname, schema public) da função SQL que LÊ documentos do tipo e CONFERE o número. Obrigatório quando estado=consumidor_nomeado, NULL caso contrário. Se a função sumir, fn_cobertura_de_tipos devolve DECLARACAO_QUEBRADA.';
+
+--
+-- Name: COLUMN taxonomia_tipo_cobertura.efeito; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_tipo_cobertura.efeito IS 'O que deixa de ser conferido por causa desta declaração (regra 1 do CLAUDE.md): "não tem consumidor" sem o efeito é ausência apresentada como dado.';
 
 --
 -- Name: taxonomia_tipo_documento; Type: TABLE; Schema: public; Owner: -
@@ -13596,6 +13802,13 @@ ALTER TABLE ONLY public.taxonomia_linha_localizador
 
 ALTER TABLE ONLY public.taxonomia_linha_localizador
     ADD CONSTRAINT taxonomia_linha_localizador_pkey PRIMARY KEY (id);
+
+--
+-- Name: taxonomia_tipo_cobertura taxonomia_tipo_cobertura_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.taxonomia_tipo_cobertura
+    ADD CONSTRAINT taxonomia_tipo_cobertura_pkey PRIMARY KEY (tipo_taxonomia);
 
 --
 -- Name: taxonomia_tipo_documento taxonomia_tipo_documento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -14229,6 +14442,13 @@ ALTER TABLE ONLY public.taxonomia_linha_localizador
     ADD CONSTRAINT taxonomia_linha_localizador_exigencia_id_fkey FOREIGN KEY (exigencia_id) REFERENCES public.taxonomia_linha_exigida(id) ON DELETE CASCADE;
 
 --
+-- Name: taxonomia_tipo_cobertura taxonomia_tipo_cobertura_tipo_taxonomia_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.taxonomia_tipo_cobertura
+    ADD CONSTRAINT taxonomia_tipo_cobertura_tipo_taxonomia_fkey FOREIGN KEY (tipo_taxonomia) REFERENCES public.taxonomia_tipo_documento(codigo);
+
+--
 -- Name: campo_classe_override; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -14745,6 +14965,18 @@ CREATE POLICY taxonomia_linha_localizador_read ON public.taxonomia_linha_localiz
 CREATE POLICY taxonomia_read ON public.taxonomia_tipo_documento FOR SELECT TO authenticated USING (true);
 
 --
+-- Name: taxonomia_tipo_cobertura; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.taxonomia_tipo_cobertura ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: taxonomia_tipo_cobertura taxonomia_tipo_cobertura_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY taxonomia_tipo_cobertura_read ON public.taxonomia_tipo_cobertura FOR SELECT TO authenticated USING (true);
+
+--
 -- Name: taxonomia_tipo_documento; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -14841,6 +15073,12 @@ GRANT ALL ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid)
 --
 
 GRANT ALL ON FUNCTION public.fn_cnpj_canonico(p_cnpj text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_cobertura_de_tipos(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_cobertura_de_tipos() TO authenticated;
 
 --
 -- Name: FUNCTION fn_combinado_estrutural_apto(p_tipo_fonte text, p_empresas_com_valor integer); Type: ACL; Schema: public; Owner: -
@@ -15484,6 +15722,12 @@ GRANT ALL ON FUNCTION public.fn_registrar_transcricao_humana(p_documento_id uuid
 GRANT ALL ON FUNCTION public.fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb) TO authenticated;
 
 --
+-- Name: FUNCTION fn_resolver_linha_exigida_superada(p_tipos text[], p_ator text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.fn_resolver_linha_exigida_superada(p_tipos text[], p_ator text) FROM PUBLIC;
+
+--
 -- Name: FUNCTION fn_revisar_documento(p_documento_id uuid, p_autor text, p_novo_tipo_taxonomia text, p_nova_entidade_nome text, p_novo_periodo_tipo text, p_novo_periodo_ref text, p_motivo text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -15804,6 +16048,14 @@ GRANT ALL ON TABLE public.instalacao_requisito TO authenticated;
 GRANT ALL ON TABLE public.instalacao_requisito TO service_role;
 
 --
+-- Name: TABLE instalacao_sonda_cobertura_de_tipos; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_cobertura_de_tipos TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_cobertura_de_tipos TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_cobertura_de_tipos TO service_role;
+
+--
 -- Name: TABLE instalacao_sonda_combinado_estrutural; Type: ACL; Schema: public; Owner: -
 --
 
@@ -15818,22 +16070,6 @@ GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO service_role;
 GRANT ALL ON TABLE public.instalacao_sonda_entidade_balcao_ambiguo TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_entidade_balcao_ambiguo TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_entidade_balcao_ambiguo TO service_role;
-
---
--- Name: TABLE instalacao_sonda_modelagem_pronta; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO anon;
-GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO authenticated;
-GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO service_role;
-
---
--- Name: TABLE instalacao_sonda_modelagem_versao_vigente; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO anon;
-GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO authenticated;
-GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO service_role;
 
 --
 -- Name: TABLE taxonomia_linha_exigida; Type: ACL; Schema: public; Owner: -
@@ -15852,6 +16088,30 @@ GRANT ALL ON TABLE public.taxonomia_linha_localizador TO authenticated;
 GRANT ALL ON TABLE public.taxonomia_linha_localizador TO service_role;
 
 --
+-- Name: TABLE instalacao_sonda_exigencias_0187; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_exigencias_0187 TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_exigencias_0187 TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_exigencias_0187 TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_modelagem_pronta; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_modelagem_versao_vigente; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO service_role;
+
+--
 -- Name: TABLE instalacao_sonda_passivo_bare; Type: ACL; Schema: public; Owner: -
 --
 
@@ -15866,14 +16126,6 @@ GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO service_role;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO service_role;
-
---
--- Name: TABLE instalacao_sonda_tipos_mudos_f21; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO anon;
-GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO authenticated;
-GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO service_role;
 
 --
 -- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -
@@ -15930,6 +16182,14 @@ GRANT ALL ON TABLE public.reconciliacao TO service_role;
 GRANT ALL ON TABLE public.rubrica_classe TO anon;
 GRANT ALL ON TABLE public.rubrica_classe TO authenticated;
 GRANT ALL ON TABLE public.rubrica_classe TO service_role;
+
+--
+-- Name: TABLE taxonomia_tipo_cobertura; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.taxonomia_tipo_cobertura TO anon;
+GRANT ALL ON TABLE public.taxonomia_tipo_cobertura TO authenticated;
+GRANT ALL ON TABLE public.taxonomia_tipo_cobertura TO service_role;
 
 --
 -- Name: TABLE taxonomia_tipo_documento; Type: ACL; Schema: public; Owner: -

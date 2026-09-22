@@ -288,40 +288,13 @@ supabase db execute --file Supabase/migrations/0179_o_papel_no_grupo_que_nunca_f
 supabase db execute --file Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql
 supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql
 
-# A 0185 é seed puro (nove exigências novas em taxonomia_linha_exigida), mas
-# NÃO é "só dado parado": fn_recomputar_completude — chamada de dentro de
-# fn_registrar_campos_extraidos (0128) e mais sete lugares (0008, 0018, 0041,
-# 0043, 0111, 0129, e o nó "Recomputar Completude" do N8N,
-# N8N/workflow.e1-ingestao.json) — já lê QUALQUER exigência ativa via
-# fn_exigencias_do_caso. Aplicar a 0185 materializa as nove exigências novas
-# RETROATIVAMENTE, no primeiro recompute de completude que tocar cada caso —
-# que é qualquer extração nova ou qualquer revisão no portal, não só
-# documento novo. Meça o alcance ANTES de aplicar (lição da 0179,
-# .claude/memory/aplicar-migration-em-producao-pela-api.md):
-#   select tipo_taxonomia, count(distinct caso_id) from documento
-#     where tipo_taxonomia in ('AGING_AP','AGING_AR','EXTRATO_BANCARIO',
-#       'GARANTIAS','AVAIS_FIANCAS','CONTINGENCIAS','DEBITOS_TRIB','ESTOQUE',
-#       'HEADCOUNT')
-#     group by 1;
-# e rode fn_exigencias_do_caso(caso_id) em modo LEITURA sobre os casos reais
-# encontrados, para saber quantas pendências linha_exigida_ausente novas vão
-# aparecer antes que apareçam sozinhas na fila do dono.
-#
-# ⛔ NÃO APLIQUE A 0185. A LINHA ABAIXO ESTÁ COMENTADA DE PROPÓSITO.
-#
-# A medição de alcance acima FOI FEITA contra produção em 21/09/2026, e reprovou
-# a migration: dos 17 pares caso×tipo que ela abriria como pendência, os 17 TÊM
-# o dado. Em relatório itemizado o conceito não está no rótulo — o rótulo é o
-# ITEM (nome do fornecedor, do banco, do processo) e o conceito é o TIPO do
-# documento. Aplicar materializaria 17 pendências falsas retroativamente, no
-# primeiro recompute de cada caso. Detalhe no cabeçalho do próprio arquivo e em
-# .claude/memory/conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md.
-#
-# Por que comentada e não removida: esta lista é o que o dono copia para
-# aplicar, e o `run.sh` exige que toda migration do diretório seja citada aqui.
-# Comentada, ela continua citada (o portão passa) e deixa de rodar se o bloco for
-# colado num shell. A 0185 fica no repositório como registro até o redesenho.
-# supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql
+# A 0185 NÃO EXISTE, e o buraco é deliberado (0182–0184 também são lacuna,
+# reservada a outra sessão). Ela propunha exigência LEXICAL para nove tipos de
+# relatório itemizado e foi REPROVADA na medição contra produção em 21/09/2026:
+# 17 de 17 pendências que abriria eram falsas — em relatório itemizado o rótulo é
+# o ITEM, não o conceito (.claude/memory/conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md).
+# Foi descartada em 22/09/2026 sem nunca ter sido aplicada em banco nenhum; o que
+# ela tentava responder (D6) é respondido pela 0187, por DECLARAÇÃO, não por termo.
 
 # A 0186 acrescenta reconciliacao.motivo_precondicao e reemite
 # fn_registrar_reconciliacao para gravá-la — resultado NÃO muda de
@@ -387,6 +360,30 @@ supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_e
 #   select count(*) filter (where motivo_precondicao is not null) as preenchidas,
 #          count(*) filter (where motivo_precondicao is null)     as continuam_null
 #     from reconciliacao where not precondicoes_ok;
+
+# A 0187 (portão D6) cria taxonomia_tipo_cobertura + fn_cobertura_de_tipos,
+# DESATIVA as exigências lexicais proposta de MUTUOS e FAT_INTRAGRUPO,
+# acrescenta localizador por SEÇÃO a CONTRATO_SOCIAL/capital_social, reemite
+# fn_sugerir_perguntas e RESOLVE pendências linha_exigida_ausente ABERTAS
+# desses três tipos que ficaram falsas (resolvida_por = 'sistema:0187'). Não
+# chama fn_recomputar_completude. Meça o alcance ANTES, somente leitura:
+#   select split_part(motivo, ':', 3) as tipo, estado, count(*)
+#     from pendencia
+#    where tipo = 'linha_exigida_ausente'
+#      and split_part(motivo, ':', 3) in ('MUTUOS','FAT_INTRAGRUPO','CONTRATO_SOCIAL')
+#      and estado <> 'resolvida'
+#    group by 1, 2 order by 1, 2;
+# Esperado em 22/09/2026: 1 MUTUOS + 3 FAT_INTRAGRUPO + 1 CONTRATO_SOCIAL
+# abertas, 1 MUTUOS aceita_com_ressalva (esta NÃO é tocada pela migration —
+# mas o próximo recompute daquele caso a resolve, como faz com toda exigência
+# desativada; ver o cabeçalho). A do CONTRATO_SOCIAL só resolve se a versão
+# VIGENTE do documento tiver a seção "…Capital social" preenchida.
+supabase db execute --file Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql
+# DEPOIS DESTA (o raise notice é efêmero):
+#   select resolvida_por, count(*) from pendencia
+#    where tipo = 'linha_exigida_ausente' and resolvida_por = 'sistema:0187' group by 1;
+#   select * from fn_cobertura_de_tipos()
+#    where veredito in ('SEM_COBERTURA', 'DECLARACAO_QUEBRADA');   -- D6 estrito: ZERO linhas
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

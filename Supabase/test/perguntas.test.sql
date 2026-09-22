@@ -11,8 +11,11 @@
 --       MESMA escala → a soma com a unidade; escalas MISTAS → aviso, nunca uma
 --       soma cega;
 --   #4  espécie linha_presente (nenhuma seedada — é o upgrade do dono):
---       testada com pergunta temporária ancorada em MUTUOS:saldo_de_mutuo —
---       dispara quando a linha existe, cala quando não;
+--       testada com pergunta temporária ancorada em BALANCO:ativo_total —
+--       dispara quando a linha existe, cala quando não. (Era MUTUOS:saldo_de_mutuo
+--       até a 0187, que desativou essa exigência: exigência inativa não é
+--       avaliada, então não serve mais de âncora. O {saldo_mutuos} do #3 continua
+--       lendo o léxico dela — é a mudança (e) da 0187.);
 --   #5  marcador DESCONHECIDO fica VISÍVEL no texto renderizado;
 --   #6  ação humana: enviada sem texto é RECUSADA (jsonb, não exceção);
 --       enviada com texto grava, audita, e a sugestão passa a ja_enviada=true
@@ -126,25 +129,25 @@ begin
     (codigo, titulo, prioridade, gatilho_especie, gatilho_tipo_taxonomia, gatilho_conceito,
      pergunta, motivo, risco, impacto, gatilho_descricao, fonte)
   values
-    ('TESTE_LP', 'teste linha_presente', 4, 'linha_presente', 'MUTUOS', 'saldo_de_mutuo',
-     'teste: ha mutuos de {saldo_mutuos}.', 'teste', 'teste', 'teste', 'teste', 'teste');
+    ('TESTE_LP', 'teste linha_presente', 4, 'linha_presente', 'BALANCO', 'ativo_total',
+     'teste: ha ativo total e mutuos de {saldo_mutuos}.', 'teste', 'teste', 'teste', 'teste', 'teste');
 
   select count(*) into v_n from fn_sugerir_perguntas(v_caso) s where s.codigo = 'TESTE_LP';
   perform teste_assert_pg(v_n = 1,
-    'linha_presente dispara no caso que TEM linha de mútuo', 'achou ' || v_n);
+    'linha_presente dispara no caso que TEM a linha (ativo total no balanço)', 'achou ' || v_n);
 
-  v_caso2 := (fn_upsert_caso('Caso perguntas — mutuos sem mutuo'))::uuid;
+  v_caso2 := (fn_upsert_caso('Caso perguntas — balanço sem ativo total'))::uuid;
   v_r := fn_registrar_documento(
-    v_caso2, 'Outro Grupo Ltda', 'anual', '2025', 'MUTUOS', 0.9, 'nome_arquivo',
-    'supabase_storage', 'bucket/mut-pg3.pdf', 'Mutuos Outro.pdf', true, 'HASH-PG-4', 'ok');
+    v_caso2, 'Outro Grupo Ltda', 'anual', '2025', 'BALANCO', 0.9, 'nome_arquivo',
+    'supabase_storage', 'bucket/bp-pg3.pdf', 'BP Outro.pdf', true, 'HASH-PG-4', 'ok');
   v_ver := (v_r->>'documento_versao_id')::uuid;
   perform fn_registrar_campos_extraidos(v_ver, '[
-    {"chave": "Saldo com controlada Zeta", "valor_num": "70", "confianca": "0.9"}
+    {"chave": "Fornecedores", "valor_num": "70", "confianca": "0.9"}
   ]'::jsonb, 'N0');
 
   select count(*) into v_n from fn_sugerir_perguntas(v_caso2) s where s.codigo = 'TESTE_LP';
   perform teste_assert_pg(v_n = 0,
-    'linha_presente CALA no caso cujo MUTUOS não tem linha de mútuo', 'sugeriu ' || v_n);
+    'linha_presente CALA no caso cujo BALANCO não tem a linha', 'sugeriu ' || v_n);
 
   raise notice '--- 5. marcador desconhecido fica visível ---';
   insert into pergunta_catalogo
