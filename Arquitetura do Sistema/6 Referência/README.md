@@ -9,6 +9,7 @@ repositório lê estes arquivos por caminho. Estavam soltos na raiz e vieram par
 | `mapear-xlsx.py` | **O instrumento** que lê um `.xlsx` por dentro (ZIP de XML): fórmulas, validações, formatação condicional, merges, painéis congelados, nomes definidos, gráficos e imagens, resolvendo a aba pelo `rels` — a ordem das abas **não** é a ordem dos `sheetN.xml`, e mapear por índice de arquivo já produziu número errado aqui. Uso em `Arquitetura do Sistema/5 Prompts/PROMPT_ESPELHAR_MODELO_BASE.md` §6. |
 | `MAPA_MODELO_BASE.md` | **O mapa do Modelo Base** (fase 1 do espelhamento, sessão 38): as 14 abas em identidade, anatomia, gramática das fórmulas (32 padrões nomeados), formatação com o significado de cada cor, recursos, e a marcação `universal` × `do setor de origem` × `do caso`. Leia o §17.1 (os 1.044 nomes definidos são sedimento, zero em uso) e o §20.1 (a referência não fecha o balanço a partir de 2020) antes de comparar qualquer coisa contra ela. |
 | `modelo-base.xlsx` | **O "Modelo Base"**, a planilha de referência universal do dono. É o que `portal/src/lib/modelo-institucional.ts` reconstrói — mesmos nomes de aba e mesma estrutura de 14 abas. Serve para conferir o que o export gera contra o que o dono espera ver. |
+| `BLOCOS_DUE_DILIGENCE.md` | **Os blocos da due diligence**, 6 famílias e 31 sub-blocos. É o PDF "Oria Digital – Blocos Due Diligence" transcrito e **acrescido** dos itens que o dono pediu em 23/09/2026, marcados com (+). O PDF não foi regerado, então esta versão é a que vale. |
 
 ## As extensões foram acrescentadas de propósito
 
