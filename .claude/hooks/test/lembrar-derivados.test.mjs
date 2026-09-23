@@ -48,9 +48,15 @@ const CASOS = [
   { caminho: "Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql", espera: /catálogo da sonda/ },
   { caminho: "Dados de Teste/book-vertentes/gerar.py", espera: /TRÊS fixtures/ },
   { caminho: "portal/src/lib/export.ts", espera: /Endereço de célula é contrato/ },
+  // As entradas do grafo do conhecimento, acrescentadas em 23/09/2026 depois de o CI reprovar por
+  // um `suites.yml` editado sem regerar o grafo (PR #238). Uma por família de entrada.
+  { caminho: ".github/workflows/suites.yml", espera: /NÚMERO DA LINHA/ },
+  { caminho: ".claude/memory/aplicar-migration-em-producao-pela-api.md", espera: /grafo do conhecimento/ },
+  { caminho: ".claude/conhecimento/fichas/f1-entidade-perimetro-participacao-0179-0181.md", espera: /grafo do conhecimento/ },
+  { caminho: "HANDOFF.md", espera: /grafo do conhecimento/ },
 ];
 
-test("as cinco entradas reais disparam o aviso do seu derivado", () => {
+test("as entradas reais disparam o aviso do seu derivado", () => {
   const mudos = CASOS.filter((c) => !c.espera.test(avisoPara(c.caminho)));
   assert.deepEqual(
     mudos.map((c) => c.caminho),
