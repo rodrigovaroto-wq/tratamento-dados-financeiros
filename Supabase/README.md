@@ -300,6 +300,106 @@ supabase db execute --file Supabase/migrations/0182_o_grupo_horizontal_que_a_con
 # DEPOIS o resto do arquivo.
 supabase db execute --file Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql
 
+# A 0185 é seed puro (nove exigências novas em taxonomia_linha_exigida), mas
+# NÃO é "só dado parado": fn_recomputar_completude — chamada de dentro de
+# fn_registrar_campos_extraidos (0128) e mais sete lugares (0008, 0018, 0041,
+# 0043, 0111, 0129, e o nó "Recomputar Completude" do N8N,
+# N8N/workflow.e1-ingestao.json) — já lê QUALQUER exigência ativa via
+# fn_exigencias_do_caso. Aplicar a 0185 materializa as nove exigências novas
+# RETROATIVAMENTE, no primeiro recompute de completude que tocar cada caso —
+# que é qualquer extração nova ou qualquer revisão no portal, não só
+# documento novo. Meça o alcance ANTES de aplicar (lição da 0179,
+# .claude/memory/aplicar-migration-em-producao-pela-api.md):
+#   select tipo_taxonomia, count(distinct caso_id) from documento
+#     where tipo_taxonomia in ('AGING_AP','AGING_AR','EXTRATO_BANCARIO',
+#       'GARANTIAS','AVAIS_FIANCAS','CONTINGENCIAS','DEBITOS_TRIB','ESTOQUE',
+#       'HEADCOUNT')
+#     group by 1;
+# e rode fn_exigencias_do_caso(caso_id) em modo LEITURA sobre os casos reais
+# encontrados, para saber quantas pendências linha_exigida_ausente novas vão
+# aparecer antes que apareçam sozinhas na fila do dono.
+#
+# ⛔ NÃO APLIQUE A 0185. A LINHA ABAIXO ESTÁ COMENTADA DE PROPÓSITO.
+#
+# A medição de alcance acima FOI FEITA contra produção em 21/09/2026, e reprovou
+# a migration: dos 17 pares caso×tipo que ela abriria como pendência, os 17 TÊM
+# o dado. Em relatório itemizado o conceito não está no rótulo — o rótulo é o
+# ITEM (nome do fornecedor, do banco, do processo) e o conceito é o TIPO do
+# documento. Aplicar materializaria 17 pendências falsas retroativamente, no
+# primeiro recompute de cada caso. Detalhe no cabeçalho do próprio arquivo e em
+# .claude/memory/conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md.
+#
+# Por que comentada e não removida: esta lista é o que o dono copia para
+# aplicar, e o `run.sh` exige que toda migration do diretório seja citada aqui.
+# Comentada, ela continua citada (o portão passa) e deixa de rodar se o bloco for
+# colado num shell. A 0185 fica no repositório como registro até o redesenho.
+# supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql
+
+# A 0186 acrescenta reconciliacao.motivo_precondicao e reemite
+# fn_registrar_reconciliacao para gravá-la — resultado NÃO muda de
+# vocabulário (continua 'precondicao_nao_satisfeita'), só passa a existir uma
+# coluna nova com o motivo que o emissor passou antes do achatamento. Ela
+# também: (a) VALIDA o vocabulário de p_resultado e levanta exceção para
+# valor desconhecido (achado da revisão: um erro de digitação fabricava
+# precondicoes_ok = true); (b) faz um BACKFILL a partir de evento_auditoria
+# para as linhas de reconciliacao já gravadas com precondicoes_ok = false.
+#
+# CORRIGIDO após revisão independente: a consulta que este README mandava
+# rodar ANTES de aplicar usava a coluna motivo_precondicao — que só existe
+# DEPOIS que esta mesma migration roda ("column does not exist" para quem
+# tentasse medir antes, e aplicar sem medir é o que a 0179 custou caro,
+# .claude/memory/aplicar-migration-em-producao-pela-api.md — 365 pendências
+# onde se previam 13). Meça o alcance com as duas consultas abaixo, que RODAM
+# ANTES do apply:
+#   -- (a) o total que a migration mexe:
+#   select count(*) from reconciliacao where precondicoes_ok = false;
+#   -- (b) quantas o backfill alcançaria e quantas ficariam de fora, por tipo
+#   -- (mesma junção do UPDATE da migration, com o de-para de
+#   -- caixa_bp_vs_fluxo → caixa_bp_fluxo — ver o cabeçalho da 0186):
+#   select r.tipo, count(*) as total, count(ea.id) as alcancaria_o_backfill,
+#          count(*) filter (where ea.id is null) as ficaria_null
+#     from reconciliacao r
+#     left join evento_auditoria ea
+#       on ea.entidade_ref = 'reconciliacao:' || r.id
+#      and ea.ator = 'sistema:reconciliacao'
+#      and ea.acao = 'reconciliacao_' ||
+#          case when r.tipo = 'caixa_bp_vs_fluxo' then 'caixa_bp_fluxo' else r.tipo end
+#    where r.precondicoes_ok = false
+#    group by r.tipo order by 1;
+# No banco de TESTE (recém-migrado, sem fixture) o total é ZERO — a tabela
+# reconciliacao está vazia no instante em que a migration roda. Em PRODUÇÃO
+# é desconhecido: a medição de 21/09/2026 que abriu esta fatia contou 1.926
+# linhas com precondicoes_ok = false (ESTADO.md, topo), então o backfill tem
+# chance real de tocar milhares de linhas. NÃO há "rodar como está ou em
+# lote" para escolher em tempo de apply — o backfill é um único UPDATE
+# dentro do arquivo da migration, aplicado inteiro por
+# `supabase db execute --file`; ir em lote significaria editar o ARQUIVO
+# antes de aplicar, não uma opção que a migration ofereça.
+#
+#   (c) E A TERCEIRA CONSULTA, QUE É A QUE PODE MANDAR NÃO APLICAR. A 0186
+#   acrescenta um `raise exception` quando `p_resultado` está fora de um
+#   vocabulário fixo. Esse vocabulário foi levantado por varredura do
+#   REPOSITÓRIO e conferido contra o banco de teste — mas produção é o único
+#   lugar onde uma função criada fora do repositório apareceria, e a
+#   reconciliação roda DENTRO do fluxo de ingestão, sem `exception when others`
+#   em nenhum ponto do caminho (conferido). Um décimo valor em produção vira
+#   exceção que aborta a transação do caso na ingestão — muito pior que o
+#   defeito que a 0186 corrige. Rode ANTES de aplicar; qualquer valor fora dos
+#   nove aceitos significa NÃO APLICAR e voltar ao desenho:
+#     select ea.depois->>'resultado' as motivo_emitido, count(*)
+#       from evento_auditoria ea
+#      where ea.ator = 'sistema:reconciliacao'
+#        and ea.acao like 'reconciliacao\_%'
+#      group by 1 order by 2 desc;
+supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql
+# DEPOIS DESTA, confira o backfill — o `raise notice` dele é EFÊMERO e some
+# em qualquer apply cuja saída seja capturada (UI, pipeline). Sem esta
+# consulta, "preencheu 1.926" e "preencheu 0 porque a junção não bateu" ficam
+# indistinguíveis, com a coluna instalada e a sonda verde:
+#   select count(*) filter (where motivo_precondicao is not null) as preenchidas,
+#          count(*) filter (where motivo_precondicao is null)     as continuam_null
+#     from reconciliacao where not precondicoes_ok;
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

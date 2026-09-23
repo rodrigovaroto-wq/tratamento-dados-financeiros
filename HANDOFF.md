@@ -4,6 +4,49 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## 🟡 SESSÃO 99 (21–22/09/2026) — F2 escolhida, `0185` reprovada, `0186` pronta e não aplicada
+
+### O que esta sessão fez, em ordem
+
+1. **`0186` escrita, testada com 10 asserts, revisada 3 vezes de forma independente, pronta para aplicação.** Motivo da precondição deixa de ser achatado. Coluna `reconciliacao.motivo_precondicao` guarda o motivo verdadeiro com backfill de `evento_auditoria`. Vocabulário amarrado — erro de uma letra levanta exceção agora. **CRÍTICO:** `documento_ausente` não significa "contraparte não entregue" — medido que 42 linhas de `secao_fecha` e 9 de `mutuos` têm este motivo COM o documento PRESENTE.
+
+2. **`0185` rejeitada na medição contra produção (21/09).** Nove tipos mudos ganhariam exigência `proposta` cada — teste local passou (51 asserts, 4 localizadores corrigidos). **Medição de alcance contra banco real:** 190 documentos dos 9 tipos em 14 casos, 64 com conteúdo, 17 abririam pendência — **todos os 17 TÊM o dado**. Causa-raiz: em relatório itemizado o conceito não está no rótulo — AGING_AP tem chaves `41518 - WELLA BRASIL`, ESTOQUE `2500 - ASSALA PRIME` (484 linhas), CONTINGENCIAS descrições de processo. Próximo passo é REDESENHO estrutural, não conserto de termo. A `0185` fica no repositório não aplicada.
+
+3. **Camada de reconciliação medida — os consumidores existentes concluem entre 8,3% e 67,8% por caso × entidade.** `caixa_bp_vs_fluxo` fica FORA da conta por ser nome morto (renomeado em 27/07), `mutuos` 8,3%, `caixa_bp_fluxo` 8,6%, `despfin` 13,8%, `receita` 21,1%, `intragrupo` 33,3%, `ativo_passivo_pl` 57,1%, `secao_fecha` 67,8%, `duplicidade`/`conflito` 100%. **Causa-raiz:** `precondicao_nao_satisfeita` confunde 4 estados (contraparte ausente, linha não localizada, unidade divergente, período sem par) com `fonte_a`/`fonte_b` NULAS em 1.922/1.926 linhas — fila não é acionável. Para `despfin` em particular: 50 entidades com DRE líquido (ausência real, legítima), pendência com recado errado. 254 de 283 pares não concluem; fila subestima em 5×.
+
+4. **DECISÃO DO DONO, 21/09/2026: F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b.** Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás".
+
+5. **Diagnóstico das 52 pendências de `DRE/despesa_financeira`** (64% das 81 `linha_exigida_ausente` abertas em produção), por entidade: **50** com DRE que publica `Resultado financeiro líquido` em vez da despesa bruta (ausência real e legítima — a pendência está certa, o TEXTO dela é que está errado); **2** sem nenhuma linha financeira; **1** falsa (tem `JUROS E COMISSÕES BANCÁRIAS`, mas o localizador exige "juros" E "encargos" no mesmo rótulo). Armadilha registrada: afrouxar para `['juros']` casaria `JUROS DE APLICAÇÕES`, que é RECEITA.
+
+6. **Censo de tipos em produção: a lista de gap da F2 no roadmap NÃO é baseada em evidência.** `BALANCETE` tem 179 documentos em 29 casos, nenhuma exigência, e não está na lista; `NOTAS_EXPL`, `SITUACAO_FISCAL`, `DF_AUDITADA`, `DVA`, `RAZAO`, `DMPL`, `CERTIDOES` e `ORGANOGRAMA` idem. Já `GARANTIAS`, `AVAIS_FIANCAS` e `DEBITOS_TRIB` têm **zero** documentos — e a `0185` construiu exigência para eles.
+
+7. **Outras medições que mudam o método:** `caixa_bp_vs_fluxo` é NOME MORTO (renomeado em 27/07; prova no código, `0009:355` × `0009:396`) — métrica sobre `reconciliacao` sem filtrar tipo morto vem contaminada. ~278 pares são ruído por construção (a checagem roda sem a contraparte existir no caso). A primeira medição da camada, por PERÍODO, superestimava o problema e foi corrigida para caso × entidade.
+
+8. **Decisões do dono:** F2 escolhida entre 1.7/F2/F3b; os nove tipos da `0185` **ficam complementares**, não sobem a bloqueante; a F1.7 vai em outra sessão, com `0182`–`0184` reservadas (por isso a F2.1 virou `0185`).
+
+9. **Código escrito nesta sessão:** migrations `0185` e `0186`, e os testes `linha_exigida_tipos_variaveis.test.sql` e `reconciliacao_motivo_precondicao.test.sql`. **Documentação:** `ESTADO.md` consolidado (pilha de 5 blocos em 1), seção F2 do roadmap, duas fichas novas. O `MAPA_DE_EXECUCAO.md` **não** foi atualizado — ele é marcado como histórico e aponta para o roadmap. **Nada foi aplicado em produção**: a sonda segue em `0181`.
+
+### Onde estamos
+
+**Fase F2 (cobertura de tipos).** F0 e F1.1–F1.5 fechadas e em produção; F1.7 aberta em outra sessão. **Da F2, nada está em produção:** a `0185` foi reprovada e a `0186` está pronta, não aplicada.
+
+A F2 mudou de natureza nesta sessão. Ela existia para dar consumidor a tipo de documento mudo; a medição mostrou que **os consumidores que já existem concluem entre 8,3% e 67,8%** e que ninguém sabe por quê, porque o sistema não gravava o motivo. Acrescentar exigência antes de resolver isso é construir em andar não verificado — foi exatamente o erro da `0185`.
+
+### Próximos passos, em ordem
+
+1. **Aplicar a `0186` — com o dono, à mão.** É o que destrava o resto: com o motivo gravado, diagnosticar por que uma checagem não conclui vira consulta, e não investigação forense. **Antes**, rodar as três consultas somente leitura do bloco da `0186` em `Supabase/README.md` — **uma delas pode mandar NÃO APLICAR**: a guarda de vocabulário nova transforma valor inesperado em exceção, e a reconciliação roda dentro do fluxo de ingestão sem `exception when others` no caminho. **Depois**, a consulta de pós-apply que conta preenchidas × continuam NULL (o `raise notice` do backfill some em apply pela UI).
+2. **Fatia seguinte da `0186`: cada checagem passa o motivo ESPECÍFICO** (`linha_nao_localizada`, `unidade_divergente`, `sem_periodo_par` — já reservados no contrato). É o que faz a fila separar defeito nosso de dado que o cliente não mandou. Não depende de produção; pode começar antes do passo 1.
+3. **Corrigir o TEXTO das pendências de despesa financeira** — as 50 de DRE líquido precisam dizer "peça a abertura bruta", não "linha não localizada". Não é fazer a checagem passar. E corrigir o 1 falso sem cair na armadilha da receita.
+4. **Repriorizar a lista da F2 pelo censo de produção** antes de criar exigência nova.
+5. **Redesenhar ou descartar a `0185`** — para relatório itemizado a pergunta é estrutural (quantas linhas com valor, o eixo esperado), ou nenhuma, se `item_sem_conteudo` (`0036`) já cobrir "chegou vazio".
+6. **Suspeita não investigada:** `MUTUOS` e `FAT_INTRAGRUPO` (exigências `proposta` da `0113`, em produção) também voltam `satisfeita=false` contra a fixture canastra — pode ser o mesmo defeito, mais antigo.
+7. **Integrar a F1.7** quando a outra sessão entregar.
+
+### Lições de processo desta sessão
+
+- **Subagente não herda a aprovação automática do MCP.** Três agentes em paralelo consultando o Supabase geraram uma enxurrada de pedidos de aprovação ao dono. Consulta a produção vai pela sessão principal, em poucas consultas grandes.
+- **O fechamento automático errou número nas três vezes que rodou** ("9 de 36 com exigência viva", "promover a bloqueante", "entre 0% e 40%"). Todo fechamento delegado precisa ser conferido contra a medição antes de ser dado por pronto.
+
 ## ✅ SESSÃO 98 (18/09/2026) — F1.3/F1.4/F1.5 verificadas e aplicadas em produção; F1.6 não verificável (estrutural)
 
 Continuação da 97 no mesmo dia, mesmo branch. **Leia o topo do `ESTADO.md` antes — este é o resumo técnico de como se chegou aqui.**
