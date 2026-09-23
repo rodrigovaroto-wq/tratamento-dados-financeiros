@@ -594,6 +594,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_forma_de_controle.tes
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0183 — o marcador de cobertura da sonda não regride (a 0182 aplicada depois da 0188 o rebaixou em produção)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/instalacao_cobertura_nao_regride.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \

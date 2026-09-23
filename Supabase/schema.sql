@@ -11637,6 +11637,33 @@ $$;
 COMMENT ON FUNCTION public.fn_trg_entidade_forma_de_controle_tem_vinculo() IS '0183: a guarda do vínculo — recusa declarar `controle_comum` sem NENHUMA linha em `entidade_controlador` para a entidade. É a MEDIÇÃO NÃO-VAZIA (b) desta migration — sem o trigger abaixo chamando esta função, `controle_comum` seria gravado em silêncio mesmo sem nenhum controlador registrado. LIMITAÇÃO DELIBERADA: prova o vínculo na declaração, não reage a DELETE posterior em entidade_controlador (ver cabeçalho da migration 0183).';
 
 --
+-- Name: fn_trg_instalacao_cobertura_nao_regride(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_trg_instalacao_cobertura_nao_regride() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  -- `ate_migration` é texto de 4 dígitos zero-padded, então a ordem lexicográfica coincide com a
+  -- numérica ('0183' < '0188'). Quando quem chega é MAIS ANTIGO que o que está gravado, a linha
+  -- inteira fica como estava: só o marcador não bastaria, porque a `observacao` ao lado passaria a
+  -- descrever outra migration e a linha diria "cobertura até a 0188" com o texto da 0183.
+  if NEW.ate_migration < OLD.ate_migration then
+    NEW.ate_migration := greatest(OLD.ate_migration, NEW.ate_migration);
+    NEW.observacao    := OLD.observacao;
+    NEW.revisado_em   := OLD.revisado_em;
+  end if;
+  return NEW;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_trg_instalacao_cobertura_nao_regride(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_trg_instalacao_cobertura_nao_regride() IS '0183: o marcador de cobertura da sonda nunca regride. Motivo medido: a 0182, aplicada em produção DEPOIS da 0188 (sessões paralelas), escreveu ate_migration = ''0182'' por cima de ''0188'' — 39 migrations terminam com esse update incondicional, e a tabela aceitava o valor menor sem erro. Corrigido na tabela, não nas migrations.';
+
+--
 -- Name: fn_unidade_predominante(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14355,6 +14382,12 @@ CREATE TRIGGER trg_golden_rodada_imutavel BEFORE UPDATE ON public.golden_rodada 
 --
 
 CREATE TRIGGER trg_golden_rotulo_congelada BEFORE INSERT OR UPDATE ON public.golden_rotulo FOR EACH ROW EXECUTE FUNCTION public.fn_golden_rodada_congelada();
+
+--
+-- Name: instalacao_cobertura trg_instalacao_cobertura_nao_regride; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_instalacao_cobertura_nao_regride BEFORE UPDATE OF ate_migration ON public.instalacao_cobertura FOR EACH ROW EXECUTE FUNCTION public.fn_trg_instalacao_cobertura_nao_regride();
 
 --
 -- Name: campo_classe_override campo_classe_override_campo_extraido_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -

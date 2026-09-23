@@ -764,6 +764,72 @@ on conflict (chave) do update set
   marcador = excluded.marcador, criterio_seed = excluded.criterio_seed,
   porque = excluded.porque, severidade = excluded.severidade, ordem = excluded.ordem;
 
+-- -----------------------------------------------------------------------------
+-- (9) O MARCADOR DE COBERTURA NÃO PODE REGREDIR — e em produção ele REGREDIU, causado pela 0182.
+--
+-- O DEFEITO, medido em 23/09/2026: 39 migrations (0147 em diante) terminam com
+-- `update instalacao_cobertura set ate_migration = 'NNNN'` INCONDICIONAL. O desenho presume
+-- aplicação EM ORDEM, e duas sessões trabalhando em paralelo quebraram essa premissa: a F2 aplicou
+-- 0186–0188 em produção em 22/09, e a 0182 foi aplicada DEPOIS, em 23/09 — e escreveu '0182' por
+-- cima de '0188'. A sonda passou a responder "cobertura até a 0182" com a 0186–0188 no ar. Sem
+-- erro nenhum: a linha foi atualizada com sucesso para um valor menor.
+--
+-- A ORIGEM NÃO ESTÁ NAS 39 MIGRATIONS, ESTÁ NA TABELA: ela aceita que o marcador diminua.
+-- Corrigir as 39 seria tratar o sintoma e depender de toda migration futura lembrar. O gatilho
+-- abaixo impede a regressão em UM lugar, para toda migration que vier — inclusive esta, cuja
+-- própria linha `set ate_migration = '0183'` logo abaixo, aplicada depois da 0188, rebaixaria o
+-- marcador do mesmo jeito.
+--
+-- E O REPARO DO QUE JÁ REGREDIU: `greatest` não recupera informação perdida — em produção o valor
+-- atual já é '0182'. O marcador é recalculado a partir de `instalacao_requisito`, que é escrito
+-- pelas próprias migrations e é a verdade do que está instalado (a 0188 catalogou os requisitos
+-- dela; o maior `migration` do catálogo é o que de fato rodou por último em número). Num banco
+-- novo, aplicado em ordem, o reparo é inócuo: o maior do catálogo é a própria 0183.
+-- -----------------------------------------------------------------------------
+
+create function public.fn_trg_instalacao_cobertura_nao_regride() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  -- `ate_migration` é texto de 4 dígitos zero-padded, então a ordem lexicográfica coincide com a
+  -- numérica ('0183' < '0188'). Quando quem chega é MAIS ANTIGO que o que está gravado, a linha
+  -- inteira fica como estava: só o marcador não bastaria, porque a `observacao` ao lado passaria a
+  -- descrever outra migration e a linha diria "cobertura até a 0188" com o texto da 0183.
+  if NEW.ate_migration < OLD.ate_migration then
+    NEW.ate_migration := greatest(OLD.ate_migration, NEW.ate_migration);
+    NEW.observacao    := OLD.observacao;
+    NEW.revisado_em   := OLD.revisado_em;
+  end if;
+  return NEW;
+end;
+$$;
+
+comment on function public.fn_trg_instalacao_cobertura_nao_regride() IS
+  '0183: o marcador de cobertura da sonda nunca regride. Motivo medido: a 0182, aplicada em '
+  'produção DEPOIS da 0188 (sessões paralelas), escreveu ate_migration = ''0182'' por cima de '
+  '''0188'' — 39 migrations terminam com esse update incondicional, e a tabela aceitava o valor '
+  'menor sem erro. Corrigido na tabela, não nas migrations.';
+
+create trigger trg_instalacao_cobertura_nao_regride
+  before update of ate_migration on instalacao_cobertura
+  for each row execute function fn_trg_instalacao_cobertura_nao_regride();
+
+insert into instalacao_requisito
+  (chave, migration, tipo, objeto, marcador, criterio_seed, porque, severidade, ordem) values
+  ('cobertura_nao_regride', '0183', 'corpo', 'fn_trg_instalacao_cobertura_nao_regride',
+   'greatest(OLD.ate_migration, NEW.ate_migration)', null,
+   'O marcador de cobertura da própria sonda não pode descer. Sem isto, uma migration aplicada '
+   'fora de ordem (o que já aconteceu: a 0182 depois da 0188, em 23/09/2026) rebaixa ate_migration '
+   'e a sonda passa a subnotificar o que está instalado — sem erro nenhum.',
+   'importante', 777)
+on conflict (chave) do update set
+  migration = excluded.migration, tipo = excluded.tipo, objeto = excluded.objeto,
+  marcador = excluded.marcador, criterio_seed = excluded.criterio_seed,
+  porque = excluded.porque, severidade = excluded.severidade, ordem = excluded.ordem;
+
+update instalacao_cobertura
+   set ate_migration = (select max(migration) from instalacao_requisito);
+
 update instalacao_cobertura
    set ate_migration = '0183', revisado_em = current_date,
        observacao = 'A 0183 FECHA a fatia 1.7 do plano F1: entidade.forma_de_controle '

@@ -383,6 +383,7 @@
 {"k":"n","id":"fn:fn_trg_entidade_ambigua","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"trg entidade ambigua"}
 {"k":"n","id":"fn:fn_trg_entidade_controlador_soma_maxima","t":"fn","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","txt":"trg entidade controlador soma maxima"}
 {"k":"n","id":"fn:fn_trg_entidade_forma_de_controle_tem_vinculo","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"trg entidade forma de controle tem vinculo"}
+{"k":"n","id":"fn:fn_trg_instalacao_cobertura_nao_regride","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"trg instalacao cobertura nao regride"}
 {"k":"n","id":"fn:fn_unidade_predominante","t":"fn","f":"Supabase/migrations/0021_classe_b_checagem_unidade.sql","txt":"unidade predominante"}
 {"k":"n","id":"fn:fn_upsert_caso","t":"fn","f":"Supabase/migrations/0006_reset_funcoes.sql","txt":"upsert caso"}
 {"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"upsert entidade"}
@@ -1725,6 +1726,7 @@
 {"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_pendencia_forma_de_controle_backfill","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":628}
 {"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_pendencia_forma_de_controle_indefinida","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":343}
 {"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_trg_entidade_forma_de_controle_tem_vinculo","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":239}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_trg_instalacao_cobertura_nao_regride","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":790}
 {"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":387}
 {"k":"e","de":"migration:0186","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","l":227}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
