@@ -50,8 +50,13 @@
 --     assert (a sonda acusa depois do drop) cai.
 --   * o ramo aceitando 'R' junto com 'O'/'A' (equivale a `tgenabled <> 'D'`):
 --     1 FALHOU, 13 ok — o caso d sozinho, o único que distingue 'R' de 'O'/'A'.
---   Medido com cada caso rodando até o fim (`ON_ERROR_STOP=0`, que conta
---   todas as falhas); ligado: 15 ok, 0 FALHOU.
+--   COMO FOI MEDIDO, para reproduzir: a linha `\set ON_ERROR_STOP on` abaixo
+--   SOBRESCREVE o `-v ON_ERROR_STOP=0` da linha de comando, então ela foi
+--   removida na medição (`sed 's/^\\set ON_ERROR_STOP.*//' arquivo | psql -v
+--   ON_ERROR_STOP=0`). Cada bloco `do` para no primeiro assert que falha: o
+--   número acima conta BLOCOS reprovados, não asserts. Ligado: 15 ok, 0 FALHOU
+--   (antes dos dois asserts de completude/ALWAYS acrescentados depois da
+--   revisão, que vivem no bloco a e no a2).
 
 \set ON_ERROR_STOP on
 
@@ -85,6 +90,45 @@ begin
   perform teste_assert_gat(v_n >= 6,
     'a. existem pelo menos 6 requisitos de gatilho catalogados (guarda contra catálogo vazio)',
     format('%s encontrado(s)', v_n));
+
+  -- COMPLETUDE, em igualdade de conjuntos. Achado da revisão: com só `>= 6`,
+  -- uma migration nova que crie gatilho (a F1.7, PR #238, cria dois) entraria
+  -- sem requisito e nada acusaria — a obrigação ficaria só num comentário.
+  -- Todo gatilho não-interno do banco montado do zero tem de estar catalogado,
+  -- e todo requisito de gatilho tem de apontar para um gatilho que existe.
+  select string_agg(x, ', ' order by x) into v_ausentes from (
+    (select t.tgrelid::regclass::text || '.' || t.tgname as x
+       from pg_trigger t where not t.tgisinternal
+     except
+     select objeto from instalacao_requisito where tipo = 'gatilho')
+    union all
+    (select objeto from instalacao_requisito where tipo = 'gatilho'
+     except
+     select t.tgrelid::regclass::text || '.' || t.tgname
+       from pg_trigger t where not t.tgisinternal)) d;
+  perform teste_assert_gat(v_ausentes is null,
+    'a. todo gatilho não-interno do banco tem requisito tipo gatilho, e vice-versa',
+    'fora do catálogo ou sem gatilho: ' || coalesce(v_ausentes, '') ||
+    ' — catalogue-o em instalacao_requisito com tipo = ''gatilho''');
+end $$;
+rollback;
+
+-- -----------------------------------------------------------------------------
+-- a2. ENABLE ALWAYS dispara em sessão normal: continua PRESENTE. Achado da
+-- revisão: sem este caso, "endurecer" o ramo para só 'O' faria um gatilho em
+-- modo ALWAYS (comum com replicação lógica) virar ausência FALSA sem nenhum
+-- assert reprovar.
+-- -----------------------------------------------------------------------------
+begin;
+do $$
+declare
+  v_presente boolean;
+begin
+  execute 'alter table golden_campo enable always trigger trg_golden_campo_congelada';
+  select presente into v_presente
+    from fn_instalacao_conferir() where chave = 'gatilho_guarda_campo_congelada';
+  perform teste_assert_gat(coalesce(v_presente, false),
+    'a2. enable ALWAYS trigger: a sonda continua dizendo presente (ele dispara na sessão normal)');
 end $$;
 rollback;
 

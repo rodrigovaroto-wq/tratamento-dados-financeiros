@@ -19,9 +19,10 @@
 -- continua vendo "presente", porque o que ela mediu nunca foi o vínculo.
 -- MEDIDO: derrubar as seis guardas hoje instaladas (`drop trigger` /
 -- `disable trigger` / `enable replica trigger`) não muda a contagem de
--- ausentes que `fn_instalacao_conferir()` devolve — o número da medição real
--- está no religamento, abaixo, e no cabeçalho de
--- `Supabase/test/sonda_ve_gatilho.test.sql`.
+-- ausentes que `fn_instalacao_conferir()` devolve. Com esta migration, o
+-- teste `Supabase/test/sonda_ve_gatilho.test.sql` reprova 6 blocos (b–g) quando
+-- o ramo `gatilho` é desligado (`v_ok := true`) e 1 (d) quando 'R' é aceito
+-- como habilitado; o método está no cabeçalho do teste.
 --
 -- O QUE ESTA MIGRATION FAZ, em quatro partes:
 --
