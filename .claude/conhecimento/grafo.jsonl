@@ -107,6 +107,7 @@
 {"k":"n","id":"arquivo:Supabase/test/seed_macro.test.sql","t":"arquivo","f":"Supabase/test/seed_macro.test.sql","txt":"seed_macro.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/sonda-producao.mjs","t":"arquivo","f":"Supabase/test/sonda-producao.mjs","txt":"sonda-producao.mjs"}
 {"k":"n","id":"arquivo:Supabase/test/sonda-producao.test.mjs","t":"arquivo","f":"Supabase/test/sonda-producao.test.mjs","txt":"sonda-producao.test.mjs"}
+{"k":"n","id":"arquivo:Supabase/test/sonda_ve_gatilho.test.sql","t":"arquivo","f":"Supabase/test/sonda_ve_gatilho.test.sql","txt":"sonda_ve_gatilho.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/transcricao_humana.test.sql","t":"arquivo","f":"Supabase/test/transcricao_humana.test.sql","txt":"transcricao_humana.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/veredito_producao.test.sql","t":"arquivo","f":"Supabase/test/veredito_producao.test.sql","txt":"veredito_producao.test.sql"}
 {"k":"n","id":"arquivo:Verificação/run.mts","t":"arquivo","f":"Verificação/run.mts","txt":"run.mts"}
@@ -283,7 +284,7 @@
 {"k":"n","id":"fn:fn_golden_rotular_campos","t":"fn","f":"Supabase/migrations/0130_golden_set_rotulavel.sql","txt":"golden rotular campos"}
 {"k":"n","id":"fn:fn_golden_suficiente","t":"fn","f":"Supabase/migrations/0126_golden_set.sql","txt":"golden suficiente"}
 {"k":"n","id":"fn:fn_indice_macro_anual","t":"fn","f":"Supabase/migrations/0032_cambio_perdia_janeiro.sql","txt":"indice macro anual"}
-{"k":"n","id":"fn:fn_instalacao_conferir","t":"fn","f":"Supabase/migrations/0147_a_sonda_enxerga_o_corpo_da_funcao.sql","txt":"instalacao conferir"}
+{"k":"n","id":"fn:fn_instalacao_conferir","t":"fn","f":"Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql","txt":"instalacao conferir"}
 {"k":"n","id":"fn:fn_instalacao_resumo","t":"fn","f":"Supabase/migrations/0131_instalacao_que_se_declara.sql","txt":"instalacao resumo"}
 {"k":"n","id":"fn:fn_lado_do_mutuo","t":"fn","f":"Supabase/migrations/0117_reconciliar_mutuos.sql","txt":"lado do mutuo"}
 {"k":"n","id":"fn:fn_lado_intragrupo","t":"fn","f":"Supabase/migrations/0124_intragrupo_que_nao_e_mutuo.sql","txt":"lado intragrupo"}
@@ -516,6 +517,7 @@
 {"k":"n","id":"migration:0181","t":"migration","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"o controle que a entidade nunca registrava"}
 {"k":"n","id":"migration:0185","t":"migration","f":"Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql","txt":"o tipo presente que ninguem conferia"}
 {"k":"n","id":"migration:0186","t":"migration","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","txt":"o motivo que o achatamento engolia"}
+{"k":"n","id":"migration:0189","t":"migration","f":"Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql","txt":"o gatilho que a sonda nao via"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -1191,6 +1193,8 @@
 {"k":"e","de":"arquivo:Supabase/test/sonda-producao.mjs","rel":"CHAMA","pa":"fn:fn_instalacao_conferir","f":"Supabase/test/sonda-producao.mjs","l":4}
 {"k":"e","de":"arquivo:Supabase/test/sonda-producao.test.mjs","rel":"CHAMA","pa":"fn:fn_instalacao_conferir","f":"Supabase/test/sonda-producao.test.mjs","l":53}
 {"k":"e","de":"arquivo:Supabase/test/sonda-producao.test.mjs","rel":"CHAMA","pa":"fn:fn_reconciliar_caso","f":"Supabase/test/sonda-producao.test.mjs","l":36}
+{"k":"e","de":"arquivo:Supabase/test/sonda_ve_gatilho.test.sql","rel":"CHAMA","pa":"fn:fn_instalacao_conferir","f":"Supabase/test/sonda_ve_gatilho.test.sql","l":4}
+{"k":"e","de":"arquivo:Supabase/test/sonda_ve_gatilho.test.sql","rel":"CHAMA","pa":"fn:fn_trg_auto_promover_dial","f":"Supabase/test/sonda_ve_gatilho.test.sql","l":8}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_golden_campos","f":"Supabase/test/transcricao_humana.test.sql","l":11}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_transcricao_humana","f":"Supabase/test/transcricao_humana.test.sql","l":77}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_secao_e_de_resultado","f":"Supabase/test/transcricao_humana.test.sql","l":196}
@@ -1692,6 +1696,7 @@
 {"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_criaria_ciclo_participacao","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":121}
 {"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_definir_participacao","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":159}
 {"k":"e","de":"migration:0186","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","l":227}
+{"k":"e","de":"migration:0189","rel":"CRIA","pa":"fn:fn_instalacao_conferir","f":"Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql","l":80}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}
