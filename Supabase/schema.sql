@@ -11649,6 +11649,10 @@ begin
   -- inteira fica como estava: só o marcador não bastaria, porque a `observacao` ao lado passaria a
   -- descrever outra migration e a linha diria "cobertura até a 0188" com o texto da 0183.
   if NEW.ate_migration < OLD.ate_migration then
+    -- Sem aviso, o `UPDATE 1` desta linha pareceria ter funcionado — um rollback deliberado do
+    -- marcador ficaria indistinguível de um que pegou (achado da revisão de 23/09/2026).
+    raise notice 'instalacao_cobertura: ate_migration % ignorado — o marcador já está em % e não regride',
+      NEW.ate_migration, OLD.ate_migration;
     NEW.ate_migration := greatest(OLD.ate_migration, NEW.ate_migration);
     NEW.observacao    := OLD.observacao;
     NEW.revisado_em   := OLD.revisado_em;

@@ -62,7 +62,7 @@
 -- a 0182 fez ao não modelar temporalidade em `entidade_controlador` — vigiar toda alteração de
 -- OUTRA tabela para manter uma declaração desta tabela coerente para sempre é um invariante mais
 -- caro (trigger em `entidade_controlador` também) do que o que há hoje medido para justificar;
--- se um caso real earmarcar isso como risco, é decisão de uma sessão futura com o caso na mão.
+-- se um caso real marcar isso como risco, é decisão de uma sessão futura com o caso na mão.
 --
 -- NADA É INFERIDO AUTOMATICAMENTE (regra 1, e a instrução mais explícita desta fatia): esta
 -- migration NÃO deriva `forma_de_controle` da presença de `controladora_id` nem de linhas em
@@ -142,7 +142,8 @@
 -- O CUSTO DO BACKFILL, MEDIDO EM PRODUÇÃO ANTES DE APLICAR (regra 5): 365 entidades no banco,
 -- das quais 347 já foram julgadas ruído de caso de teste pela triagem da 0179. O backfill
 -- (item 7) REAPROVEITA essa triagem e abre pendência só para as outras — o que em produção, em
--- 23/09/2026, eram 18 (as 13 entidades do mandato AMO e os casos AMOBELEZA*). Ver o item 7 para
+-- 23/09/2026, eram 18 (13 registros de `entidade` do caso AMO — que tem 8 empresas reais; a diferença
+-- não foi investigada nesta rodada — e 5 dos casos AMOBELEZA*). Ver o item 7 para
 -- por que a primeira versão, que abria as 365, estava errada.
 --
 -- **Pronto quando** (critério da fatia 1.7, roadmap): "um `controladora_id` vazio passa a ser
@@ -602,7 +603,9 @@ COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnp
 --
 -- ELE NÃO ALCANÇA O BANCO INTEIRO, e a primeira versão alcançava. MEDIDO em produção em
 -- 23/09/2026, antes de aplicar (somente leitura, pela API de gerenciamento): **365 entidades**
--- em 52 casos. Um `where forma_de_controle = 'indefinido'` logo depois do `add column default`
+-- em 52 casos (`count(distinct caso_id) from entidade`, 23/09; o ESTADO.md registrou "70 casos"
+-- para as mesmas 365 em 18/09, por outra consulta — não reconciliado, e o 365 é o que importa
+-- aqui). Um `where forma_de_controle = 'indefinido'` logo depois do `add column default`
 -- pega todas — e é EXATAMENTE o desenho do backfill da 0179, que abriu 365 pendências das quais
 -- **347 tiveram de ser resolvidas em lote** como ruído de caso de teste morto
 -- (`.claude/memory/aplicar-migration-em-producao-pela-api.md`, que já dizia: "medir quantas
@@ -796,6 +799,10 @@ begin
   -- inteira fica como estava: só o marcador não bastaria, porque a `observacao` ao lado passaria a
   -- descrever outra migration e a linha diria "cobertura até a 0188" com o texto da 0183.
   if NEW.ate_migration < OLD.ate_migration then
+    -- Sem aviso, o `UPDATE 1` desta linha pareceria ter funcionado — um rollback deliberado do
+    -- marcador ficaria indistinguível de um que pegou (achado da revisão de 23/09/2026).
+    raise notice 'instalacao_cobertura: ate_migration % ignorado — o marcador já está em % e não regride',
+      NEW.ate_migration, OLD.ate_migration;
     NEW.ate_migration := greatest(OLD.ate_migration, NEW.ate_migration);
     NEW.observacao    := OLD.observacao;
     NEW.revisado_em   := OLD.revisado_em;
@@ -827,8 +834,19 @@ on conflict (chave) do update set
   marcador = excluded.marcador, criterio_seed = excluded.criterio_seed,
   porque = excluded.porque, severidade = excluded.severidade, ordem = excluded.ordem;
 
+-- O REPARO ESCREVE A PRÓPRIA OBSERVAÇÃO. Sem isso, em produção a linha terminaria em "cobertura até
+-- 0188" com o texto da 0182 ao lado: o reparo só subia o marcador, e o update da 0183 logo abaixo,
+-- sendo mais antigo que 0188, era preservado-fora pelo gatilho junto com a observação dele. SIMULADO
+-- pela revisão de 23/09/2026 (tabela temporária com o gatilho real): resultado `0188 | A 0182 fecha…`.
+-- Num banco aplicado em ordem este texto é substituído logo abaixo pelo da 0183, que é o certo lá.
 update instalacao_cobertura
-   set ate_migration = (select max(migration) from instalacao_requisito);
+   set ate_migration = (select max(migration) from instalacao_requisito),
+       revisado_em   = current_date,
+       observacao    = 'Marcador RECALCULADO pela 0183 a partir do catálogo instalacao_requisito ('
+                       || (select max(migration) from instalacao_requisito) || ' é a maior migration '
+                       'com requisito instalado). Motivo: a 0182 foi aplicada em produção depois da '
+                       '0188 (sessões paralelas) e rebaixou o marcador; a 0183 criou o gatilho '
+                       'trg_instalacao_cobertura_nao_regride para que isso não se repita.';
 
 update instalacao_cobertura
    set ate_migration = '0183', revisado_em = current_date,

@@ -50,7 +50,13 @@ const regras = [
     // em "o grafo commitado diverge". Este hook existe exatamente para lembrar isso e não sabia que
     // o grafo existia. As entradas cobertas são as que `indexar.mjs` lê e que não são óbvias:
     // o workflow de CI, as fichas e a memória, e o HANDOFF. (Migration já tem regra própria acima.)
-    quando: /\.github\/workflows\/suites\.yml$|\.claude\/(memory|conhecimento\/fichas)\/[^/]+\.md$|(^|\/)HANDOFF\.md$/,
+    //
+    // FORA DE PROPÓSITO, e revisado em 23/09/2026: `MEMORY.md` e `INSTRUCTIONS.md`, que o
+    // `indexar.mjs:269` exclui — avisar sobre eles era ruído. E os ARQUIVOS DE CÓDIGO, embora as
+    // arestas CHAMA do grafo guardem a linha de cada chamada (uma linha a mais num `.test.mjs`
+    // desloca o grafo): cobri-los faria este aviso disparar em quase toda edição, e portão que fala
+    // demais é ignorado (`portao-pode-reprovar-por-ruido.md`). Esse caso o CI pega.
+    quando: /\.github\/workflows\/suites\.yml$|\.claude\/conhecimento\/fichas\/[^/]+\.md$|\.claude\/memory\/(?!MEMORY\.md$|INSTRUCTIONS\.md$)[^/]+\.md$|(^|\/)HANDOFF\.md$/,
     aviso:
       "Você editou uma ENTRADA do grafo do conhecimento — `.claude/conhecimento/grafo.jsonl` é DERIVADO e " +
       "versionado. Rode `node .claude/conhecimento/indexar.mjs` e commite o grafo na MESMA passada, senão o CI " +

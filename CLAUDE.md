@@ -83,6 +83,8 @@ node .claude/verificar-espelho-claude-md.mjs  # este bloco não ficou para trás
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 CONFERIR_PSQL="sudo -u postgres psql -h /tmp -p 5432" CONFERIR_DB=tdf_test \
   node Supabase/test/conferir-chamadas.mjs
+SONDA_PSQL="sudo -u postgres psql -h /tmp -p 5432 -d tdf_test" \
+  node Supabase/test/sonda-producao.mjs --so-buraco   # banco completo tem de dar ZERO buracos
 E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" ./portal/node_modules/.bin/tsx Verificação/run.mts
 ./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 

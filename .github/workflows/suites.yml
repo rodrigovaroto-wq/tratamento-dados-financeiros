@@ -432,6 +432,16 @@ jobs:
         # `.rpc()` com typo) para de esperar produção para aparecer.
         run: CONFERIR_DB=tdf_test node Supabase/test/conferir-chamadas.mjs
 
+      - name: A sonda do buraco no meio não dá alarme falso num banco completo
+        # CONTROLE POSITIVO da detecção de buraco da `sonda-producao.mjs` (PR #238). Contra
+        # este banco, montado com TODAS as migrations, a resposta tem de ser zero buracos.
+        # A primeira versão do critério passou verde nos testes e acusaria 0163 e 0171 em
+        # produção — o teste montava "produção" a partir da saída da própria função testada,
+        # e o remédio que a sonda manda ("aplique as pendentes") reaplicaria a 0171, que
+        # reemite fn_upsert_entidade e desfaz 18 migrations. Este passo é o que impede o
+        # critério de voltar a ser testado só contra ele mesmo.
+        run: SONDA_PSQL="psql -d tdf_test" node Supabase/test/sonda-producao.mjs --so-buraco
+
       - name: Suíte e2e (extração → banco → export)
         run: ./portal/node_modules/.bin/tsx Verificação/run.mts
 

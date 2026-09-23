@@ -58,21 +58,51 @@ const SQL = `select chave, migration, tipo, objeto, coalesce(detalhe,''), coales
 
 const SQL_MIGRACOES = `select distinct migration from instalacao_requisito order by 1;`;
 
+/** As tuplas `('chave', 'NNNN', ...)` que um arquivo grava em `instalacao_requisito`. */
+export function chavesGravadas(texto) {
+  const pares = [];
+  for (const bloco of texto.split(/insert into instalacao_requisito/i).slice(1)) {
+    const corpo = bloco.split(/\bon conflict\b|;\s*$/im)[0];
+    for (const m of corpo.matchAll(/\(\s*'([\w-]+)'\s*,\s*'(\d{4})'\s*,/g)) pares.push({ chave: m[1], migration: m[2] });
+  }
+  return pares;
+}
+
 /**
- * As migrations que DEVERIAM estar em produção, derivadas do README: linha `supabase db execute`
- * NÃO comentada, cujo arquivo cataloga requisito com o próprio número (as anteriores ao catálogo,
- * e as que só catalogam outras, não têm como deixar rastro próprio e ficam de fora).
+ * As migrations cuja ausência a sonda CONSEGUE ver em produção, derivadas do README.
+ *
+ * O CRITÉRIO É "DONO FINAL DE PELO MENOS UMA CHAVE", e a primeira versão errou por não ser. Ela
+ * aceitava qualquer arquivo com um `insert into instalacao_requisito` e o próprio número entre
+ * aspas — e o número entre aspas estava no `set ate_migration = 'NNNN'` que toda migration desde a
+ * 0147 tem. MEDIDO em 23/09/2026 pela revisão independente: num banco com TODAS as migrations
+ * aplicadas, a primeira versão acusava 0163 e 0171 como faltando. Duas causas:
+ *   - a 0163 só cataloga requisitos da 0161 (com o número '0161'): nunca deixa rastro próprio;
+ *   - o catálogo é REETIQUETADO: a 0173 regrava a chave `cnpj_renomeia` de '0171' para '0173' pelo
+ *     `on conflict do update`, e a 0171 some do catálogo de um banco instalado corretamente.
+ * O pior não era o alarme: era o remédio. A sonda mandaria "aplique as migrations pendentes", e
+ * reaplicar a 0171 reemite `fn_upsert_entidade`, desfazendo 18 migrations de lógica de entidade.
+ *
+ * Então: para cada chave, o dono final é a MAIOR migration aplicável que a grava. Uma migration só
+ * é esperada no catálogo se for dona final de alguma chave. A premissa é aplicação em ordem; uma
+ * migration aplicada fora de ordem pode reetiquetar ao contrário e produzir um buraco falso — que é
+ * exatamente o evento que esta sonda existe para denunciar, então ele aparece, não some.
  */
 export function migracoesEsperadas(readme, lerMigration) {
-  const esperadas = [];
+  const aplicaveis = [];
   for (const linha of readme.split('\n')) {
     const m = linha.match(/^supabase db execute --file Supabase\/migrations\/((\d{4})_[\w-]+\.sql)\s*$/);
-    if (!m) continue;
-    const texto = lerMigration(m[1]);
-    if (texto === null) continue;
-    if (/insert into instalacao_requisito/i.test(texto) && texto.includes(`'${m[2]}'`)) esperadas.push(m[2]);
+    if (m) aplicaveis.push({ arquivo: m[1], numero: m[2] });
   }
-  return [...new Set(esperadas)].sort();
+  const donoFinal = new Map();
+  for (const { arquivo, numero } of aplicaveis) {
+    const texto = lerMigration(arquivo);
+    if (texto === null) continue;
+    for (const { chave, migration } of chavesGravadas(texto)) {
+      if (migration !== numero) continue; // cataloga requisito de OUTRA migration, como a 0147 e a 0163
+      if (!donoFinal.has(chave) || donoFinal.get(chave) < numero) donoFinal.set(chave, numero);
+    }
+  }
+  return [...new Set(donoFinal.values())].sort();
 }
 
 /** O que a lista declara e produção não tem no catálogo — o buraco no meio. */
@@ -168,6 +198,33 @@ function esperadasDoRepositorio() {
     const caminho = join(RAIZ, 'Supabase/migrations', arquivo);
     return existsSync(caminho) ? readFileSync(caminho, 'utf8') : null;
   });
+}
+
+// `--so-buraco`: só o buraco no meio, contra QUALQUER banco que `SONDA_PSQL` apontar. Existe para o
+// CONTROLE POSITIVO do CI: contra o banco que a suíte monta com TODAS as migrations aplicadas, a
+// resposta tem de ser zero buracos. Sem isso, o critério de `migracoesEsperadas` só seria testado
+// contra ele mesmo — e foi exatamente assim que a primeira versão passou verde acusando 0163 e 0171
+// (o teste montava "produção" a partir da saída da função testada).
+if (import.meta.url === `file://${process.argv[1]}` && process.argv.includes('--so-buraco')) {
+  if (!ALVO) {
+    console.error('NÃO CONFERIDO — `SONDA_PSQL` não está definida; o buraco no meio não foi perguntado a banco nenhum.');
+    process.exit(2);
+  }
+  let noBanco;
+  try {
+    noBanco = consultar(SQL_MIGRACOES).split('\n').map((l) => l.trim()).filter(Boolean);
+  } catch (erro) {
+    console.error(`NÃO CONFERIDO — a pergunta não chegou ao banco:\n${String(erro.stderr ?? '').trim() || '(sem stderr)'}`);
+    process.exit(2);
+  }
+  const esperadas = esperadasDoRepositorio();
+  const buraco = lacunas(esperadas, noBanco);
+  if (buraco.length) {
+    console.error(`BURACO: ${buraco.length} migration(s) esperada(s) sem rastro no catálogo deste banco: ${buraco.join(', ')}`);
+    process.exit(1);
+  }
+  console.log(`sem buraco — as ${esperadas.length} migrations que o README declara e que deixam rastro próprio estão no catálogo deste banco.`);
+  process.exit(0);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

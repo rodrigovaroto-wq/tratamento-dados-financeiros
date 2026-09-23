@@ -56,8 +56,18 @@ export function contarAsserts(texto) {
  * 0164, cuja medição está certa.
  */
 export function denominadores(texto) {
-  const comentario = texto.split("\n").filter((l) => l.trimStart().startsWith("--")).join("\n");
-  return [...comentario.matchAll(/\b\d+\s+dos\s+(\d+)\s+asserts(?!\s+do\s+bloco)/g)].map((m) => Number(m[1]));
+  // As linhas de comentário são JUNTADAS antes da busca. A primeira versão procurava linha a linha e,
+  // MEDIDO pela revisão de 23/09/2026, deixava fora quatro declarações reais quebradas entre "dos M" e
+  // "asserts" (0182, e os testes da 0181, 0182 e 0183) — o portão ficava verde com elas erradas.
+  // O parêntese opcional cobre "4 dos 24 (REMEDIDO 23/09/2026), asserts", que é a forma que existe.
+  const comentario = texto
+    .split("\n")
+    .filter((l) => l.trimStart().startsWith("--"))
+    .map((l) => l.trimStart().replace(/^--+\s?/, ""))
+    .join(" ");
+  return [...comentario.matchAll(/\b\d+\s+dos\s+(\d+)(?:\s*\([^)]*\))?,?\s+asserts(?!\s+do\s+bloco)/g)].map((m) =>
+    Number(m[1]),
+  );
 }
 
 /** O teste citado junto de "MEDIÇÃO NÃO-VAZIA" — a linha dela e as três seguintes. */
@@ -125,6 +135,16 @@ test("o contador não é enganado por comentário nem pela definição da funç�
     "  perform teste_assert_x(true, 'dois');",
   ].join("\n");
   assert.equal(contarAsserts(texto), 2);
+});
+
+test("o denominador é lido mesmo quebrado entre linhas e com parêntese no meio", () => {
+  // As duas formas reais que a primeira versão deixava passar em silêncio.
+  const quebrado = ["--   contando todos — **3 dos 32", "--     asserts reprovaram**: ..."].join("\n");
+  const comParentese = ["-- contando todos — 4 dos 24 (REMEDIDO 23/09/2026),", "--     asserts reprovaram."].join("\n");
+  assert.deepEqual(denominadores(quebrado), [32]);
+  assert.deepEqual(denominadores(comParentese), [24]);
+  // e o qualificado continua fora, como a 0164
+  assert.deepEqual(denominadores("-- **2 dos 2 asserts do bloco de escala reprovaram**"), []);
 });
 
 test("o pareamento usa o teste citado na medição, não o primeiro citado", () => {

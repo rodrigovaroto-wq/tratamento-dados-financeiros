@@ -11,9 +11,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync as existe } from 'node:fs';
+import { readFileSync, readdirSync, existsSync as existe } from 'node:fs';
 import { join as juntar } from 'node:path';
-import { interpretar, migracoesEsperadas, lacunas } from './sonda-producao.mjs';
+import { interpretar, migracoesEsperadas, chavesGravadas } from './sonda-producao.mjs';
 
 test('sem configuração NUNCA vira verde — é ausência de medição, não ausência de problema', () => {
   const r = interpretar({ configurado: false });
@@ -105,33 +105,51 @@ test('o segredo que a mensagem manda cadastrar é o que o workflow lê', () => {
 
 // --- O BURACO NO MEIO (PR #238, 23/09/2026) -------------------------------------------------------
 // MEDIDO em produção antes de aplicar a 0182: `ate_migration = 0188`, 132 requisitos, 0 ausentes — e
-// a 0182/0183 fora. O catálogo tinha requisito de 0180, 0181, 0186, 0187 e 0188, e nenhum de 0182 ou
-// 0183. Os testes abaixo usam o README e as migrations REAIS deste repositório, e o estado de
-// produção montado só com fatos medidos (tudo até a 0181 conferido com 0 ausentes em 18/09, e a
-// 0186–0188 aplicadas pela F2 em 22/09) — não um arranjo escolhido para o teste passar.
+// a 0182/0183 fora. Uma migration que nunca rodou não deixa requisito para acusar.
+//
+// A PRIMEIRA VERSÃO DESTES TESTES ERA CIRCULAR, e é por isso que eles estão assim agora. Ela montava
+// "produção" como `ESPERADAS.filter(n <= '0181') + [0186, 0187, 0188]` — ou seja, a partir da saída da
+// própria função testada — e afirmava "o buraco é exatamente [0182, 0183]". Verdade por construção:
+// todo falso positivo até a 0181 ficava invisível. A revisão independente mediu o que ela escondia:
+// contra um banco com TODAS as migrations aplicadas, o critério antigo acusava 0163 e 0171.
+//
+// Por isso a divisão de trabalho é explícita: ESTES testes provam a ESTRUTURA com os arquivos reais
+// (o parser de chaves e o critério de dono final nos dois casos que derrubaram a primeira versão) e a
+// integração do veredito. O CONTROLE POSITIVO contra dado real — banco completo tem de dar zero
+// buracos — é do passo do CI "A sonda do buraco no meio não dá alarme falso num banco completo",
+// porque só lá existe um banco completo para perguntar.
 const RAIZ_REPO = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
-const ESPERADAS_REAIS = migracoesEsperadas(
-  readFileSync(juntar(RAIZ_REPO, 'Supabase/README.md'), 'utf8'),
-  (arq) => {
-    const c = juntar(RAIZ_REPO, 'Supabase/migrations', arq);
-    return existe(c) ? readFileSync(c, 'utf8') : null;
-  },
-);
-const PRODUCAO_EM_23_09 = [...ESPERADAS_REAIS.filter((n) => n <= '0181'), '0186', '0187', '0188'];
+const lerMig = (arq) => {
+  const c = juntar(RAIZ_REPO, 'Supabase/migrations', arq);
+  return existe(c) ? readFileSync(c, 'utf8') : null;
+};
+const ESPERADAS_REAIS = migracoesEsperadas(readFileSync(juntar(RAIZ_REPO, 'Supabase/README.md'), 'utf8'), lerMig);
+const arquivoDe = (n) => readdirSync(juntar(RAIZ_REPO, 'Supabase/migrations')).find((f) => f.startsWith(n + '_'));
 
 test('a lista esperada sai do README: inclui as da F1.7 e exclui a migration comentada (0185)', () => {
   assert.ok(ESPERADAS_REAIS.includes('0182') && ESPERADAS_REAIS.includes('0183'), ESPERADAS_REAIS.join(','));
   assert.ok(!ESPERADAS_REAIS.includes('0185'), 'a 0185 está comentada no README — não deve ser esperada');
 });
 
-test('o estado real de produção em 23/09 tem exatamente o buraco que ninguém via: 0182 e 0183', () => {
-  assert.deepEqual(lacunas(ESPERADAS_REAIS, PRODUCAO_EM_23_09), ['0182', '0183']);
+test('migration que só cataloga OUTRA migration não é esperada no catálogo com o próprio número (0163)', () => {
+  // A 0163 grava requisitos com os números '0161' e '0162' — nunca com o próprio. O '0163' dela está
+  // só no `set ate_migration`, e foi isso que enganou a primeira versão.
+  const numeros = new Set(chavesGravadas(lerMig(arquivoDe('0163'))).map((c) => c.migration));
+  assert.ok(numeros.size > 0, 'o parser não leu nenhuma chave da 0163 — o teste abaixo não provaria nada');
+  assert.ok(!numeros.has('0163'), `a 0163 grava ${[...numeros].join(', ')}`);
+  assert.ok(!ESPERADAS_REAIS.includes('0163'));
+});
+
+test('migration cuja chave foi REETIQUETADA por uma posterior não é esperada (0171 → 0173)', () => {
+  const da0173 = chavesGravadas(lerMig(arquivoDe('0173'))).find((c) => c.chave === 'cnpj_renomeia');
+  assert.equal(da0173?.migration, '0173', 'a 0173 regrava cnpj_renomeia com o próprio número');
+  assert.ok(!ESPERADAS_REAIS.includes('0171'), 'num banco completo a 0171 some do catálogo — esperá-la é alarme falso');
 });
 
 test('buraco no meio reprova MESMO com zero ausências no catálogo — era o caso real', () => {
   const r = interpretar({
     configurado: true, status: 0, saida: '', stderr: '',
-    esperadas: ESPERADAS_REAIS, migracoesNoBanco: PRODUCAO_EM_23_09,
+    esperadas: ['0181', '0182', '0183', '0186'], migracoesNoBanco: ['0181', '0186'],
   });
   assert.equal(r.codigo, 1);
   assert.match(r.mensagem, /0182, 0183/);

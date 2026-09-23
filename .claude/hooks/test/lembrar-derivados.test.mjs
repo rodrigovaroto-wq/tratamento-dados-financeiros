@@ -74,7 +74,9 @@ test("o caminho de exemplo de cada regra existe no repositório", () => {
 
 test("arquivo sem derivado não gera ruído", () => {
   // Portão que fala demais é ignorado, e aí não fala nada (`portao-pode-reprovar-por-ruido.md`).
-  for (const caminho of ["CLAUDE.md", "portal/src/app/page.tsx", "Supabase/test/run.sh"]) {
+  // MEMORY.md e INSTRUCTIONS.md estão na pasta da memória mas o indexar.mjs os exclui do grafo.
+  for (const caminho of ["CLAUDE.md", "portal/src/app/page.tsx", "Supabase/test/run.sh",
+                         ".claude/memory/MEMORY.md", ".claude/memory/INSTRUCTIONS.md"]) {
     assert.equal(avisoPara(caminho), "", `${caminho} não deveria gerar aviso`);
   }
 });
