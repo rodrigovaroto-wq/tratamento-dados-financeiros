@@ -11,8 +11,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { interpretar } from './sonda-producao.mjs';
+import { readFileSync, existsSync as existe } from 'node:fs';
+import { join as juntar } from 'node:path';
+import { interpretar, migracoesEsperadas, lacunas } from './sonda-producao.mjs';
 
 test('sem configuração NUNCA vira verde — é ausência de medição, não ausência de problema', () => {
   const r = interpretar({ configurado: false });
@@ -100,4 +101,44 @@ test('o segredo que a mensagem manda cadastrar é o que o workflow lê', () => {
   );
   const { mensagem } = interpretar({ configurado: false });
   assert.match(mensagem, new RegExp(`\\b${distintos[0]}\\b`));
+});
+
+// --- O BURACO NO MEIO (PR #238, 23/09/2026) -------------------------------------------------------
+// MEDIDO em produção antes de aplicar a 0182: `ate_migration = 0188`, 132 requisitos, 0 ausentes — e
+// a 0182/0183 fora. O catálogo tinha requisito de 0180, 0181, 0186, 0187 e 0188, e nenhum de 0182 ou
+// 0183. Os testes abaixo usam o README e as migrations REAIS deste repositório, e o estado de
+// produção montado só com fatos medidos (tudo até a 0181 conferido com 0 ausentes em 18/09, e a
+// 0186–0188 aplicadas pela F2 em 22/09) — não um arranjo escolhido para o teste passar.
+const RAIZ_REPO = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+const ESPERADAS_REAIS = migracoesEsperadas(
+  readFileSync(juntar(RAIZ_REPO, 'Supabase/README.md'), 'utf8'),
+  (arq) => {
+    const c = juntar(RAIZ_REPO, 'Supabase/migrations', arq);
+    return existe(c) ? readFileSync(c, 'utf8') : null;
+  },
+);
+const PRODUCAO_EM_23_09 = [...ESPERADAS_REAIS.filter((n) => n <= '0181'), '0186', '0187', '0188'];
+
+test('a lista esperada sai do README: inclui as da F1.7 e exclui a migration comentada (0185)', () => {
+  assert.ok(ESPERADAS_REAIS.includes('0182') && ESPERADAS_REAIS.includes('0183'), ESPERADAS_REAIS.join(','));
+  assert.ok(!ESPERADAS_REAIS.includes('0185'), 'a 0185 está comentada no README — não deve ser esperada');
+});
+
+test('o estado real de produção em 23/09 tem exatamente o buraco que ninguém via: 0182 e 0183', () => {
+  assert.deepEqual(lacunas(ESPERADAS_REAIS, PRODUCAO_EM_23_09), ['0182', '0183']);
+});
+
+test('buraco no meio reprova MESMO com zero ausências no catálogo — era o caso real', () => {
+  const r = interpretar({
+    configurado: true, status: 0, saida: '', stderr: '',
+    esperadas: ESPERADAS_REAIS, migracoesNoBanco: PRODUCAO_EM_23_09,
+  });
+  assert.equal(r.codigo, 1);
+  assert.match(r.mensagem, /0182, 0183/);
+});
+
+test('sem as listas, o verde DIZ que o buraco não foi conferido — nunca o omite', () => {
+  const r = interpretar({ configurado: true, status: 0, saida: '', stderr: '' });
+  assert.equal(r.codigo, 0);
+  assert.match(r.mensagem, /BURACO NO MEIO NÃO FOI CONFERIDO/);
 });
