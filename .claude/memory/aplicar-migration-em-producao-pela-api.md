@@ -50,3 +50,13 @@ e mesmo assim foi preciso resolver **347** em lote depois, com `resolvida_por =
 PRODUÇÃO antes de escrever, não depois de aplicar — um critério pensado para um mandato (8
 entidades) alcança o banco inteiro (365). Contraste: o backfill da `0178`, que exige a conjunção
 sem-CNPJ + léxico + 1 documento, marcou **7** — previsto 7, conferido 7.
+
+**E ESTA LIÇÃO FOI REPETIDA MESMO ESTANDO ESCRITA AQUI** (PR #238, 21–23/09/2026). O backfill da
+`0183` nasceu com o mesmo desenho — `where forma_de_controle = 'indefinido'` logo depois de um `add
+column default`, alcançando as 365 entidades — e passou por uma revisão independente com o custo
+apenas DOCUMENTADO no cabeçalho, sem correção. Só foi corrigido quando a medição em produção foi
+feita antes de aplicar: 347 das 365 já tinham sido julgadas ruído pela triagem da `0179`, e o
+backfill passou a excluí-las (alcança 18). A razão de a memória não ter bastado: ela é lida pela
+sessão principal, e quem escreve a migration é o agente `migrations-postgres` — por isso a lição
+agora mora também em `.claude/agents/migrations-postgres.md`, que todo despacho carrega. Aplicação
+fora de ordem por sessões paralelas: ver `sessoes-paralelas-aplicam-fora-de-ordem.md`.

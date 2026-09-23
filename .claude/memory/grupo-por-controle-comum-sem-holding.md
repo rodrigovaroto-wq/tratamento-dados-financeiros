@@ -59,3 +59,23 @@ grupo. A fatia 1.6 (aceite financeiro contra o combinado do cliente) presumia qu
 **Consequência boa:** a `0180` (`perimetro`) atravessa isso intacta — ela registra "estas
 empresas entram no combinado" sem exigir hierarquia nenhuma, que é exatamente o conceito que se
 aplica a empresas irmãs.
+
+## O ensaio com o dado real, e o que ele fez com o critério da fatia 1.7
+
+**MEDIDO em 23/09/2026**, rodando `fn_grupo_por_controle_comum` (0182) sobre os sócios e quotas
+EXATOS da tabela acima, num banco local, dentro de uma transação desfeita (nada gravado em
+produção): o modelo devolve **dois grupos de dois** — GENERAL TABACO + OMNIBEAUTY MARCAS (ligadas
+por um mesmo sócio) e GENERAL BUSINESS CENTER + GLOBAL STORE (ligadas por outro) — e as quatro
+entidades sem contrato lido ficam fora da saída.
+
+**O critério escrito no roadmap ("as 8 entidades podem ser reconhecidas como um grupo") não é
+alcançável pelo dado medido.** Os dois grupos só se uniriam se alguém afirmasse que sócios com o
+MESMO SOBRENOME formam um único bloco de controle familiar. Isso é juízo, não medição, e o modelo se
+recusa a fabricá-lo — é a regra 1 funcionando, não um defeito. É o mesmo padrão que derrubou a 1.6:
+o critério presumiu algo que o dado não mostra.
+
+Fechar "as 8 como um grupo" depende de duas coisas que não são código: os 4 contratos que faltam
+(AMOBELEZA e CORPORATE vieram com zero campos; as DISTRIBUIDORAS PR/RS não têm contrato) e uma
+decisão do dono sobre se controle familiar conta como controle comum — relevante na prática
+brasileira de grupo econômico, mas sem conceito correspondente no modelo hoje (não há "bloco
+familiar": `controlador` é uma pessoa).

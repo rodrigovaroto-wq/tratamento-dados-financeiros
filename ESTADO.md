@@ -1,30 +1,45 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-> ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL) — F1.7 (a+b) ESCRITA, NÃO APLICADA (21/09/2026)
+> ## F1.7 CONSTRUÍDA — `0182` APLICADA EM PRODUÇÃO, `0183` PENDENTE DO DONO (23/09/2026)
 >
-> **F1.7a — migration `0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql`**:
-> `controlador` + `entidade_controlador` (N:N, sem temporalidade, guarda de soma nunca > 100 sem
-> exigir = 100) e o consumidor `fn_grupo_por_controle_comum` (fecho transitivo). Resolve o achado
-> de `.claude/memory/grupo-por-controle-comum-sem-holding.md`: as 8 entidades do mandato AMO não
-> têm holding, então `entidade.controladora_id` (0181) fica NULL corretamente nas 8 e não há onde
-> registrar o grupo. Teste `Supabase/test/entidade_controlador.test.sql`, **32 asserts — 5
-> reprovam sem a guarda de soma, 3 sem o fecho transitivo** (REMEDIDO em 21/09/2026: os números
-> anteriores usavam o denominador errado, "24").
+> **⚠️ PRODUÇÃO ESTÁ COM O MARCADOR DE COBERTURA ERRADO, e foi esta sessão que causou.** A `0182`
+> foi aplicada em 23/09, DEPOIS da `0188` (a F2 aplicou 0186–0188 em 22/09), e o `update
+> instalacao_cobertura set ate_migration = '0182'` do fim dela rebaixou o marcador de `0188` para
+> `0182`. A sonda de produção agora SUBNOTIFICA o que está instalado. **Aplicar a `0183` conserta**:
+> ela cria um gatilho que impede o marcador de regredir e o recalcula a partir do catálogo. Enquanto
+> ela não for aplicada, `ate_migration = '0182'` em produção é falso.
 >
-> **F1.7b — migration `0183_a_forma_de_controle_que_ninguem_declarava.sql`, FECHA a fatia 1.7**:
-> torna `controladora_id` NULL distinguível de um não preenchido, com guarda de coerência (check)
-> e guarda do vínculo (trigger). Teste `Supabase/test/entidade_forma_de_controle.test.sql`,
-> **22 asserts — 4 reprovam sem o check, 4 sem o trigger** (destes, 2 por CASCATA e não por
-> proteção direta; está nomeado no cabeçalho da migration).
+> **O que o dono aplica à mão, nesta ordem** (o classificador de modo automático do Claude Code
+> bloqueou o apply da `0183` como "Production Deploy" — nada dela rodou):
+> 1. SÓ a linha `alter type pendencia_tipo add value if not exists 'forma_de_controle_indefinida';`
+> 2. o resto de `Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql`, com
+>    aquela linha comentada (a API envolve o lote numa transação; ver o aviso no `Supabase/README.md`).
+> 3. conferir: `select ate_migration from instalacao_cobertura` tem de voltar a `0188` (ou mais), e
+>    `fn_instalacao_conferir()` sem ausentes. O backfill abre **18** pendências `forma_de_controle_
+>    indefinida` (13 registros de entidade do caso AMO, que tem 8 empresas reais, + 5 dos casos
+>    AMOBELEZA*) — medido em produção antes, não 365.
 >
-> **As duas passaram por revisão independente em 21/09/2026, e ela achou defeito real** — entre
-> eles um BURACO: a cláusula `controle_comum ⇒ controladora_id IS NULL` podia ser apagada do check
-> com a suíte inteira continuando verde. Os 2 asserts que a discriminam foram acrescentados e
-> medidos. Ver o cabeçalho de cada migration para a lista completa e os números por protocolo.
+> **O que a fatia entrega.** `0182`: `controlador` + `entidade_controlador` (N:N, percentual que nunca
+> passa de 100 e nunca é obrigado a fechar 100) + `fn_grupo_por_controle_comum` (fecho transitivo).
+> `0183`: `entidade.forma_de_controle`, que torna `controladora_id` NULL distinguível de "ninguém
+> cadastrou". Medição (regra 2), remedida contra o código final: 0182 **5/32** (soma) e **3/32**
+> (fecho); 0183 **4/24** (check), **4/24** (vínculo), **1/24** + 1 na sonda (backfill). Detalhe em
+> `.claude/conhecimento/fichas/f1-controle-comum-0182-0183.md`.
 >
-> **Escrita ≠ aplicada**: nenhuma das duas está em produção, e nenhum caso real tem controlador
-> ou forma de controle registrados ainda. A `0184` foi RESERVADA para esta fatia e NÃO FOI USADA —
-> gap declarado, não buraco. Uma sessão paralela na F2 começa em `0185`.
+> **O achado que muda o critério.** Com os sócios EXATOS dos 4 contratos legíveis, o modelo dá **dois
+> grupos de dois**, não um de oito. Unir os dois exige decidir se sócios de mesmo sobrenome são um
+> bloco familiar — juízo, não medição. O critério foi revisado no roadmap (§12.2): "as 8 como um
+> grupo" depende dos 4 contratos que faltam e de uma decisão do dono, não de código.
+>
+> **Guardas construídas na origem dos erros desta sessão** (cada uma medida): `indexar.mjs`
+> respeita o `.gitignore` · o hook de derivados conhece o grafo · portão `medicao-denominador`
+> (denominador declarado tem de bater com o arquivo) · gatilho do marcador de cobertura · a sonda de
+> produção vê buraco no meio da sequência (compara com o `README`) · lições no agente
+> `migrations-postgres`. **Achado sistêmico NÃO corrigido, proposto como tarefa:** a sonda não
+> enxerga gatilho desligado (medido: derrubar as três guardas por gatilho da F1.7 deixa o painel verde).
+>
+> **Efeito esperado depois do merge:** a sonda agendada de produção fica VERMELHA até a `0183` ser
+> aplicada — ela passa a acusar o buraco que antes escondia. A `0184` foi reservada e NÃO usada.
 >
 > **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
 > - **F1.3**: `entidade.papel_no_grupo` tipado em enum + escrita explícita (`fn_entidade_definir_papel_no_grupo`) + guarda de pendência. Migration `0179`. **VERIFICADA**: reconstrução do banco do zero, correção desligada (reprova no ponto esperado), religada (todas as suítes passam).
@@ -43,8 +58,8 @@
 
 | | |
 |---|---|
-| **Última migration APLICADA** | `0181_o_controle_que_a_entidade_nunca_registrava.sql` (F1.5) — sonda responde `ate_migration = 0181`, conferido em 18/09/2026 |
-| **Migrations PRONTAS mas NÃO APLICADAS** | `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — REPROVADA na medição contra produção) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte, PRONTA, testes verdes, aguarda aplicação) |
+| **Última migration APLICADA** | *(snapshot da sessão 99, 22/09 — DESATUALIZADO: produção tem hoje 0182 e 0186–0188; ver o topo.)* `0181_o_controle_que_a_entidade_nunca_registrava.sql` (F1.5) — sonda responde `ate_migration = 0181`, conferido em 18/09/2026 |
+| **Migrations PRONTAS mas NÃO APLICADAS** | *(snapshot de 22/09 — a 0186 foi aplicada depois, junto com 0187/0188, pelo PR #240.)* `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — REPROVADA na medição contra produção) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte, PRONTA, testes verdes, aguarda aplicação) |
 | **Decisão do dono, 21/09/2026** | **F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b**. Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás" |
 
 ### Entrega 1: Migration `0186` — motivo da precondição para deixar de ser jogado fora
@@ -211,7 +226,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql` — fatia 1.5 do plano F1 (seção 12.2 do roadmap). Colunas novas `entidade.controladora_id` (FK self-referencing, no máximo uma controladora DIRETA por entidade — não um grafo completo de participação, limitação deliberada e documentada) e `entidade.percentual_participacao` (`numeric(6,3)`, checado em (0,100]). Guarda contra CICLO (`fn_entidade_criaria_ciclo_participacao`, limite de 50 saltos) chamada ANTES de gravar por `fn_entidade_definir_participacao` (humano, nunca inferência automática; remover a controladora exige percentual também null) e consumidor mínimo de leitura `fn_entidade_cadeia_controladora` (sobe a cadeia, para no topo). NÃO deriva nada de `perimetro` (0180) nem de `papel_no_grupo` (0179) — é a FK preparada que a F4 (consolidação/intercompany) vai consumir. 29 asserts novos em `Supabase/test/entidade_participacao.test.sql`, 4 dos 29 MEDIDOS reprovando (não estimados) contra o estado sem a guarda de ciclo em `fn_entidade_definir_participacao` — os outros 25 passam com ou sem a correção (ver o cabeçalho do arquivo de teste). **APLICADA em produção em 18/09/2026** — ver a linha abaixo. |
-| **Aplicadas no Supabase** | **até a `0181`** — a `0178`–`0181` (fatias 1.2 a 1.5 do F1) foram aplicadas em **18/09/2026**, pela API de gerenciamento do Supabase (a porta do Postgres não é alcançável do container; `psql` contra o pooler expira). MEDIDO contra a sonda, não suposto: `fn_instalacao_conferir()` devolve **107 requisitos, 0 ausentes**, e `instalacao_cobertura.ate_migration = '0181'`. **A `0179` foi aplicada em DOIS passos**, e quem aplicar de novo precisa saber: o `alter type pendencia_tipo add value` tem de ser confirmado numa chamada SEPARADA antes do resto do arquivo, senão o Postgres recusa com "unsafe use of new value of enum type" (a migration não tem `begin;`/`commit;` por causa disso, mas a API de gerenciamento envolve o lote numa transação implícita). **EFEITO MEDIDO de cada uma:** `0178` marcou **7** entidades como nome suspeito (previsto 7 antes de aplicar, conferido depois — o backfill não surpreendeu); `0179` abriu **365** pendências `papel_no_grupo_indefinido`, uma por entidade de TODO o banco (70 casos, a maioria teste antigo) — dessas, **347 foram resolvidas em lote** por esta sessão com `resolvida_por = 'sessao-claude:ruido-de-caso-de-teste'` e evento de auditoria `pendencias_papel_resolvidas_em_lote`, restando **18 abertas** (mandato real `AMO teste 00` + casos `AMOBELEZA*`); `0180` e `0181` criaram estrutura sem abrir pendência nenhuma. **O backfill da `0179` não distingue mandato real de caso de teste** — quem aplicar num banco novo vai ver o mesmo ruído e precisa repetir essa triagem. |
+| **Aplicadas no Supabase** | **ATUALIZADO 23/09/2026: `0182` (F1.7a) aplicada nesta data, e a F2 aplicou `0186`–`0188` em 22/09 — produção tem 0182 e 0186–0188, e NÃO tem a `0183` (bloqueada, ver o topo) nem a `0185` (reprovada, nunca aplicada). O marcador `ate_migration` de produção está em `0182` por REGRESSÃO (a 0182 foi aplicada depois da 0188) — o valor real é 0188, e a 0183 o repara.** Histórico anterior, mantido: até a `0181` — a `0178`–`0181` (fatias 1.2 a 1.5 do F1) foram aplicadas em **18/09/2026**, pela API de gerenciamento do Supabase (a porta do Postgres não é alcançável do container; `psql` contra o pooler expira). MEDIDO contra a sonda, não suposto: `fn_instalacao_conferir()` devolve **107 requisitos, 0 ausentes**, e `instalacao_cobertura.ate_migration = '0181'`. **A `0179` foi aplicada em DOIS passos**, e quem aplicar de novo precisa saber: o `alter type pendencia_tipo add value` tem de ser confirmado numa chamada SEPARADA antes do resto do arquivo, senão o Postgres recusa com "unsafe use of new value of enum type" (a migration não tem `begin;`/`commit;` por causa disso, mas a API de gerenciamento envolve o lote numa transação implícita). **EFEITO MEDIDO de cada uma:** `0178` marcou **7** entidades como nome suspeito (previsto 7 antes de aplicar, conferido depois — o backfill não surpreendeu); `0179` abriu **365** pendências `papel_no_grupo_indefinido`, uma por entidade de TODO o banco (70 casos, a maioria teste antigo) — dessas, **347 foram resolvidas em lote** por esta sessão com `resolvida_por = 'sessao-claude:ruido-de-caso-de-teste'` e evento de auditoria `pendencias_papel_resolvidas_em_lote`, restando **18 abertas** (mandato real `AMO teste 00` + casos `AMOBELEZA*`); `0180` e `0181` criaram estrutura sem abrir pendência nenhuma. **O backfill da `0179` não distingue mandato real de caso de teste** — quem aplicar num banco novo vai ver o mesmo ruído e precisa repetir essa triagem. |
 | **Última rodada real** | **"AMO teste 00", 118 documentos, 17/09/2026 — análise de 89 pendências abertas nesta sessão (session_014M6WjcbLvjBUkQodRYTH7J). Triagem: 4 achados nomeados — 2 DIFERIDOS (F2 e F4), 1 CORRIGIDO (PR #234, commit 378f23a), 1 NÃO CONFERIDO. Decisão de escopo: recusada adição de premissas de modelagem (fora de F0). Portal/export: tsc/eslint/next build limpos, 7 suítes verificar-*.mts todas verdes, e2e 46/0. Descoberta: hipótese anterior "esgotamento de RAM" era stack overflow em `push(...arr)` no nó merge nativo do n8n (~125.000–150.000 itens no Node 22). Ver "A SESSÃO ATUAL (17/09/2026)" abaixo. |
 | **Modelagem do mandato AMO** | **APLICADA no Supabase de produção em 17/09/2026** (a pedido explícito do dono, fora do escopo F0 e sem tocar o repositório na aplicação em si). Parâmetros: entidade **`AMOBELEZA COMERCIO DIGITAL E OFFLINE LTDA`**, último exercício real 2025, índice macro IPCA, setor varejo, 5 anos projetados. **A entidade tem de ser uma STRING QUE EXISTE nos dados, não um rótulo descritivo:** a primeira tentativa gravou "AMOBELEZA / Grupo AMO" e o modelo institucional não montou — `fn_valores_por_ano(caso, entidade)` FILTRA por ela, devolveu vazio, e o export escreveu a aba "Modelagem não montada" dizendo "nenhum exercício tem valor NUMÉRICO". Medido, para trocar em uma linha se o dono preferir outra: GENERAL CORPORATE 636 linhas/2023-2026 · OMNIBEAUTY Marcas 572/2023-2026 · General Tabaco 486/2023-2026 · AMOBELEZA 452/2023-2026 · OMNIBEAUTY RS 253/2024-2026 · GLOBAL STORE 146/2023-2025. **26 premissas ativas cobrindo as 11 naturezas do catálogo** — macro (IPCA, IGP-M, SELIC, Câmbio) com valores do Focus, o resto `digitado` com a âncora declarada no comentário de cada uma. **1.188 de 1.252 linhas projetáveis com premissa (94,9%)**, escolhida pela natureza contábil da conta: caixa/aplicação→SELIC, clientes→PMR, fornecedores→PMP, estoque por marca→GIRO_ESTOQUE, folha→HEADCOUNT, aluguel→IGP-M, imobilizado→CAPEX_PCT, contingência DIFAL→SELIC. 34 linhas de venda com curva de sazonalidade derivada de 60 meses do próprio faturamento. **64 linhas fora, com motivo declarado:** 30 totais (dupla contagem), 20 cláusulas narrativas de contrato social, 14 resultados apurados. `fn_conferir_modelagem`: `pronto: true`, 0 órfãos, 0 premissa sem valor, 0 sazonalidade sem curva. |
 | **Schema materializado** | `Supabase/schema.sql` — gerado pelo `Supabase/test/run.sh`, conferido pelo CI |
