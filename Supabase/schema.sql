@@ -6724,6 +6724,44 @@ $$;
 COMMENT ON FUNCTION public.fn_pendencia_entidade_nome_suspeito(p_caso_id uuid, p_entidade_id uuid, p_nome text) IS '0178: pendência entidade_incorreta para entidade cujo nome bate fn_entidade_nome_parece_titulo_ou_arquivo, sem CNPJ e recém-criada. Idempotente por entidade_id (motivo). Nunca funde, nunca apaga — só marca para revisão humana.';
 
 --
+-- Name: fn_pendencia_forma_de_controle_backfill(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_pendencia_forma_de_controle_backfill(p_caso_id uuid DEFAULT NULL::uuid) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+declare
+  r   record;
+  v_n integer := 0;
+begin
+  for r in
+    select e.id, e.caso_id, e.razao_social
+      from entidade e
+     where e.forma_de_controle = 'indefinido'
+       and (p_caso_id is null or e.caso_id = p_caso_id)
+       -- a triagem humana que já existe: entidade julgada ruído de caso de teste não recebe
+       -- um segundo convite a decidir sobre ela
+       and not exists (
+         select 1 from pendencia p
+          where p.caso_id = e.caso_id
+            and p.motivo = 'papel_no_grupo_indefinido:' || e.id
+            and p.estado = 'resolvida'
+            and p.resolvida_por = 'sessao-claude:ruido-de-caso-de-teste')
+  loop
+    perform fn_pendencia_forma_de_controle_indefinida(r.caso_id, r.id, r.razao_social);
+    v_n := v_n + 1;
+  end loop;
+  return v_n;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_pendencia_forma_de_controle_backfill(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_pendencia_forma_de_controle_backfill(p_caso_id uuid) IS '0183: abre a pendência forma_de_controle_indefinida para as entidades que já existiam quando a coluna nasceu, EXCETO as que a triagem humana da 0179 já julgou ruído de caso de teste (pendência de papel resolvida com resolvida_por = ''sessao-claude:ruido-de-caso-de-teste''). Medido em produção antes de aplicar: 365 entidades, 347 triadas — sem a exclusão o backfill repetiria o ruído da 0179. Devolve quantas entidades visitou. p_caso_id NULL = banco inteiro.';
+
+--
 -- Name: fn_pendencia_forma_de_controle_indefinida(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 

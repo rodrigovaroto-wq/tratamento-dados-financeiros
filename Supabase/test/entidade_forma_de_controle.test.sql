@@ -7,11 +7,11 @@
 -- (a) A GUARDA DE COERÊNCIA (`entidade_forma_de_controle_coerente`, check de linha única): com o
 --     `check` comentado na migration 0183 e `teste_assert_0183` trocado temporariamente para não
 --     abortar no primeiro assert (`raise notice` em vez de `raise exception`) e contar todos —
---     4 dos 22 asserts do arquivo reprovaram (MEDIDO 21/09/2026). Religado o `check`, os 22 passam.
+--     4 dos 24 asserts do arquivo reprovaram (REMEDIDO 23/09/2026). Religado o `check`, os 24 passam.
 --
 -- (b) A GUARDA DO VÍNCULO (`fn_trg_entidade_forma_de_controle_tem_vinculo`, trigger): com a
 --     criação de `trg_entidade_forma_de_controle_tem_vinculo` comentada na migration (a função
---     existe, nada a chama) e `teste_assert_0183` contando todos — 4 dos 22 (MEDIDO 21/09/2026),
+--     existe, nada a chama) e `teste_assert_0183` contando todos — 4 dos 24 (REMEDIDO 23/09/2026),
 --     asserts reprovaram. Religado o trigger, todos passam.
 --
 -- (Ambos os números acima são preenchidos ao RODAR o protocolo — não estimados. Ver o cabeçalho
@@ -54,6 +54,9 @@ declare
   v_ent_b                uuid;  -- controladora de v_ent_a
   v_ent_c                uuid;  -- controle comum (mundo 0182)
   v_ent_ambos            uuid;  -- controladora_id E vínculo: o par que só o check recusa
+  v_ent_ruido            uuid;  -- já julgada ruído pela triagem da 0179
+  v_ent_real             uuid;  -- que ninguém julgou
+  v_n                    int;
   v_ent_d                uuid;  -- indefinido, controladora_id NULL — a metade da assimetria
   v_ctrl                 uuid;
   v_forma                entidade_forma_de_controle;
@@ -251,6 +254,40 @@ begin
   select forma_de_controle into v_forma from entidade where id = v_ent_ambos;
   perform teste_assert_0183(v_forma = 'indefinido',
     'e nada foi gravado — a forma continua indefinido', format('forma=%s', v_forma));
+
+  -- O BACKFILL RESPEITA A TRIAGEM QUE JÁ EXISTE — medido em produção em 23/09/2026 antes de
+  -- aplicar: 365 entidades, 347 já julgadas ruído de caso de teste pela triagem da 0179. A
+  -- primeira versão do backfill abriria as 365. Aqui se simula o arranjo real com as duas
+  -- metades dele: uma entidade que a triagem já julgou ruído e uma que ninguém julgou. As duas
+  -- nasceram por fn_upsert_entidade, que já lhes deu a pendência de forma — ela é apagada para
+  -- reproduzir a entidade PRÉ-EXISTENTE, que é a única que o backfill visita. O marcador de
+  -- triagem é o literal que está em produção (347 linhas), não um valor escolhido para o teste.
+  v_ent_ruido := fn_upsert_entidade(v_caso, 'ENTIDADE JA TRIADA COMO RUIDO (0183)');
+  v_ent_real  := fn_upsert_entidade(v_caso, 'ENTIDADE QUE NINGUEM JULGOU (0183)');
+  delete from pendencia
+   where caso_id = v_caso
+     and motivo in ('forma_de_controle_indefinida:' || v_ent_ruido,
+                    'forma_de_controle_indefinida:' || v_ent_real);
+  update pendencia
+     set estado = 'resolvida', resolvida_em = now(),
+         resolvida_por = 'sessao-claude:ruido-de-caso-de-teste'
+   where caso_id = v_caso and motivo = 'papel_no_grupo_indefinido:' || v_ent_ruido;
+
+  perform fn_pendencia_forma_de_controle_backfill(v_caso);
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'forma_de_controle_indefinida:' || v_ent_ruido
+     and estado <> 'resolvida';
+  perform teste_assert_0183(v_n = 0,
+    'o backfill NÃO reabre convite para entidade que a triagem humana já julgou ruído',
+    format('%s pendência(s) abertas', v_n));
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'forma_de_controle_indefinida:' || v_ent_real
+     and estado <> 'resolvida';
+  perform teste_assert_0183(v_n = 1,
+    'e abre para a entidade que ninguém julgou — a exclusão não engole o caso normal',
+    format('%s pendência(s) abertas', v_n));
 
   raise notice 'FORMA DE CONTROLE OK — indefinido é o default honesto de toda entidade nova, a '
     'guarda de coerência recusa controlada_por_entidade sem controladora_id e controle_comum '

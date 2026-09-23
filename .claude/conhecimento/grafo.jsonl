@@ -319,6 +319,7 @@
 {"k":"n","id":"fn:fn_pendencia_cnpj_colide_balcao","t":"fn","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","txt":"pendencia cnpj colide balcao"}
 {"k":"n","id":"fn:fn_pendencia_entidade_ambigua","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"pendencia entidade ambigua"}
 {"k":"n","id":"fn:fn_pendencia_entidade_nome_suspeito","t":"fn","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","txt":"pendencia entidade nome suspeito"}
+{"k":"n","id":"fn:fn_pendencia_forma_de_controle_backfill","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"pendencia forma de controle backfill"}
 {"k":"n","id":"fn:fn_pendencia_forma_de_controle_indefinida","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"pendencia forma de controle indefinida"}
 {"k":"n","id":"fn:fn_pendencia_papel_no_grupo_indefinido","t":"fn","f":"Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql","txt":"pendencia papel no grupo indefinido"}
 {"k":"n","id":"fn:fn_perimetro_definir_escopo","t":"fn","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","txt":"perimetro definir escopo"}
@@ -956,12 +957,13 @@
 {"k":"e","de":"arquivo:Supabase/test/entidade_controlador.test.sql","rel":"CHAMA","pa":"fn:fn_mesma_entidade","f":"Supabase/test/entidade_controlador.test.sql","l":247}
 {"k":"e","de":"arquivo:Supabase/test/entidade_controlador.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_controlador.test.sql","l":107}
 {"k":"e","de":"arquivo:Supabase/test/entidade_controlador.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/entidade_controlador.test.sql","l":156}
-{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_controlador_registrar","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":151}
-{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_controlador","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":153}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_controlador_registrar","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":154}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_controlador","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":156}
 {"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_forma_de_controle","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":22}
-{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_participacao","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":111}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_participacao","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":114}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_forma_de_controle_backfill","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":276}
 {"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_trg_entidade_forma_de_controle_tem_vinculo","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":12}
-{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":70}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":73}
 {"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":32}
 {"k":"e","de":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_papel_no_grupo","f":"Supabase/test/entidade_papel_no_grupo.test.sql","l":4}
 {"k":"e","de":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_cnpj_colide_balcao","f":"Supabase/test/entidade_papel_no_grupo.test.sql","l":195}
@@ -1719,10 +1721,11 @@
 {"k":"e","de":"migration:0182","rel":"CRIA","pa":"fn:fn_entidade_definir_controlador","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","l":335}
 {"k":"e","de":"migration:0182","rel":"CRIA","pa":"fn:fn_grupo_por_controle_comum","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","l":438}
 {"k":"e","de":"migration:0182","rel":"CRIA","pa":"fn:fn_trg_entidade_controlador_soma_maxima","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","l":290}
-{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_entidade_definir_forma_de_controle","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":269}
-{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_pendencia_forma_de_controle_indefinida","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":335}
-{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_trg_entidade_forma_de_controle_tem_vinculo","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":231}
-{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":379}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_entidade_definir_forma_de_controle","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":277}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_pendencia_forma_de_controle_backfill","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":628}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_pendencia_forma_de_controle_indefinida","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":343}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_trg_entidade_forma_de_controle_tem_vinculo","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":239}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":387}
 {"k":"e","de":"migration:0186","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","l":227}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}

@@ -75,16 +75,16 @@
 -- MEDIÇÃO NÃO-VAZIA (regra 2 do CLAUDE.md) — EXECUTADA, não descrita, em
 -- `Supabase/test/entidade_forma_de_controle.test.sql`:
 --
--- TODOS OS NÚMEROS ABAIXO FORAM REMEDIDOS EM 21/09/2026 contra o arquivo COMO ESTÁ COMMITADO.
--- A primeira versão deste cabeçalho dizia "22 asserts" quando o arquivo tinha 20, e uma revisão
--- independente ainda achou um BURACO que os 20 não cobriam (ver (a) abaixo). Com os 2 asserts
--- que fecham esse buraco, o denominador real é 22 — o número antigo estava certo por acidente e
--- errado por método.
+-- TODOS OS NÚMEROS ABAIXO FORAM REMEDIDOS EM 23/09/2026 contra o arquivo COMO ESTÁ COMMITADO,
+-- depois da mesclagem com a main (0185/0186 da F2). Histórico do denominador, porque ele mudou
+-- três vezes e cada mudança teve motivo: a primeira versão dizia "22" com o arquivo tendo 20; a
+-- revisão independente achou um BURACO e os 2 asserts que o fecham levaram a 22; o backfill
+-- corrigido (protocolo (c)) acrescentou 2, e o denominador real hoje é **24**.
 --
 -- (a) A GUARDA DE COERÊNCIA (o `check` de linha única): com o `check`
 --     `entidade_forma_de_controle_coerente` comentado (e junto com ele o `comment on constraint`
 --     dele — ver a ARMADILHA abaixo) e `teste_assert_0183` trocado temporariamente para não
---     abortar no primeiro assert e contar todos — **4 dos 22 asserts reprovaram**: "declarar
+--     abortar no primeiro assert e contar todos — **4 dos 24 asserts reprovaram**: "declarar
 --     `controlada_por_entidade` SEM `controladora_id` é recusado", "nada foi gravado — a forma
 --     continua indefinido", e os DOIS asserts novos do arranjo com controladora_id E vínculo.
 --
@@ -100,7 +100,7 @@
 --
 -- (b) A GUARDA DO VÍNCULO (o trigger): com a criação do
 --     `trigger trg_entidade_forma_de_controle_tem_vinculo` comentada (a função-guarda continua
---     existindo, mas nada a chama) e `teste_assert_0183` contando todos — **4 dos 22 asserts
+--     existindo, mas nada a chama) e `teste_assert_0183` contando todos — **4 dos 24 asserts
 --     reprovaram**, e eles NÃO são quatro provas independentes: 2 são DIRETOS ("declarar
 --     `controle_comum` sem NENHUM vínculo é recusado" e "nada foi gravado") e 2 são CASCATA
 --     ("exatamente um evento_auditoria gravado para v_ent_c" e "reatribuir com a MESMA forma
@@ -111,6 +111,16 @@
 --     recusado por qualquer uma das duas dependendo de ter ou não vínculo registrado. Quem for
 --     mexer numa delas NÃO pode concluir da outra que está coberto — foi exatamente assim que a
 --     cláusula do check ficou sem dono até a revisão.
+--
+-- (c) O BACKFILL QUE RESPEITA A TRIAGEM (item 7): com o `not exists` da triagem removido de
+--     `fn_pendencia_forma_de_controle_backfill` — **e junto o requisito de corpo da sonda que o
+--     acusa**, senão a suíte para antes do teste — **1 dos 24 asserts reprovou**: "o backfill NÃO
+--     reabre convite para entidade que a triagem humana já julgou ruído". Sem desligar o requisito,
+--     quem reprova PRIMEIRO é a sonda (`instalacao.test.sql`, `backfill_forma_de_controle_respeita_
+--     triagem` ausente) — são duas guardas independentes para o mesmo defeito, uma no teste e uma
+--     no instrumento que confere produção. O outro assert do bloco ("abre para a entidade que
+--     ninguém julgou") NÃO discrimina esta regressão, e não deveria: ele guarda a oposta, o filtro
+--     excluindo DEMAIS.
 --
 --     A ARMADILHA DESTE PROTOCOLO, medida na primeira tentativa e registrada para a próxima
 --     sessão: comentar só o `alter table ... add constraint` deixa o `comment on constraint`
@@ -129,13 +139,11 @@
 --     GENUÍNOS, independentes tanto do `check` quanto do trigger — nenhum dos dois protocolos os
 --     derruba, e não deveriam: eles protegem coisas diferentes.
 --
--- O CUSTO DO BACKFILL, com o número do PRECEDENTE junto (regra 5): este arquivo abre UMA
--- pendência `forma_de_controle_indefinida` por entidade de TODO o banco, e não distingue mandato
--- real de caso de teste. A 0179 fez exatamente isso e o efeito está medido no ESTADO.md: **365
--- pendências abertas**, das quais **347 tiveram de ser resolvidas em lote** por serem ruído de
--- caso de teste antigo, restando 18 do mandato real. Quem aplicar esta migration num banco com
--- histórico vai precisar repetir essa triagem, e é melhor saber disso ANTES de aplicar do que
--- descobrir com a lista de pendências inflada. Num banco novo o número é o de entidades dele.
+-- O CUSTO DO BACKFILL, MEDIDO EM PRODUÇÃO ANTES DE APLICAR (regra 5): 365 entidades no banco,
+-- das quais 347 já foram julgadas ruído de caso de teste pela triagem da 0179. O backfill
+-- (item 7) REAPROVEITA essa triagem e abre pendência só para as outras — o que em produção, em
+-- 23/09/2026, eram 18 (as 13 entidades do mandato AMO e os casos AMOBELEZA*). Ver o item 7 para
+-- por que a primeira versão, que abria as 365, estava errada.
 --
 -- **Pronto quando** (critério da fatia 1.7, roadmap): "um `controladora_id` vazio passa a ser
 -- distinguível de um não preenchido" — esta migration entrega exatamente isso: a consulta
@@ -589,23 +597,71 @@ COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnp
 
 -- -----------------------------------------------------------------------------
 -- (7) O BACKFILL — entidades que JÁ EXISTEM neste banco (o `add column ... default` do item 1
--- já deu a TODAS `forma_de_controle = 'indefinido'`; este passo é só a PENDÊNCIA, no mesmo
--- espírito do backfill da 0179). Idempotente por motivo.
+-- já deu a TODAS `forma_de_controle = 'indefinido'`; este passo é só a PENDÊNCIA). Idempotente
+-- por motivo.
+--
+-- ELE NÃO ALCANÇA O BANCO INTEIRO, e a primeira versão alcançava. MEDIDO em produção em
+-- 23/09/2026, antes de aplicar (somente leitura, pela API de gerenciamento): **365 entidades**
+-- em 52 casos. Um `where forma_de_controle = 'indefinido'` logo depois do `add column default`
+-- pega todas — e é EXATAMENTE o desenho do backfill da 0179, que abriu 365 pendências das quais
+-- **347 tiveram de ser resolvidas em lote** como ruído de caso de teste morto
+-- (`.claude/memory/aplicar-migration-em-producao-pela-api.md`, que já dizia: "medir quantas
+-- linhas o where alcança em PRODUÇÃO antes de escrever, não depois de aplicar").
+--
+-- A primeira versão desta migration NÃO corrigiu isso: ela DOCUMENTOU o custo ("quem aplicar
+-- vai precisar repetir a triagem"). Documentar um defeito conhecido em vez de consertá-lo é
+-- tratar o resultado em vez da origem. A origem é o backfill ignorar uma decisão humana que JÁ
+-- EXISTE sobre as MESMAS entidades: aquelas 347 foram julgadas ruído de caso de teste, com
+-- `resolvida_por = 'sessao-claude:ruido-de-caso-de-teste'` na pendência de papel da 0179. Esse
+-- marcador é o único registro legível por máquina de "esta entidade é ruído" que o banco tem
+-- (não há flag de caso de teste em `caso`), e reaproveitá-lo é a diferença entre abrir 365
+-- convites a decidir e abrir 18.
+--
+-- NUM BANCO NOVO (CI, local) não existe triagem nenhuma, então a exclusão não exclui nada e o
+-- backfill alcança todas as entidades — que é o comportamento certo: ninguém julgou nenhuma delas.
+--
+-- `p_caso_id` escopa o backfill a um caso (NULL = o banco inteiro, que é o que a migration usa).
+-- Ele existe para o TESTE poder exercitar a exclusão sem abrir pendência nas entidades de
+-- fixture de todos os outros casos do banco de teste.
 -- -----------------------------------------------------------------------------
 
-do $$
+create function public.fn_pendencia_forma_de_controle_backfill(p_caso_id uuid DEFAULT NULL)
+RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
 declare
-  r record;
+  r   record;
+  v_n integer := 0;
 begin
   for r in
     select e.id, e.caso_id, e.razao_social
-    from entidade e
-    where e.forma_de_controle = 'indefinido'
+      from entidade e
+     where e.forma_de_controle = 'indefinido'
+       and (p_caso_id is null or e.caso_id = p_caso_id)
+       -- a triagem humana que já existe: entidade julgada ruído de caso de teste não recebe
+       -- um segundo convite a decidir sobre ela
+       and not exists (
+         select 1 from pendencia p
+          where p.caso_id = e.caso_id
+            and p.motivo = 'papel_no_grupo_indefinido:' || e.id
+            and p.estado = 'resolvida'
+            and p.resolvida_por = 'sessao-claude:ruido-de-caso-de-teste')
   loop
     perform fn_pendencia_forma_de_controle_indefinida(r.caso_id, r.id, r.razao_social);
+    v_n := v_n + 1;
   end loop;
+  return v_n;
 end;
 $$;
+
+comment on function public.fn_pendencia_forma_de_controle_backfill(uuid) IS
+  '0183: abre a pendência forma_de_controle_indefinida para as entidades que já existiam quando a '
+  'coluna nasceu, EXCETO as que a triagem humana da 0179 já julgou ruído de caso de teste '
+  '(pendência de papel resolvida com resolvida_por = ''sessao-claude:ruido-de-caso-de-teste''). '
+  'Medido em produção antes de aplicar: 365 entidades, 347 triadas — sem a exclusão o backfill '
+  'repetiria o ruído da 0179. Devolve quantas entidades visitou. p_caso_id NULL = banco inteiro.';
+
+select fn_pendencia_forma_de_controle_backfill();
 
 -- -----------------------------------------------------------------------------
 -- O CATÁLOGO DA SONDA.
@@ -685,6 +741,24 @@ insert into instalacao_requisito
    'fn_pendencia_forma_de_controle_indefinida continuando presente e testada, e a sonda ficaria '
    'muda sobre isso.',
    'importante', 775)
+on conflict (chave) do update set
+  migration = excluded.migration, tipo = excluded.tipo, objeto = excluded.objeto,
+  marcador = excluded.marcador, criterio_seed = excluded.criterio_seed,
+  porque = excluded.porque, severidade = excluded.severidade, ordem = excluded.ordem;
+
+insert into instalacao_requisito
+  (chave, migration, tipo, objeto, marcador, criterio_seed, porque, severidade, ordem) values
+  ('backfill_forma_de_controle_respeita_triagem', '0183', 'corpo',
+   'fn_pendencia_forma_de_controle_backfill',
+   'p.resolvida_por = ''sessao-claude:ruido-de-caso-de-teste''', null,
+   'Prova a EXCLUSÃO dentro do backfill, não só a existência da função. O marcador é a COMPARAÇÃO '
+   'inteira, não a string solta: a string sozinha sobreviveria numa reemissão que a guardasse num '
+   'comentário e perdesse o filtro (sonda_marcador_e_codigo.test.sql recusou a primeira versão '
+   'deste requisito exatamente por isso). Sem o filtro, o backfill volta a abrir uma pendência por '
+   'entidade do banco inteiro. '
+   'Medido em produção em 23/09/2026: 365 entidades, 347 já triadas como ruído — com a exclusão '
+   'o backfill alcança 18, sem ela alcança 365.',
+   'importante', 776)
 on conflict (chave) do update set
   migration = excluded.migration, tipo = excluded.tipo, objeto = excluded.objeto,
   marcador = excluded.marcador, criterio_seed = excluded.criterio_seed,
