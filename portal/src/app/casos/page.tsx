@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { paginar } from "@/lib/supabase/paginar";
+import { contarLinhasPorVersao } from "@/lib/supabase/linhas-por-versao";
 import {
   PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS,
   type Caso,
@@ -262,13 +263,9 @@ export default async function PainelPage() {
   const versoesRecentes = recentes
     .flatMap((d) => (d.documento_versao ?? []).map((v) => v.id))
     .filter(Boolean);
-  const linhasRecentesRes = versoesRecentes.length
-    ? await supabase.from("campo_extraido").select("documento_versao_id").in("documento_versao_id", versoesRecentes)
-    : { data: [] as Array<{ documento_versao_id: string }> };
-  const linhasPorVersao = new Map<string, number>();
-  for (const l of (linhasRecentesRes.data as Array<{ documento_versao_id: string }> | null) ?? []) {
-    linhasPorVersao.set(l.documento_versao_id, (linhasPorVersao.get(l.documento_versao_id) ?? 0) + 1);
-  }
+  // Paginada: uma consulta só era cortada em 1000 linhas pelo PostgREST, em
+  // silêncio (ver lib/supabase/linhas-por-versao.ts).
+  const { porVersao: linhasPorVersao, truncado: linhasTruncadas } = await contarLinhasPorVersao(supabase, versoesRecentes);
   const linhasDoDocumento = (d: DocumentoNoPainel) =>
     (d.documento_versao ?? []).reduce((s, v) => s + (linhasPorVersao.get(v.id) ?? 0), 0);
 
@@ -470,7 +467,7 @@ export default async function PainelPage() {
 
       {/* O corte do PostgREST é silencioso, então quando o teto bate a tela diz.
           Em operação normal este bloco nunca aparece (o teto é 50 mil linhas). */}
-      {(casosRes.truncado || documentosRes.truncado || pendenciasRes.truncado) && (
+      {(casosRes.truncado || documentosRes.truncado || pendenciasRes.truncado || linhasTruncadas) && (
         <p className="carta border-alerta-200 bg-alerta-50 px-4 py-3 text-xs text-alerta-900">
           Os números acima leem no máximo 50 mil registros por lista, e esse limite foi atingido.
           Eles descrevem parte da carteira, não a carteira inteira.

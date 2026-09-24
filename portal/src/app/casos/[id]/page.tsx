@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { paginar } from "@/lib/supabase/paginar";
+import { contarLinhasPorVersao } from "@/lib/supabase/linhas-por-versao";
 import {
   PENDENCIA_TIPOS_RECONCILIACAO,
   PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS,
@@ -204,15 +205,7 @@ export default async function CasoDashboardPage({
   const versoes = documentosRes.data
     .flatMap((d) => (d.documento_versao ?? []).map((v) => v.id))
     .filter(Boolean);
-  const linhasRes = versoes.length
-    ? await paginar<{ documento_versao_id: string }>((de, ate) =>
-        supabase.from("campo_extraido").select("documento_versao_id")
-          .in("documento_versao_id", versoes).order("id", { ascending: true }).range(de, ate))
-    : { data: [] as Array<{ documento_versao_id: string }>, error: null };
-  const linhasPorVersao = new Map<string, number>();
-  for (const l of linhasRes.data) {
-    linhasPorVersao.set(l.documento_versao_id, (linhasPorVersao.get(l.documento_versao_id) ?? 0) + 1);
-  }
+  const { porVersao: linhasPorVersao } = await contarLinhasPorVersao(supabase, versoes);
 
   if (casoRes.error || !casoRes.data) {
     notFound();

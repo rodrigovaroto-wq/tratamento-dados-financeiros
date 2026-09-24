@@ -398,6 +398,16 @@ jobs:
         # em vez do corpo do multipart.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-limite-de-envio.mts
 
+      - name: Suíte da contagem por documento (o teto de 1000 do PostgREST não corta em silêncio)
+        # A contagem "quantas linhas cada documento rendeu" morava em duas cópias,
+        # e só uma paginava: o painel fazia uma consulta só, e o PostgREST corta
+        # em 1000 linhas sem erro. Agora é uma função (`contarLinhasPorVersao`),
+        # provada contra um servidor que corta em 1000 e em 500, e nenhuma leitura
+        # de linhas de campo_extraido em portal/src fica fora do `paginar`.
+        # Medido com a correção desligada: o painel antigo reprova 1 verificação;
+        # a função sem paginar reprova 7.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-linhas-por-versao.mts
+
       - name: Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)
         # A 0158 endureceu o `pronto` e publicou a FRAÇÃO de contas com premissa,
         # mas um número no banco que a tela não mostra não corrige nada: o chip
