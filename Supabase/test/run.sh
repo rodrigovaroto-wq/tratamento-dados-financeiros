@@ -233,6 +233,18 @@ psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fixture_book_vertentes.sql
 echo "== fixture (book CANASTRA, extração fiel dos documentos DIFÍCEIS)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fixture_book_canastra.sql
 
+# O TESTE DA 0188 VEM ANTES DE QUALQUER OUTRA RECONCILIAÇÃO, E A ORDEM É
+# OBRIGATÓRIA: os blocos 1 e 2 comparam o que as checagens produzem sobre as
+# fixtures (perturbadas dentro de uma transação que volta) contra o retrato
+# MEDIDO com os corpos da 0187 — e isso só vale com os dois casos de fixture sem
+# nenhuma linha de reconciliação ainda. O bloco 0 reprova dizendo isto se
+# alguém o mover para baixo. Termina em rollback: não deixa nada para os
+# testes seguintes.
+echo "== motivo específico (0188): a checagem diz o motivo que ela sabe, e nada mais muda"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/motivo_especifico.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes de reconciliação"
 # A ÁRVORE DA SEÇÃO VEM ANTES DA RECONCILIAÇÃO, E A ORDEM É OBRIGATÓRIA.
 # O bloco 6 do reconciliacao.test.sql renomeia TODA chave da versão ...0001 para
@@ -351,8 +363,8 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/linha_exigida_entidade.test.sq
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
-echo "== testes de linha exigida dos tipos antes MUDOS (0185: F2.1 — cobertura de tipos)"
-psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/linha_exigida_tipos_variaveis.test.sql 2>&1 \
+echo "== cobertura de tipos (0187, portão D6): todo tipo ativo tem exigência viva ou declaração"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/cobertura_de_tipos.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
