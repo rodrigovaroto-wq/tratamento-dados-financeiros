@@ -3914,6 +3914,11 @@ declare
   v_de    text;
   v_para  text;
   v_docs  int;
+  -- 0183
+  v_forma_de         entidade_forma_de_controle;
+  v_vinculos_de      jsonb;
+  v_vinculos_movidos int := 0;
+  v_descartados      jsonb := '[]'::jsonb;
 begin
   if p_de_id = p_para_id then
     raise exception 'fundir uma entidade nela mesma não faz sentido (%)', p_de_id;
@@ -3939,19 +3944,51 @@ begin
   update reconciliacao set entidade_id = p_para_id
    where caso_id = p_caso_id and entidade_id = p_de_id;
 
+  -- 0183: o controle declarado de A. Sem isto, o `on delete cascade` de entidade_controlador o
+  -- apagava junto com a linha (ver o item (10) da migration 0183).
+  select forma_de_controle into v_forma_de from entidade where id = p_de_id;
+  select coalesce(jsonb_agg(jsonb_build_object('controlador_id', ec.controlador_id,
+                                               'controlador', k.nome,
+                                               'percentual', ec.percentual)
+                            order by k.nome), '[]'::jsonb)
+    into v_vinculos_de
+    from entidade_controlador ec join controlador k on k.id = ec.controlador_id
+   where ec.entidade_id = p_de_id;
+
+  if not exists (select 1 from entidade_controlador where entidade_id = p_para_id) then
+    update entidade_controlador set entidade_id = p_para_id where entidade_id = p_de_id;
+    get diagnostics v_vinculos_movidos = row_count;
+  else
+    v_descartados := v_vinculos_de;
+  end if;
+
   -- A pendência de ambiguidade da entidade fundida está respondida.
   update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = p_por
    where caso_id = p_caso_id and motivo = 'entidade_ambigua:' || p_de_id and estado <> 'resolvida';
+
+  -- 0183: e as de forma e de papel de A também — a pergunta era sobre uma entidade que deixa de
+  -- existir; a de B é de B.
+  update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = p_por
+   where caso_id = p_caso_id
+     and motivo in ('forma_de_controle_indefinida:' || p_de_id, 'papel_no_grupo_indefinido:' || p_de_id)
+     and estado <> 'resolvida';
 
   delete from entidade where id = p_de_id and caso_id = p_caso_id;
 
   insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
   values (p_por, 'entidade_fundida', 'entidade:' || p_para_id,
-          jsonb_build_object('entidade_id', p_de_id, 'razao_social', v_de),
+          jsonb_build_object('entidade_id', p_de_id, 'razao_social', v_de,
+                             -- 0183
+                             'forma_de_controle', v_forma_de, 'vinculos', v_vinculos_de),
           jsonb_build_object('entidade_id', p_para_id, 'razao_social', v_para,
-                             'documentos_movidos', v_docs));
+                             'documentos_movidos', v_docs,
+                             -- 0183
+                             'vinculos_movidos', v_vinculos_movidos,
+                             'vinculos_descartados', v_descartados));
 
-  return jsonb_build_object('fundida', v_de, 'em', v_para, 'documentos', v_docs);
+  return jsonb_build_object('fundida', v_de, 'em', v_para, 'documentos', v_docs,
+                            'vinculos_movidos', v_vinculos_movidos,
+                            'vinculos_descartados', jsonb_array_length(v_descartados));
 end;
 $$;
 
@@ -3959,7 +3996,7 @@ $$;
 -- Name: FUNCTION fn_fundir_entidade(p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_fundir_entidade(p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text) IS 'Funde duas entidades que são a mesma empresa, levando junto documentos, checklist, pendências e reconciliações (0153). Nada some sem rastro: evento_auditoria guarda o nome que existia e quantos documentos mudaram de dono.';
+COMMENT ON FUNCTION public.fn_fundir_entidade(p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text) IS 'Funde duas entidades que são a mesma empresa, levando junto documentos, checklist, pendências e reconciliações (0153). Nada some sem rastro: evento_auditoria guarda o nome que existia e quantos documentos mudaram de dono. 0183: leva também os vínculos de entidade_controlador quando a sobrevivente não tem nenhum (antes, o on delete cascade os apagava); se ela já tem, os da absorvida não são somados e vão para o evento como vinculos_descartados. Não herda forma_de_controle (registra no evento) e resolve as pendências de forma e de papel da absorvida.';
 
 --
 -- Name: fn_golden_abrir_rodada(text, text, text, integer); Type: FUNCTION; Schema: public; Owner: -

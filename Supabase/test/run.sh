@@ -611,6 +611,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/instalacao_cobertura_nao_regri
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0183 — a fusão de entidades não apaga o controle declarado (o on delete cascade da 0182 o levava junto)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fusao_preserva_controle.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \

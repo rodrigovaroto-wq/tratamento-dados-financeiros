@@ -834,6 +834,150 @@ on conflict (chave) do update set
   marcador = excluded.marcador, criterio_seed = excluded.criterio_seed,
   porque = excluded.porque, severidade = excluded.severidade, ordem = excluded.ordem;
 
+-- -----------------------------------------------------------------------------
+-- (10) A FUSÃO DE ENTIDADES APAGAVA O CONTROLE DECLARADO — achado CRÍTICO do /revisar de 24/09/2026.
+--
+-- O DEFEITO: `fn_fundir_entidade` (0153, a única definição) move documento, checklist, pendência e
+-- reconciliação da entidade absorvida para a sobrevivente e depois faz `delete from entidade`. Ela
+-- nasceu antes da 0182 e não conhece `entidade_controlador`, cuja FK é `on delete cascade`: o
+-- vínculo que um humano declarou some junto com a linha, e `fn_grupo_por_controle_comum` passa a
+-- devolver um grupo menor sem erro nenhum. REPRODUZIDO nesta sessão, antes da correção (banco de
+-- teste, transação desfeita): A com um vínculo de 60%, B sem vínculo, `fn_fundir_entidade(c, A, B)`
+-- → **1 vínculo antes, 0 depois**, e **2 pendências abertas** (forma e papel) com motivo apontando
+-- para a entidade que não existe mais — definir a forma de B resolve só `...:<B>`, então a de A
+-- fica aberta para sempre. A fusão roda sozinha: `fn_entidade_aprender_cnpj` (0174/0177) a chama
+-- quando o CNPJ lido num documento já pertence a outra entidade do caso.
+--
+-- A CORREÇÃO, e o que ela deliberadamente NÃO decide:
+--   - B (sobrevivente) SEM vínculo: os vínculos de A passam para B. É a mesma empresa — o CNPJ é a
+--     identidade (0169) — e A cabia no teto de 100%, então B cabe.
+--   - B JÁ COM vínculo: os de B ficam, os de A NÃO são somados. Duas declarações diferentes sobre a
+--     mesma empresa é conflito, e escolher entre elas é juízo, não medição (regra 1). Os de A vão
+--     inteiros para o `evento_auditoria` da fusão (`vinculos_descartados`), com controlador e
+--     percentual — nada some sem rastro.
+--   - A `forma_de_controle` de A NÃO é herdada: herdar seria inferir a forma de B (o que só
+--     `fn_entidade_definir_forma_de_controle`, humano, faz). Ela vai para o evento, e a pendência
+--     de forma de B — que é de B — continua sendo o convite a decidir.
+--   - As pendências de forma e de papel de A são resolvidas (`resolvida_por = p_por`): a pergunta
+--     era sobre uma entidade que deixou de existir. É o mesmo desenho que a 0153 já tinha para
+--     `entidade_ambigua:<A>`. O papel (0179) tinha o mesmo defeito antes desta fatia; entra aqui
+--     porque é a mesma linha.
+--
+-- O CORPO É O DA 0153 INTEIRO, mais os três blocos marcados `0183` (regra: nunca corrigir função
+-- por replace de texto). Quem aplicar em produção: compare o corpo de produção com o da 0153 antes
+-- (`.claude/memory/sessoes-paralelas-aplicam-fora-de-ordem.md`) — a diferença tem de ser só esta.
+-- -----------------------------------------------------------------------------
+
+create or replace function fn_fundir_entidade(
+  p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text default 'sistema:fusao'
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_de    text;
+  v_para  text;
+  v_docs  int;
+  -- 0183
+  v_forma_de         entidade_forma_de_controle;
+  v_vinculos_de      jsonb;
+  v_vinculos_movidos int := 0;
+  v_descartados      jsonb := '[]'::jsonb;
+begin
+  if p_de_id = p_para_id then
+    raise exception 'fundir uma entidade nela mesma não faz sentido (%)', p_de_id;
+  end if;
+
+  select razao_social into v_de   from entidade where id = p_de_id   and caso_id = p_caso_id;
+  select razao_social into v_para from entidade where id = p_para_id and caso_id = p_caso_id;
+  if v_de is null or v_para is null then
+    raise exception 'entidade não encontrada neste mandato (de=%, para=%)', p_de_id, p_para_id;
+  end if;
+
+  update documento set entidade_id = p_para_id
+   where caso_id = p_caso_id and entidade_id = p_de_id;
+  get diagnostics v_docs = row_count;
+
+  -- Tudo o que aponta para a entidade acompanha o documento. `checklist_item_status`
+  -- e `pendencia` guardam entidade_id por conta própria, e deixá-los para trás
+  -- faria o Portão 1 continuar cobrando de uma empresa que não existe mais.
+  update checklist_item_status set entidade_id = p_para_id
+   where caso_id = p_caso_id and entidade_id = p_de_id;
+  update pendencia set entidade_id = p_para_id
+   where caso_id = p_caso_id and entidade_id = p_de_id;
+  update reconciliacao set entidade_id = p_para_id
+   where caso_id = p_caso_id and entidade_id = p_de_id;
+
+  -- 0183: o controle declarado de A. Sem isto, o `on delete cascade` de entidade_controlador o
+  -- apagava junto com a linha (ver o item (10) da migration 0183).
+  select forma_de_controle into v_forma_de from entidade where id = p_de_id;
+  select coalesce(jsonb_agg(jsonb_build_object('controlador_id', ec.controlador_id,
+                                               'controlador', k.nome,
+                                               'percentual', ec.percentual)
+                            order by k.nome), '[]'::jsonb)
+    into v_vinculos_de
+    from entidade_controlador ec join controlador k on k.id = ec.controlador_id
+   where ec.entidade_id = p_de_id;
+
+  if not exists (select 1 from entidade_controlador where entidade_id = p_para_id) then
+    update entidade_controlador set entidade_id = p_para_id where entidade_id = p_de_id;
+    get diagnostics v_vinculos_movidos = row_count;
+  else
+    v_descartados := v_vinculos_de;
+  end if;
+
+  -- A pendência de ambiguidade da entidade fundida está respondida.
+  update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = p_por
+   where caso_id = p_caso_id and motivo = 'entidade_ambigua:' || p_de_id and estado <> 'resolvida';
+
+  -- 0183: e as de forma e de papel de A também — a pergunta era sobre uma entidade que deixa de
+  -- existir; a de B é de B.
+  update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = p_por
+   where caso_id = p_caso_id
+     and motivo in ('forma_de_controle_indefinida:' || p_de_id, 'papel_no_grupo_indefinido:' || p_de_id)
+     and estado <> 'resolvida';
+
+  delete from entidade where id = p_de_id and caso_id = p_caso_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+  values (p_por, 'entidade_fundida', 'entidade:' || p_para_id,
+          jsonb_build_object('entidade_id', p_de_id, 'razao_social', v_de,
+                             -- 0183
+                             'forma_de_controle', v_forma_de, 'vinculos', v_vinculos_de),
+          jsonb_build_object('entidade_id', p_para_id, 'razao_social', v_para,
+                             'documentos_movidos', v_docs,
+                             -- 0183
+                             'vinculos_movidos', v_vinculos_movidos,
+                             'vinculos_descartados', v_descartados));
+
+  return jsonb_build_object('fundida', v_de, 'em', v_para, 'documentos', v_docs,
+                            'vinculos_movidos', v_vinculos_movidos,
+                            'vinculos_descartados', jsonb_array_length(v_descartados));
+end;
+$$;
+
+comment on function fn_fundir_entidade(uuid, uuid, uuid, text) is
+  'Funde duas entidades que são a mesma empresa, levando junto documentos, checklist, pendências '
+  'e reconciliações (0153). Nada some sem rastro: evento_auditoria guarda o nome que existia e '
+  'quantos documentos mudaram de dono. 0183: leva também os vínculos de entidade_controlador '
+  'quando a sobrevivente não tem nenhum (antes, o on delete cascade os apagava); se ela já tem, '
+  'os da absorvida não são somados e vão para o evento como vinculos_descartados. Não herda '
+  'forma_de_controle (registra no evento) e resolve as pendências de forma e de papel da absorvida.';
+
+insert into instalacao_requisito
+  (chave, migration, tipo, objeto, marcador, criterio_seed, porque, severidade, ordem) values
+  ('fusao_preserva_controle_declarado', '0183', 'corpo', 'fn_fundir_entidade',
+   'update entidade_controlador set entidade_id = p_para_id', null,
+   'A fusão de entidades (0153) apagava por cascata os vínculos de controle declarados na absorvida, '
+   'e fn_grupo_por_controle_comum passava a devolver um grupo menor sem erro. Reproduzido em '
+   '24/09/2026: 1 vínculo antes da fusão, 0 depois. Ausente este trecho, a 0183 não foi aplicada '
+   'ou uma reemissão posterior de fn_fundir_entidade voltou ao corpo da 0153.',
+   'importante', 778)
+on conflict (chave) do update set
+  migration = excluded.migration, tipo = excluded.tipo, objeto = excluded.objeto,
+  marcador = excluded.marcador, criterio_seed = excluded.criterio_seed,
+  porque = excluded.porque, severidade = excluded.severidade, ordem = excluded.ordem;
+
 -- O REPARO ESCREVE A PRÓPRIA OBSERVAÇÃO. Sem isso, em produção a linha terminaria em "cobertura até
 -- 0188" com o texto da 0182 ao lado: o reparo só subia o marcador, e o update da 0183 logo abaixo,
 -- sendo mais antigo que 0188, era preservado-fora pelo gatilho junto com a observação dele. SIMULADO

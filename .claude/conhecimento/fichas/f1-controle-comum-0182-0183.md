@@ -7,6 +7,8 @@ toca:
   - Supabase/test/entidade_controlador.test.sql
   - Supabase/test/entidade_forma_de_controle.test.sql
   - Supabase/test/instalacao_cobertura_nao_regride.test.sql
+  - Supabase/test/fusao_preserva_controle.test.sql
+  - Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql
   - Supabase/test/sonda-producao.mjs
 ancora:
   - Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql#public.fn_pendencia_forma_de_controle_backfill(p_caso_id
@@ -34,7 +36,9 @@ indistinguível de "ninguém cadastrou".
   `controle_comum`), com duas guardas: `check` de coerência com `controladora_id`, e gatilho que
   exige vínculo para `controle_comum`. Um quarto rótulo (capital pulverizado) foi considerado e
   RECUSADO por falta de medição. Também carrega o gatilho que impede o marcador de cobertura da
-  sonda de regredir, e o reparo dele.
+  sonda de regredir, e o reparo dele. E reemite `fn_fundir_entidade` (0153): a fusão de entidades
+  apagava por cascata o vínculo de controle da absorvida (achado do /revisar de 24/09) — agora o
+  leva quando a sobrevivente não tem nenhum, e registra no evento quando ela já tem.
 
 ## Medição (regra 2), remedida contra o código final
 
@@ -46,6 +50,7 @@ indistinguível de "ninguém cadastrou".
 | 0183 gatilho do vínculo | 4 de 24 (2 diretos, 2 por cascata) |
 | 0183 backfill respeita a triagem | 1 de 24, e 1 na sonda |
 | 0183 marcador não regride | 2 de 3 |
+| 0183 fusão preserva o controle | 6 de 8 |
 
 ## Três coisas que só a execução revelou
 
@@ -57,6 +62,11 @@ indistinguível de "ninguém cadastrou".
 3. **Com o dado real, o modelo dá DOIS grupos de dois, não um de oito.** Unir os dois exigiria
    afirmar que sócios de mesmo sobrenome são um bloco familiar — juízo, não medição. O critério do
    roadmap foi revisado por isso (§12.2).
+4. **Tabela nova com FK `on delete cascade` para `entidade` herda todo `delete from entidade`.** A
+   fusão (0153) é o único que roda sozinho, e ninguém a revisou quando a 0182 nasceu: o controle
+   declarado sumia sem erro. Quem cria tabela que aponta para `entidade` confere `fn_fundir_entidade`.
+   A `0180` (perímetro) e a `0181` (`controladora_id`, sem cascata: a fusão FALHA se outra entidade
+   aponta para a absorvida) têm o mesmo ponto cego e ficaram fora desta fatia.
 
 ## O que depende do dono
 
