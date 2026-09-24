@@ -17,8 +17,9 @@
 -- pelo default de `p_escopo`. Portão que acusa à toa é portão que se aprende a
 -- ignorar, então ele confere a CHAMADA do jeito que o Postgres a resolveria.
 --
--- ESTE ARQUIVO É GERADO a partir dos nós Postgres de `N8N/workflow*.json`.
--- Se um nó mudar de consulta, regere — senão ele confere o passado.
+-- ESTE ARQUIVO É GERADO a partir dos nós Postgres de `N8N/workflow*.json`, por
+-- `node Supabase/conferir/gerar-conferir-chamadas.mjs`, e o CI reprova se ele
+-- divergir do commitado. Não edite à mão: regere.
 -- ═══════════════════════════════════════════════════════════════════════════
 create temp table if not exists _conferir(no text, chamada text, resolve boolean, erro text);
 truncate _conferir;
@@ -28,10 +29,13 @@ declare
   alvos text[][] := array[
     ['workflow.e1-ingestao.json · Upsert Caso (Postgres)', 'select fn_upsert_caso($1::text) as caso_id, (select limiar_auto_clear from estagio_autonomia where estagio = ''classificacao_doc_checklist'') as limiar_classificacao'],
     ['workflow.e1-ingestao.json · Registrar Recusa', 'select fn_registrar_falha_execucao($1::uuid, $2::text, $3::text, $4::text, null) as r'],
-    ['workflow.e1-ingestao.json · Registrar Documento', 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text, p_fingerprint_extracao=>$15::text) as r'],
+    ['workflow.e1-ingestao.json · Registrar Documento', 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text, p_fingerprint_extracao=>$15::text, p_cnpj=>$16::text) as r'],
     ['workflow.e1-ingestao.json · Recomputar Completude', 'select fn_recomputar_completude($1::uuid) as resultado'],
-    ['workflow.e1-ingestao.json · Gravar Campos (Sombra)', 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text, p_tem_dado_financeiro=>$4::boolean) as n_campos, $5::uuid as documento_id, $1::uuid as documento_versao_id, $6::jsonb as diagnostico'],
-    ['workflow.e1-ingestao.json · Registrar Diagnostico', 'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado, fn_registrar_fatos($2::uuid,$12::jsonb) as fatos, $1::uuid as documento_id'],
+    ['workflow.e1-ingestao.json · Gravar Campos (Sombra)', 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text, p_tem_dado_financeiro=>$4::boolean) as n_campos,
+       $5::uuid as documento_id, $1::uuid as documento_versao_id, $6::jsonb as diagnostico'],
+    ['workflow.e1-ingestao.json · Registrar Diagnostico', 'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text, p_cnpj=>$13::text) as resultado,
+       fn_registrar_fatos($2::uuid,$12::jsonb) as fatos,
+       $1::uuid as documento_id'],
     ['workflow.e1-ingestao.json · Reconciliar (Classe A)', 'select fn_reconciliar_por_documento($1::uuid, ''documento'') as resultado'],
     ['workflow.e1-ingestao.json · Reconciliar Lote', 'select fn_reconciliar_caso($1::uuid) as resultado'],
     ['workflow.e1-ingestao.json · Gravar Uso do Lote', 'select fn_registrar_uso_lote($1::uuid,$2::text,$3::jsonb) as resultado'],

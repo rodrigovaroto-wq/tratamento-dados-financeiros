@@ -452,6 +452,22 @@ jobs:
         # `.rpc()` com typo) para de esperar produção para aparecer.
         run: CONFERIR_DB=tdf_test node Supabase/test/conferir-chamadas.mjs
 
+      - name: O conferidor em SQL (o que o dono cola no SQL Editor) é gerado e diz PODE RODAR
+        # `Supabase/conferir/conferir_chamadas.sql` se dizia gerado e não tinha
+        # gerador: em 24/09/2026, 3 das 15 consultas já diferiam do workflow (dois
+        # nós tinham ganhado `p_cnpj`, que tem default — a cópia velha dizia PODE
+        # RODAR num banco sem ele). Agora ele sai de `gerar-conferir-chamadas.mjs`,
+        # que lê os nós pelo MESMO módulo do `conferir-chamadas.mjs`; o `git diff`
+        # prende o commitado ao gerado, e executá-lo aqui prova que o arquivo que
+        # se cola funciona. Medido: com o .sql antigo, o `git diff` reprova nas 3.
+        run: |
+          node Supabase/conferir/gerar-conferir-chamadas.mjs > Supabase/conferir/conferir_chamadas.sql
+          git diff --exit-code -- Supabase/conferir/conferir_chamadas.sql \
+            || { echo "::error::conferir_chamadas.sql diverge do gerado — rode o gerador e commite"; exit 1; }
+          psql -d tdf_test -X -v ON_ERROR_STOP=1 -f Supabase/conferir/conferir_chamadas.sql | tee /tmp/conferir.out
+          grep -q "PODE RODAR" /tmp/conferir.out \
+            || { echo "::error::o conferidor em SQL não disse PODE RODAR no banco completo"; exit 1; }
+
       - name: A sonda do buraco no meio não dá alarme falso num banco completo
         # CONTROLE POSITIVO da detecção de buraco da `sonda-producao.mjs` (PR #238). Contra
         # este banco, montado com TODAS as migrations, a resposta tem de ser zero buracos.

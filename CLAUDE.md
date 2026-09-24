@@ -99,6 +99,9 @@ node N8N/medir-custo-book.mjs
 # geradores — o gerado TEM de ficar igual ao commitado (`git diff --exit-code`)
 node N8N/build-workflow.mjs && node N8N/build-workflow-macro.mjs \
   && node N8N/build-workflow-diagnostico.mjs && node N8N/build-workflow-erros.mjs
+# e o conferidor em SQL que se cola no SQL Editor, gerado dos mesmos nós Postgres (24/09/2026)
+node Supabase/conferir/gerar-conferir-chamadas.mjs > Supabase/conferir/conferir_chamadas.sql \
+  && git diff --exit-code -- Supabase/conferir/conferir_chamadas.sql
 # E AS FIXTURES DO BOOK, que faltavam aqui até 16/09 (F0, fatia 0.4): as TRÊS pontas se comparam
 # entre si — o `.sql` do banco, o `.json` do export e o gabarito. Desincronizar uma faz as outras
 # duas mentirem sobre a terceira, e foi o que aconteceu em 19/08.

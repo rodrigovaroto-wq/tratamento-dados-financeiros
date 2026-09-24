@@ -25,7 +25,8 @@ const regras = [
     aviso:
       "Você tocou a fonte dos workflows. Rode os QUATRO geradores e confira `git diff --exit-code -- N8N/`: " +
       "é o JSON commitado que o dono importa. E `node --test 'N8N/test/*.test.mjs'` — um backtick num " +
-      "comentário do `jsCode` quebra o nó, e o gerador não parseia.",
+      "comentário do `jsCode` quebra o nó, e o gerador não parseia. Se mudou a consulta de um nó Postgres, " +
+      "regere também `Supabase/conferir/conferir_chamadas.sql` (`node Supabase/conferir/gerar-conferir-chamadas.mjs`).",
   },
   {
     // Era `db/migrations/`, diretório que este repositório não tem desde a renomeação.
