@@ -359,14 +359,18 @@ for d in docs:
         "insert into documento_versao (id, documento_id, n_versao, arquivo_ref, nome_original, hash) "
         f"values ('{d['ver']}', '{d['doc']}', 1, 'fixture/{d['doc']}.pdf', "
         f"'{d['tipo']}.pdf', md5('{d['doc']}'));")
+    # `ordem` = posição da linha NO DOCUMENTO, a MESMA que o `--json` grava abaixo.
+    # Até 24/09/2026 só o `.json` a tinha: o banco via esta fixture como extração
+    # antiga (`ordem` nula, `migrations/0027`) e o export a via ordenada — as duas
+    # pontas descreviam coisas diferentes. `fixture-pontas.test.mjs` compara.
     vals = [
-        f"('{d['ver']}', {q(k)}, {n(v)}, {q(u)}, {n(cf)}, {q(s)}, {q(ca)}, {q(pcol)}, {q(ecol)}, 'aceito')"
-        for k, v, s, pcol, ecol, u, cf, ca in d["linhas"]
+        f"('{d['ver']}', {q(k)}, {n(v)}, {q(u)}, {n(cf)}, {q(s)}, {q(ca)}, {q(pcol)}, {q(ecol)}, {i}, 'aceito')"
+        for i, (k, v, s, pcol, ecol, u, cf, ca) in enumerate(d["linhas"])
     ]
     for i in range(0, len(vals), 150):
         out.append(
             "insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, confianca, "
-            "secao, secao_canonica, periodo_coluna, entidade_coluna, status_aceite) values\n  "
+            "secao, secao_canonica, periodo_coluna, entidade_coluna, ordem, status_aceite) values\n  "
             + ",\n  ".join(vals[i:i + 150]) + ";")
 out.append("commit;")
 
