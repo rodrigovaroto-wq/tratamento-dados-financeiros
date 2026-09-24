@@ -4,6 +4,28 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 100 (23–24/09/2026) — `0189` pronta, cataloga gatilhos com tipo `gatilho`
+
+**O que esta sessão fez, em ordem**
+
+1. **Migration 0189 escrita, testada com 17 asserts em igualdade de conjuntos, pronta para aplicação.** A sonda passa a catalogar gatilho POR SI, não pela função que ele chama — o defeito era que a função sobrevive a `drop trigger` e a `alter table ... disable trigger`. Migration reemite `fn_instalacao_conferir()` inteira a partir da 0147, cria tipo `gatilho` (objeto `tabela.nome_do_gatilho`, presente só com `tgenabled` in ('O','A')), cataloga os 6 gatilhos não-internos de main. Teste novo, `Supabase/test/sonda_ve_gatilho.test.sql`, prova igualdade de conjuntos: com gatilho desligado reprova 6 blocos, com 'R' aceito reprova 1, inteiro passa.
+
+2. **Risco estrutural: ordem de aplicação.** Cobertura declarada recua se 0182/0183/0187/0188 forem aplicadas DEPOIS da 0189 — cada uma grava `ate_migration` menor. Aplicar em ordem. Branch `origin/claude/inspiring-clarke-j339ju` tem 0187/0188 com "Aplicadas em produção" — NÃO CONFERIDO pela sonda.
+
+3. **F1.7 bloqueador (PR #238):** dois gatilhos novos. Sonda fica VERMELHO até eles serem catalogados com tipo `gatilho`. Deliberado — mergear sem catalogar deixa `run.sh` reprovando.
+
+4. **Medição de cobertura:** 17 asserts passando, CI verde (seis suítes, SonarCloud, Vercel). Portões confirmados: `indexar.mjs`, `conferir.mjs`, `verificar-comandos.mjs`, `verificar-espelho-claude-md.mjs`.
+
+### Onde estamos
+
+Três migrations prontas não aplicadas: 0185 (reprovada, redesenho estrutural), 0186 (suporte F2, pronta), 0189 (sonda, pronta). Nenhuma tocada em produção — sonda segue em 0181. F1.7 aberta em paralelo, bloqueia F1.7 se não catalogar seus dois gatilhos.
+
+### Próximos passos, em ordem
+
+1. **Aplicar a 0189** — sem dependências, função de sonda pura. Depois conferir com `select chave, objeto from fn_instalacao_conferir() where tipo='gatilho' and not presente`.
+2. **Aplicar a 0186** — com 3 consultas somente-leitura em `README.md` antes (uma pode mandar NÃO APLICAR).
+3. **Integrar a F1.7 quando a outra sessão entregar** — catalogar os 2 gatilhos novos com tipo `gatilho`, ou sonda fica VERMELHO.
+
 ## 🟡 SESSÃO 99 (21–22/09/2026) — F2 escolhida, `0185` reprovada, `0186` pronta e não aplicada
 
 ### O que esta sessão fez, em ordem

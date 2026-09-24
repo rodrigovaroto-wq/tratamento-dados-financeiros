@@ -1,13 +1,13 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-## SESSÃO 99 (22/09/2026) — F2 escolhida, `0185` rejeitada na medição, `0186` pronta para aplicação
+## SESSÃO 100 (23–24/09/2026) — `0189` pronta, cataloga gatilhos com tipo `gatilho`
 
 ### Estado atual de produção e repositório
 
 | | |
 |---|---|
 | **Última migration APLICADA** | `0181_o_controle_que_a_entidade_nunca_registrava.sql` (F1.5) — sonda responde `ate_migration = 0181`, conferido em 18/09/2026 |
-| **Migrations PRONTAS mas NÃO APLICADAS** | `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — REPROVADA na medição contra produção) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte, PRONTA, testes verdes, aguarda aplicação) · `0189_o_gatilho_que_a_sonda_nao_via.sql` (a sonda passa a ver GATILHO, não só a função que ele chama — catálogo dos seis gatilhos de `main`; PRONTA, `run.sh` verde, aguarda aplicação) |
+| **Migrations PRONTAS mas NÃO APLICADAS** | `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — REPROVADA na medição contra produção) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte, PRONTA, testes verdes, aguarda aplicação) · `0189_o_gatilho_que_a_sonda_nao_via.sql` (a sonda passa a ver GATILHO como tipo novo, não só a função que ele chama — catálogo dos seis gatilhos não-internos de `main`; PRONTA, `run.sh` verde, 17 asserts, aguarda aplicação) |
 | **Decisão do dono, 21/09/2026** | **F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b**. Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás" |
 
 ### Entrega 1: Migration `0186` — motivo da precondição para deixar de ser jogado fora
@@ -37,6 +37,20 @@ E o outro lado erra junto: 22 dos 47 que "passam" se satisfazem por UMA linha re
 **Próximo passo: REDESENHO, não conserto de termo.** Para tipo itemizado a pergunta é estrutural (quantas linhas com valor, eixo esperado do relatório) ou nenhuma (assumir `item_sem_conteudo` 0036 cobre "chegou vazio"). A `0185` fica no repositório não aplicada até essa decisão. **DECISÃO DO DONO: os nove tipos ficam COMPLEMENTARES, não bloqueante.**
 
 **Suspeita aberta (NÃO investigada):** MUTUOS e FAT_INTRAGRUPO (exigências `proposta` da `0113` em produção desde então) também reprovam contra fixture — pode ser o mesmo defeito de termo/seção, mais antigo.
+
+### Entrega 3: Migration `0189` — a sonda passa a catalogar o gatilho por si, não pela função que ele chama
+
+**Escrita, testada localmente com 17 asserts em igualdade de conjuntos, revisada, pronta para aplicação.**
+
+`fn_instalacao_conferir()` tinha seis tipos de requisito (tabela, coluna, função, corpo, seed, comportamento) e **nenhum para "o gatilho está instalado e ligado".** Quando o catálogo precisava afirmar isso, catalogava a FUNÇÃO do gatilho — e a função sobrevive a `drop trigger` e a `alter table ... disable trigger`, tornando a sonda cega a esse risco. Um DBA depurando um deadlock ou uma restauração parcial de backup pode desligar a guarda e a sonda continua vendo "presente", porque o que ela mediu nunca foi o vínculo.
+
+Migration 0189 cria o tipo `gatilho` (objeto `tabela.nome_do_gatilho`, presente só com `tgenabled` em 'O'/'A'), reemite a função inteira a partir da 0147 (que já contém a 0132), cataloga os 6 gatilhos não-internos de main: `trg_auto_promover_dial` (0137), `trg_entidade_ambigua` (0153), `trg_entidade_ativa` (0126), `trg_entidade_controle_unico` (0126), `trg_entidade_papel_obrigatorio` (0126), `trg_entidade_papel_unico` (0126).
+
+Teste novo `Supabase/test/sonda_ve_gatilho.test.sql` (17 asserts) prova igualdade de conjuntos entre `pg_trigger` (não-internos) e o catálogo: com o ramo `gatilho` desligado (`v_ok := true`), reprova 6 blocos; com 'R' aceito como habilitado, reprova 1; rodado inteiro, passa. `run.sh` verde em 24/09 após o último commit.
+
+**Risco estrutural (registrado como ficha):** cobertura declarada pode andar para trás em produção se 0182/0183/0187/0188 forem aplicadas DEPOIS da 0189 — cada uma grava `ate_migration` menor. **Aplicar em ordem numérica.** Nota: branch `origin/claude/inspiring-clarke-j339ju` tem 0187/0188 com commit "Aplicadas em produção 0186 → 0187 → 0188" — **NÃO CONFERIDO** pela sonda nesta rodada.
+
+**F1.7 bloqueador (PR #238):** contém `trg_entidade_controlador_soma_maxima` e `trg_entidade_forma_de_controle_tem_vinculo`. O `run.sh` (teste `sonda_ve_gatilho`, igualdade de conjuntos) ficará VERMELHO até esses dois serem catalogados com tipo `gatilho`. **Deliberado** — mergear o PR #238 sem catalogar os dois gatilhos deixa o `run.sh` reprovando.
 
 ### Medição da camada de reconciliação — o que reprovaria F2 hoje
 
@@ -77,7 +91,11 @@ E o outro lado erra junto: 22 dos 47 que "passam" se satisfazem por UMA linha re
 
 ### O que o dono faz à mão
 
-**Aplicar `0186`:** `supabase db execute --file Supabase/migrations/0186_...sql`, precedido de 3 consultas somente-leitura em `Supabase/README.md` — uma pode mandar NÃO APLICAR. Depois: consulta de pós-apply que conta preenchidas × NULL. **Aplicar `0185` NÃO — ficou no repositório não aplicada até redesenho.** Nenhum workflow tocado, nenhuma republicação, nenhum deploy do portal.
+**Aplicar `0189`:** `supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql`. Depois: `select chave, objeto, detalhe from fn_instalacao_conferir() where tipo='gatilho' and not presente` deve voltar vazio. Nenhum workflow, nenhuma republicação, nenhum deploy do portal.
+
+**Aplicar `0186`:** `supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql`, precedido de 3 consultas somente-leitura em `Supabase/README.md` — uma pode mandar NÃO APLICAR. Depois: consulta de pós-apply que conta `motivo_precondicao` preenchidas × NULL. Nenhum workflow, nenhuma republicação, nenhum deploy do portal.
+
+**Aplicar `0185` NÃO** — ficou no repositório não aplicada até redesenho estrutural.
 >
 > **O susto do handoff anterior, registrado aqui porque é o motivo de todo este rigor**: ao
 > retomar, a sessão da fatia 1.3 encontrou no remoto DUAS versões divergentes da mesma migration
