@@ -29,6 +29,14 @@ procure quadrático, barreira, e estágio que nunca ligou.
 Separe sempre "o estágio rodou" de "o estágio não achou nada": os dois têm a mesma aparência, e é o
 defeito mais caro daqui.
 
+**Antes de editar uma função, liste TODOS os chamadores dela** — nas três pontas, porque aqui a
+mesma função SQL é chamada por nó do n8n, pelo portal e por outra função
+(`grep -rn <nome> Supabase/ N8N/ portal/src/`). O sintoma nomeia um caminho só: a correção que
+protege só esse caminho deixa os irmãos quebrados, e a que muda a semântica da função muda a de
+todos eles — foi assim que `custoEstimadoPorTamanho`, promovida a decisora por documento, passou a
+cobrar 46× menos e reabriu o v31 (`.claude/memory/conta-parcial-vira-v31-quando-promovida.md`).
+Corrija uma vez, no ponto por onde todos passam.
+
 ## 3. Planejar em fatias
 
 Uma fatia por commit. Para cada uma: o defeito, a causa medida, o invariante que vai prová-la, e
@@ -39,6 +47,10 @@ Delegar só quando o checklist do domínio for o que decide o resultado; caso co
 novo custa mais do que rende. (As citações são nesta grafia de propósito: é assim que
 `verificar-comandos.mjs` confere que o nome ainda existe. Em prosa, um agente renomeado passa
 pelo portão e falha na hora do despacho.)
+
+Antes de planejar função, helper ou nó novo, confirme que ele ainda não existe (`buscar.mjs` sobre o
+que ele FAZ, não sobre o nome que você daria): reimplementar o que mora dois arquivos adiante produz
+duas versões da mesma conta, e elas divergem sem erro nenhum.
 
 Onda paralela só quando **as duas** condições valem (sem dependência **e** `Files:` disjuntos,
 derivados incluídos) — `Arquitetura do Sistema/5 Prompts/03-onda-paralela.md`.
