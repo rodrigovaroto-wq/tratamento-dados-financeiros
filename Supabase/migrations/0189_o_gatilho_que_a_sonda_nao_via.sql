@@ -62,8 +62,9 @@ alter table instalacao_requisito
 comment on column instalacao_requisito.tipo is
   'tabela/funcao: o nome. coluna: tabela.coluna. corpo: o nome da função, com marcador de CÓDIGO '
   '(pg_get_functiondef tem de conter o trecho). seed: tabela (criterio_seed diz o quanto se '
-  'espera). comportamento: tabela cuja existência de LINHA é a prova — não sonda catálogo, só '
-  'efeito. gatilho (0189): tabela.nome_do_gatilho — presente exige o gatilho existir E estar '
+  'espera). comportamento: tabela cuja existência de LINHA é a prova — é o único que não sonda o '
+  'catálogo, porque alguns requisitos não são de banco (reimportar o workflow do n8n) e só se '
+  'provam pelo EFEITO: a tabela que aquele nó grava tem linha. gatilho (0189): tabela.nome_do_gatilho — presente exige o gatilho existir E estar '
   'habilitado para disparar em sessão normal (tgenabled em ''O'' ou ''A''; ver o ramo da sonda '
   'para o porquê de ''R'' não contar). A função do gatilho NÃO serve como prova: ela sobrevive a '
   '`drop trigger` e a `alter table ... disable trigger`, que é exatamente o defeito que este tipo '
