@@ -44,3 +44,11 @@ __pycache__/
 # 14 credenciais e o path público do intake. Hoje o script escreve em mktemp,
 # mas quem rodou a versão de 09/09 pode ter o arquivo na raiz.
 publicar.json
+
+# CONFIGURAÇÃO PESSOAL DO CLAUDE CODE. `settings.local.json` é, pela convenção do Claude Code, o
+# arquivo de CADA máquina — o que vale para todos mora em `.claude/settings.json`. Ele esteve
+# versionado até 24/09/2026 e carregava, para todo clone e toda sessão, a liberação sem prompt de
+# `mcp__Supabase__execute_sql` e `mcp__Supabase__apply_migration` (commit 3b9292e) — contra a
+# disciplina medida em `.claude/memory/auto-mode-recusa-migration-producao.md`, em que o dono
+# aprova cada apply à mão. Quem quiser a liberação na própria máquina, cria o arquivo localmente.
+.claude/settings.local.json
