@@ -43,20 +43,22 @@
 -- corpo do commit que introduziu este arquivo):
 --
 --   * o ramo `gatilho` devolvendo `v_ok := true` sem consultar `pg_trigger`
---     (simula "a sonda não olha gatilho"): 6 FALHOU, os seis casos b–g, 4 ok
---     (os de a e o primeiro de g, que não dependem da sonda) —
+--     (simula "a sonda não olha gatilho"): 6 FALHOU, os seis casos b–g, 6 ok
+--     (os três de a, o de a2 e os dois primeiros de g, que não dependem da
+--     sonda ter ramo de gatilho) —
 --     b/c/d/e porque a sonda para de acusar o gatilho ausente, f porque o
 --     requisito sobre tabela inexistente vira "presente", g porque o último
 --     assert (a sonda acusa depois do drop) cai.
 --   * o ramo aceitando 'R' junto com 'O'/'A' (equivale a `tgenabled <> 'D'`):
---     1 FALHOU, 13 ok — o caso d sozinho, o único que distingue 'R' de 'O'/'A'.
+--     1 FALHOU, 15 ok — o caso d sozinho, o único que distingue 'R' de 'O'/'A'.
 --   COMO FOI MEDIDO, para reproduzir: a linha `\set ON_ERROR_STOP on` abaixo
 --   SOBRESCREVE o `-v ON_ERROR_STOP=0` da linha de comando, então ela foi
 --   removida na medição (`sed 's/^\\set ON_ERROR_STOP.*//' arquivo | psql -v
 --   ON_ERROR_STOP=0`). Cada bloco `do` para no primeiro assert que falha: o
---   número acima conta BLOCOS reprovados, não asserts. Ligado: 15 ok, 0 FALHOU
---   (antes dos dois asserts de completude/ALWAYS acrescentados depois da
---   revisão, que vivem no bloco a e no a2).
+--   número acima conta BLOCOS reprovados, não asserts. Ligado: 17 ok, 0 FALHOU.
+--   Só 'O' aceito (sem 'A'): 1 FALHOU (a2), 16 ok. Gatilho criado fora do
+--   catálogo: 1 FALHOU (a, igualdade de conjuntos). Remedido em 24/09 com 17
+--   asserts, pela revisão independente e pela sessão principal.
 
 \set ON_ERROR_STOP on
 

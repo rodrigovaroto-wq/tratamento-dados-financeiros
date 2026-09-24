@@ -12,19 +12,19 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
 2. **Risco estrutural: ordem de aplicação.** Cobertura declarada recua se 0182/0183/0187/0188 forem aplicadas DEPOIS da 0189 — cada uma grava `ate_migration` menor. Aplicar em ordem. Branch `origin/claude/inspiring-clarke-j339ju` tem 0187/0188 com "Aplicadas em produção" — NÃO CONFERIDO pela sonda.
 
-3. **F1.7 bloqueador (PR #238):** dois gatilhos novos. Sonda fica VERMELHO até eles serem catalogados com tipo `gatilho`. Deliberado — mergear sem catalogar deixa `run.sh` reprovando.
+3. **F1.7 bloqueador (PR #238):** TRÊS gatilhos novos (`trg_entidade_controlador_soma_maxima`, `trg_entidade_forma_de_controle_tem_vinculo`, `trg_instalacao_cobertura_nao_regride`). O `run.sh` fica VERMELHO até os três serem catalogados com tipo `gatilho` — a sonda de produção não muda. Deliberado.
 
-4. **Medição de cobertura:** 17 asserts passando, CI verde (seis suítes, SonarCloud, Vercel). Portões confirmados: `indexar.mjs`, `conferir.mjs`, `verificar-comandos.mjs`, `verificar-espelho-claude-md.mjs`.
+4. **Medição:** 17 asserts passando. CI do `pull_request` verde; um run de `push` no mesmo SHA reprovou em `N8N/test/workflow-macro-sim.test.mjs` por corrida de leitura com `macro.test.mjs`, que regera o JSON durante a suíte (fora do diff; ver o PR #242). Portões confirmados: `indexar.mjs`, `conferir.mjs`, `verificar-comandos.mjs`, `verificar-espelho-claude-md.mjs`.
 
 ### Onde estamos
 
-Três migrations prontas não aplicadas: 0185 (reprovada, redesenho estrutural), 0186 (suporte F2, pronta), 0189 (sonda, pronta). Nenhuma tocada em produção — sonda segue em 0181. F1.7 aberta em paralelo, bloqueia F1.7 se não catalogar seus dois gatilhos.
+Três migrations prontas não aplicadas: 0185 (reprovada, redesenho estrutural), 0186 (suporte F2, pronta), 0189 (sonda, pronta). O estado de produção é **NÃO CONFERIDO** nesta rodada: a sonda desta branch conferiu `0181` em 18/09, mas as branches irmãs registram `0186`–`0188` aplicadas em 22/09 e a `0182` depois delas, em 23/09. Rode `fn_instalacao_conferir()` contra produção antes de aplicar. F1.7 aberta em paralelo, bloqueia F1.7 se não catalogar seus dois gatilhos.
 
 ### Próximos passos, em ordem
 
 1. **Aplicar a 0189** — sem dependências, função de sonda pura. Depois conferir com `select chave, objeto from fn_instalacao_conferir() where tipo='gatilho' and not presente`.
-2. **Aplicar a 0186** — com 3 consultas somente-leitura em `README.md` antes (uma pode mandar NÃO APLICAR).
-3. **Integrar a F1.7 quando a outra sessão entregar** — catalogar os 2 gatilhos novos com tipo `gatilho`, ou sonda fica VERMELHO.
+2. **A 0186 provavelmente já está aplicada** (branch irmã, 22/09) — confira pela sonda antes; só se ausente, aplique com as 3 consultas somente-leitura do `README.md` antes.
+3. **Integrar a F1.7 quando a outra sessão entregar** — catalogar os 3 gatilhos novos com tipo `gatilho`, ou o `run.sh` fica VERMELHO.
 
 ## 🟡 SESSÃO 99 (21–22/09/2026) — F2 escolhida, `0185` reprovada, `0186` pronta e não aplicada
 

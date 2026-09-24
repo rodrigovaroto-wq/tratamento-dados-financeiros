@@ -259,7 +259,8 @@ $$;
 comment on function fn_instalacao_conferir() is
   'Confere cada requisito de instalacao_requisito contra o catálogo do banco. Sobrevive ao objeto '
   'ausente (to_regclass/to_regproc devolvem NULL em vez de erro): a sonda não pode falhar por causa '
-  'do que ela existe para medir. Desde a 0147 confere também o CORPO da função (tipo=corpo). Desde '
+  'do que ela existe para medir. Desde a 0147 confere também o CORPO da função (tipo=corpo), que é '
+  'o único jeito de distinguir uma correção aplicada de uma função homônima com o corpo velho. Desde '
   'a 0189 confere também GATILHO (tipo=gatilho): existência na tabela E tgenabled em (''O'',''A'') '
   '— a função do gatilho sobrevive a drop trigger/disable trigger e por isso NUNCA prova, sozinha, '
   'que a guarda está ligada.';
@@ -274,14 +275,15 @@ grant execute on function fn_instalacao_conferir() to authenticated;
 -- 0186 (a mais nova antes desta). São exatamente seis; nenhum outro existe em
 -- `main` hoje.
 --
--- OS DOIS GATILHOS DA F1.7 (`entidade_controlador.trg_entidade_controlador_
--- soma_maxima`, `entidade.trg_entidade_forma_de_controle_tem_vinculo`) NÃO
--- ENTRAM AQUI: eles vivem no PR #238, ainda não mergeado em `main`, e
--- catalogá-los agora faria `instalacao.test.sql` reprovar neste banco (que
--- não os tem). QUEM MERGEAR/RENUMERAR A F1.7 deve acrescentá-los com
--- `tipo = 'gatilho'`, mesmo padrão deste bloco — `objeto` é
--- `entidade_controlador.trg_entidade_controlador_soma_maxima` e
--- `entidade.trg_entidade_forma_de_controle_tem_vinculo`.
+-- OS TRÊS GATILHOS DA F1.7 NÃO ENTRAM AQUI: eles vivem no PR #238, ainda não
+-- mergeado em `main`, e catalogá-los agora faria `instalacao.test.sql`
+-- reprovar neste banco (que não os tem). QUEM MERGEAR/RENUMERAR A F1.7 deve
+-- acrescentá-los com `tipo = 'gatilho'`, mesmo padrão deste bloco — e o
+-- `sonda_ve_gatilho.test.sql` REPROVA até isso ser feito (igualdade de
+-- conjuntos entre pg_trigger e o catálogo). Os `objeto`:
+--   `entidade_controlador.trg_entidade_controlador_soma_maxima` (0182)
+--   `entidade.trg_entidade_forma_de_controle_tem_vinculo` (0183)
+--   `instalacao_cobertura.trg_instalacao_cobertura_nao_regride` (0183)
 --
 -- SEVERIDADE: as quatro guardas do golden set (rodada/documento/rótulo/campo
 -- congelados) e o gatilho de entidade ambígua ficam 'importante', não
@@ -301,26 +303,26 @@ insert into instalacao_requisito
    'Uma rodada golden CONGELADA aceita descongelar, mudar de nome ou de taxonomia — o número que '
    'o dial de autonomia mede deixa de ser reprodutível, porque o conjunto que o sustenta pode ter '
    'mudado depois da medição sem deixar rastro.',
-   'importante', 790),
+   'importante', 800),
 
   ('gatilho_guarda_documento_congelada', '0126', 'gatilho',
    'golden_documento.trg_golden_documento_congelada', null,
    'Uma rodada golden CONGELADA aceita documento novo dentro dela — o conjunto que sustentou uma '
    'medição do dial deixa de ser o mesmo conjunto quando alguém for reproduzi-la.',
-   'importante', 791),
+   'importante', 801),
 
   ('gatilho_guarda_rotulo_congelada', '0126', 'gatilho',
    'golden_rotulo.trg_golden_rotulo_congelada', null,
    'Uma rodada golden CONGELADA aceita rótulo novo — o gabarito contra o qual o sistema é medido '
    'muda depois de a rodada já ter produzido um veredito, e o veredito anterior fica '
    'silenciosamente desatualizado.',
-   'importante', 792),
+   'importante', 802),
 
   ('gatilho_guarda_campo_congelada', '0126', 'gatilho',
    'golden_campo.trg_golden_campo_congelada', null,
    'Uma rodada golden CONGELADA aceita campo novo — mesmo defeito do rótulo: o gabarito de uma '
    'medição já fechada muda por baixo, e ninguém que olhar o resultado antigo vai saber.',
-   'importante', 793),
+   'importante', 803),
 
   ('gatilho_da_promocao_dispara', '0137', 'gatilho',
    'decisao.trg_auto_promover_dial', null,
@@ -329,14 +331,14 @@ insert into instalacao_requisito
    'não produz efeito nenhum — pior que não ter promoção automática, porque parece ligada. (Este '
    'requisito complementa `gatilho_da_promocao`, tipo funcao/0137, que confere só a função — os '
    'dois juntos é que fecham o caso: função existe E está de fato amarrada ao gatilho.)',
-   'importante', 794),
+   'importante', 804),
 
   ('gatilho_entidade_ambigua_dispara', '0153', 'gatilho',
    'documento.trg_entidade_ambigua', null,
    'A pendência de entidade ambígua depende deste gatilho para abrir — sem ele, um documento que '
    'chega com entidade ambígua não gera pendência nenhuma, e a ambiguidade fica resolvida em '
    'silêncio pelo primeiro palpite, sem que ninguém decida.',
-   'importante', 795),
+   'importante', 805),
 
   -- ---- o requisito CORPO que prova que esta própria reemissão está no ar ----
   --
@@ -352,7 +354,7 @@ insert into instalacao_requisito
    'A sonda de instalação não vê gatilho desligado: `drop trigger`/`disable trigger` numa guarda '
    'do golden set ou da promoção do dial passa despercebido, porque o único requisito que existia '
    'para essas guardas era sobre a FUNÇÃO — que sobrevive aos dois.',
-   'importante', 796)
+   'importante', 806)
 
 on conflict (chave) do update
   set migration = excluded.migration,
@@ -374,6 +376,6 @@ update instalacao_cobertura
          '(0137, complementa gatilho_da_promocao que já existia como tipo funcao) e o gatilho de '
          'entidade ambígua (0153). A função do gatilho sobrevive a drop trigger/disable trigger, '
          'então nenhum desses seis tinha prova real de estar LIGADO antes desta migration — só de '
-         'a função existir. Os dois gatilhos da F1.7 (PR #238, não mergeado) ficam de fora até o '
+         'a função existir. Os três gatilhos da F1.7 (PR #238, não mergeado) ficam de fora até o '
          'merge; quem mergear os acrescenta com o mesmo tipo gatilho.'
  where id = true;

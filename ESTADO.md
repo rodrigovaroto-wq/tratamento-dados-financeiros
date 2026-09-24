@@ -6,8 +6,8 @@
 
 | | |
 |---|---|
-| **Última migration APLICADA** | `0181_o_controle_que_a_entidade_nunca_registrava.sql` (F1.5) — sonda responde `ate_migration = 0181`, conferido em 18/09/2026 |
-| **Migrations PRONTAS mas NÃO APLICADAS** | `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — REPROVADA na medição contra produção) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte, PRONTA, testes verdes, aguarda aplicação) · `0189_o_gatilho_que_a_sonda_nao_via.sql` (a sonda passa a ver GATILHO como tipo novo, não só a função que ele chama — catálogo dos seis gatilhos não-internos de `main`; PRONTA, `run.sh` verde, 17 asserts, aguarda aplicação) |
+| **Última migration APLICADA** | **NÃO CONFERIDO nesta rodada** — a última conferência pela sonda desta branch é `0181` (18/09/2026), mas duas branches irmãs registram aplicação depois disso: `origin/claude/inspiring-clarke-j339ju` (commit `1824891`, 22/09) diz `0186` → `0187` → `0188` aplicadas, com backfill 5.023/5.023; e a `0183` da F1.7 (`origin/claude/amazing-galileo-x1qnsn`) registra a `0182` aplicada em produção DEPOIS da `0188`, em 23/09. Quem responde é `fn_instalacao_conferir()` contra produção — rode-a antes de aplicar qualquer coisa |
+| **Migrations PRONTAS mas NÃO APLICADAS** | `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — REPROVADA na medição contra produção) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte — segundo a branch irmã, JÁ APLICADA em 22/09; NÃO CONFERIDO aqui) · `0189_o_gatilho_que_a_sonda_nao_via.sql` (a sonda passa a ver GATILHO como tipo novo, não só a função que ele chama — catálogo dos seis gatilhos não-internos de `main`; PRONTA, `run.sh` verde, 17 asserts, aguarda aplicação) |
 | **Decisão do dono, 21/09/2026** | **F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b**. Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás" |
 
 ### Entrega 1: Migration `0186` — motivo da precondição para deixar de ser jogado fora
@@ -44,13 +44,13 @@ E o outro lado erra junto: 22 dos 47 que "passam" se satisfazem por UMA linha re
 
 `fn_instalacao_conferir()` tinha seis tipos de requisito (tabela, coluna, função, corpo, seed, comportamento) e **nenhum para "o gatilho está instalado e ligado".** Quando o catálogo precisava afirmar isso, catalogava a FUNÇÃO do gatilho — e a função sobrevive a `drop trigger` e a `alter table ... disable trigger`, tornando a sonda cega a esse risco. Um DBA depurando um deadlock ou uma restauração parcial de backup pode desligar a guarda e a sonda continua vendo "presente", porque o que ela mediu nunca foi o vínculo.
 
-Migration 0189 cria o tipo `gatilho` (objeto `tabela.nome_do_gatilho`, presente só com `tgenabled` em 'O'/'A'), reemite a função inteira a partir da 0147 (que já contém a 0132), cataloga os 6 gatilhos não-internos de main: `trg_auto_promover_dial` (0137), `trg_entidade_ambigua` (0153), `trg_entidade_ativa` (0126), `trg_entidade_controle_unico` (0126), `trg_entidade_papel_obrigatorio` (0126), `trg_entidade_papel_unico` (0126).
+Migration 0189 cria o tipo `gatilho` (objeto `tabela.nome_do_gatilho`, presente só com `tgenabled` em 'O'/'A'), reemite a função inteira a partir da 0147 (que já contém a 0132), cataloga os 6 gatilhos não-internos de main: as quatro guardas do golden set (0126) — `golden_rodada.trg_golden_rodada_imutavel`, `golden_documento.trg_golden_documento_congelada`, `golden_rotulo.trg_golden_rotulo_congelada`, `golden_campo.trg_golden_campo_congelada` —, `decisao.trg_auto_promover_dial` (0137) e `documento.trg_entidade_ambigua` (0153).
 
 Teste novo `Supabase/test/sonda_ve_gatilho.test.sql` (17 asserts) prova igualdade de conjuntos entre `pg_trigger` (não-internos) e o catálogo: com o ramo `gatilho` desligado (`v_ok := true`), reprova 6 blocos; com 'R' aceito como habilitado, reprova 1; rodado inteiro, passa. `run.sh` verde em 24/09 após o último commit.
 
-**Risco estrutural (registrado como ficha):** cobertura declarada pode andar para trás em produção se 0182/0183/0187/0188 forem aplicadas DEPOIS da 0189 — cada uma grava `ate_migration` menor. **Aplicar em ordem numérica.** Nota: branch `origin/claude/inspiring-clarke-j339ju` tem 0187/0188 com commit "Aplicadas em produção 0186 → 0187 → 0188" — **NÃO CONFERIDO** pela sonda nesta rodada.
+**Ordem de aplicação e o marcador de cobertura:** até a `0183` da F1.7, `instalacao_cobertura` aceita valor MENOR sem erro — e isso JÁ aconteceu em produção (a `0182` depois da `0188`, 23/09, registrado na própria `0183`). A `0183` cria `trg_instalacao_cobertura_nao_regride`, que ignora o rebaixamento, e o cria ANTES do próprio `update` — então, com ela aplicada, a ordem entre ela e a `0189` deixa de importar para o marcador. Sem ela, aplicar qualquer migration anterior depois da `0189` rebaixa o marcador em silêncio.
 
-**F1.7 bloqueador (PR #238):** contém `trg_entidade_controlador_soma_maxima` e `trg_entidade_forma_de_controle_tem_vinculo`. O `run.sh` (teste `sonda_ve_gatilho`, igualdade de conjuntos) ficará VERMELHO até esses dois serem catalogados com tipo `gatilho`. **Deliberado** — mergear o PR #238 sem catalogar os dois gatilhos deixa o `run.sh` reprovando.
+**F1.7 bloqueador (PR #238):** cria TRÊS gatilhos — `entidade_controlador.trg_entidade_controlador_soma_maxima` (0182), `entidade.trg_entidade_forma_de_controle_tem_vinculo` (0183) e `instalacao_cobertura.trg_instalacao_cobertura_nao_regride` (0183). O `run.sh` (teste `sonda_ve_gatilho`, igualdade de conjuntos) ficará VERMELHO até os três serem catalogados com tipo `gatilho`. **Deliberado** — é o assert que impede um gatilho novo de entrar sem requisito.
 
 ### Medição da camada de reconciliação — o que reprovaria F2 hoje
 
@@ -93,7 +93,7 @@ Teste novo `Supabase/test/sonda_ve_gatilho.test.sql` (17 asserts) prova igualdad
 
 **Aplicar `0189`:** `supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql`. Depois: `select chave, objeto, detalhe from fn_instalacao_conferir() where tipo='gatilho' and not presente` deve voltar vazio. Nenhum workflow, nenhuma republicação, nenhum deploy do portal.
 
-**Aplicar `0186`:** `supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql`, precedido de 3 consultas somente-leitura em `Supabase/README.md` — uma pode mandar NÃO APLICAR. Depois: consulta de pós-apply que conta `motivo_precondicao` preenchidas × NULL. Nenhum workflow, nenhuma republicação, nenhum deploy do portal.
+**`0186` — CONFIRA ANTES se já não está aplicada** (a branch irmã diz que sim, 22/09): `select presente from fn_instalacao_conferir() where migration = '0186'`. Só se ausente: `supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql`, precedido de 3 consultas somente-leitura em `Supabase/README.md` — uma pode mandar NÃO APLICAR. Depois: consulta de pós-apply que conta `motivo_precondicao` preenchidas × NULL. Nenhum workflow, nenhuma republicação, nenhum deploy do portal.
 
 **Aplicar `0185` NÃO** — ficou no repositório não aplicada até redesenho estrutural.
 >
