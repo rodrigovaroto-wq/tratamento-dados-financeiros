@@ -4,6 +4,20 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 101 (23–24/09/2026) — `0189`: a sonda vê gatilho; PR #242
+
+1. **`0189` escrita, medida e revisada duas vezes** (revisores independentes). A sonda passa a
+   catalogar o gatilho POR SI — a função do gatilho sobrevive a `drop`/`disable trigger`, então
+   conferir a função nunca provou que a guarda estava ligada. Nove gatilhos catalogados, incluindo
+   os três da F1.7, trazidos no merge do `main` depois do #240 e do #238.
+2. **Teste de 17 asserts com igualdade de conjuntos**: todo gatilho novo tem de entrar no
+   catálogo, senão o `run.sh` fica vermelho. Medição não-vazia no `ESTADO.md`.
+3. **Ordem em produção: `0183` antes da `0189`.** O estado de produção não foi conferido pela
+   sonda nesta sessão; o registrado pelas outras é `0186`–`0188` aplicadas em 22/09, `0182` em
+   23/09, `0183` pendente.
+
+---
+
 ## 🟡 SESSÃO 100 (22/09/2026) — F2: `0186`, `0187` e `0188` APLICADAS em produção; D6 VERDE em produção; F2.3 é a próxima fatia
 
 > **✅ APLICADAS EM PRODUÇÃO em 22/09/2026 (fim da S100): `0186` → `0187` → `0188`**, pela API de

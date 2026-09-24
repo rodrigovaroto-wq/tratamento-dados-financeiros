@@ -510,6 +510,19 @@ supabase db execute --file Supabase/migrations/0188_o_motivo_que_a_checagem_sabi
 #   select motivo_precondicao, count(*) from reconciliacao
 #    where not precondicoes_ok and criado_em > '<data do apply>' group by 1 order by 2 desc;
 
+# A 0189 DEPOIS DA 0183: ela cataloga os três gatilhos da F1.7, que só existem
+# com a 0182 e a 0183 aplicadas — sem a 0183, a sonda acusa dois deles
+# ausentes, o que é verdade (a guarda não está lá). IDEMPOTENTE: só catálogo
+# (instalacao_requisito_tipo_check + DEZ requisitos: nove de tipo gatilho e
+# o `sonda_ve_gatilho`, de tipo corpo) e a reemissão de fn_instalacao_conferir — sem efeito
+# em dado. Testes: Supabase/test/sonda_ve_gatilho.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql
+# DEPOIS DE APLICAR, confira que nenhum gatilho está DE FATO desligado em
+# produção — se este select devolver linha, é informação sobre o banco
+# (um `drop trigger`/`disable trigger` real), não um erro desta migration:
+#   select chave, objeto, detalhe from fn_instalacao_conferir()
+#    where tipo = 'gatilho' and not presente;
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

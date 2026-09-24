@@ -5426,14 +5426,16 @@ CREATE FUNCTION public.fn_instalacao_conferir() RETURNS TABLE(chave text, migrat
     LANGUAGE plpgsql STABLE
     AS $$
 declare
-  r         instalacao_requisito;
-  v_ok      boolean;
-  v_det     text;
-  v_n       bigint;
-  v_alvo    regclass;
-  v_crit    int;
-  v_proc    regproc;
-  v_src     text;
+  r            instalacao_requisito;
+  v_ok         boolean;
+  v_det        text;
+  v_n          bigint;
+  v_alvo       regclass;
+  v_crit       int;
+  v_proc       regproc;
+  v_src        text;
+  v_tg_enabled "char";
+  v_tg_fn      text;
 begin
   for r in select * from instalacao_requisito order by ordem, chave loop
     v_ok  := false;
@@ -5497,6 +5499,62 @@ begin
            and a.attnum    > 0
            and not a.attisdropped);
 
+    elsif r.tipo = 'gatilho' then
+      -- 0189: gatilho é catalogado POR SI, não pela função que ele chama.
+      --
+      -- POR QUE ISTO NÃO CABE NO TIPO `funcao`. A função de um gatilho
+      -- SOBREVIVE a `drop trigger` e a `alter table ... disable trigger` — o
+      -- exemplo já estava no catálogo antes deste tipo existir, em
+      -- `gatilho_da_promocao` (0137): a função `fn_trg_auto_promover_dial`
+      -- existe e nada garante que algo a chame. `objeto` aqui é
+      -- `tabela.nome_do_gatilho`; a tabela é resolvida primeiro, como em todo
+      -- ramo desta função — tabela ausente nunca pode virar exceção que
+      -- derruba a sonda inteira.
+      v_alvo := to_regclass('public.' || split_part(r.objeto, '.', 1));
+      if v_alvo is null then
+        v_ok  := false;
+        v_det := 'a tabela nem existe';
+      else
+        select tgenabled, tgfoid::regproc::text
+          into v_tg_enabled, v_tg_fn
+          from pg_trigger
+         where tgrelid = v_alvo
+           and tgname  = split_part(r.objeto, '.', 2)
+           and not tgisinternal;
+
+        if v_tg_enabled is null then
+          v_ok  := false;
+          v_det := 'o gatilho não existe na tabela (a função dele pode existir — ela sobrevive ao drop trigger)';
+        elsif v_tg_enabled = 'D' then
+          v_ok  := false;
+          v_det := 'o gatilho existe mas está DESABILITADO (disable trigger) — a guarda não roda';
+        elsif v_tg_enabled = 'R' then
+          -- 'R' = ENABLE REPLICA TRIGGER. Decisão deliberada, e mais estrita
+          -- que `<> 'D'`: um gatilho em modo réplica NÃO dispara com
+          -- `session_replication_role = origin`, que é o padrão de toda sessão
+          -- normal (é o que o pooler do Supabase usa). Do ponto de vista de
+          -- quem depende da guarda rodando na sessão normal, um gatilho em
+          -- modo réplica está tão desligado quanto um desabilitado — só que
+          -- calado, porque `tgenabled <> 'D'` deixaria passar.
+          v_ok  := false;
+          v_det := 'o gatilho existe mas só dispara em modo réplica — na sessão normal a guarda não roda';
+        elsif v_tg_enabled in ('O', 'A') then
+          -- 'O' = ENABLE (origin, o padrão) · 'A' = ENABLE ALWAYS (dispara em
+          -- origin e em réplica). As duas rodam em sessão normal — é só isso
+          -- que este ramo promete. Ele NÃO confere se o gatilho chama a
+          -- função certa nem em quais eventos (INSERT/UPDATE/DELETE) — só que
+          -- existe e dispara. `v_tg_fn` entra no detalhe por informação, sem
+          -- afetar `v_ok`.
+          v_ok  := true;
+          v_det := format('gatilho habilitado (chama %s)', coalesce(v_tg_fn, '?'));
+        else
+          -- Não deveria acontecer — `tgenabled` só tem estes quatro valores —
+          -- mas a sonda nunca assume "presente" por omissão de um `case`.
+          v_ok  := false;
+          v_det := format('estado de gatilho desconhecido: %s', v_tg_enabled);
+        end if;
+      end if;
+
     elsif r.tipo in ('seed', 'comportamento') then
       -- A tabela pode não existir ainda: contar nela levantaria erro e derrubaria
       -- a sonda inteira, transformando "um requisito faltando" em "o painel não
@@ -5534,7 +5592,7 @@ $$;
 -- Name: FUNCTION fn_instalacao_conferir(); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Confere cada requisito de instalacao_requisito contra o catálogo do banco. Sobrevive ao objeto ausente (to_regclass/to_regproc devolvem NULL em vez de erro): a sonda não pode falhar por causa do que ela existe para medir. Desde a 0147 confere também o CORPO da função (tipo=corpo), que é o único jeito de distinguir uma correção aplicada de uma função homônima com o corpo velho.';
+COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Confere cada requisito de instalacao_requisito contra o catálogo do banco. Sobrevive ao objeto ausente (to_regclass/to_regproc devolvem NULL em vez de erro): a sonda não pode falhar por causa do que ela existe para medir. Desde a 0147 confere também o CORPO da função (tipo=corpo), que é o único jeito de distinguir uma correção aplicada de uma função homônima com o corpo velho. Desde a 0189 confere também GATILHO (tipo=gatilho): existência na tabela E tgenabled em (''O'',''A'') — a função do gatilho sobrevive a drop trigger/disable trigger e por isso NUNCA prova, sozinha, que a guarda está ligada.';
 
 --
 -- Name: fn_instalacao_resumo(); Type: FUNCTION; Schema: public; Owner: -
@@ -13935,7 +13993,7 @@ CREATE TABLE public.instalacao_requisito (
     marcador text,
     CONSTRAINT instalacao_requisito_marcador_check CHECK (((tipo <> 'corpo'::text) OR ((marcador IS NOT NULL) AND (length(marcador) >= 4)))),
     CONSTRAINT instalacao_requisito_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text, 'informativo'::text]))),
-    CONSTRAINT instalacao_requisito_tipo_check CHECK ((tipo = ANY (ARRAY['tabela'::text, 'coluna'::text, 'funcao'::text, 'seed'::text, 'comportamento'::text, 'corpo'::text])))
+    CONSTRAINT instalacao_requisito_tipo_check CHECK ((tipo = ANY (ARRAY['tabela'::text, 'coluna'::text, 'funcao'::text, 'seed'::text, 'comportamento'::text, 'corpo'::text, 'gatilho'::text])))
 );
 
 --
@@ -13948,7 +14006,7 @@ COMMENT ON TABLE public.instalacao_requisito IS 'O que precisa existir no banco 
 -- Name: COLUMN instalacao_requisito.tipo; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.instalacao_requisito.tipo IS 'comportamento é o único que não sonda o catálogo: alguns requisitos não são de banco (reimportar o workflow do n8n) e só se provam pelo EFEITO — a tabela que aquele nó grava tem linha.';
+COMMENT ON COLUMN public.instalacao_requisito.tipo IS 'tabela/funcao: o nome. coluna: tabela.coluna. corpo: o nome da função, com marcador de CÓDIGO (pg_get_functiondef tem de conter o trecho). seed: tabela (criterio_seed diz o quanto se espera). comportamento: tabela cuja existência de LINHA é a prova — é o único que não sonda o catálogo, porque alguns requisitos não são de banco (reimportar o workflow do n8n) e só se provam pelo EFEITO: a tabela que aquele nó grava tem linha. gatilho (0189): tabela.nome_do_gatilho — presente exige o gatilho existir E estar habilitado para disparar em sessão normal (tgenabled em ''O'' ou ''A''; ver o ramo da sonda para o porquê de ''R'' não contar). A função do gatilho NÃO serve como prova: ela sobrevive a `drop trigger` e a `alter table ... disable trigger`, que é exatamente o defeito que este tipo fecha (ver gatilho_da_promocao, tipo funcao, cujo próprio `porque` descreve o problema).';
 
 --
 -- Name: COLUMN instalacao_requisito.porque; Type: COMMENT; Schema: public; Owner: -

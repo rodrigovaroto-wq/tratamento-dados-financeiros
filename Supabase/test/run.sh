@@ -536,6 +536,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/instalacao.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes do tipo gatilho da sonda (0189) — a função sobrevive ao drop trigger, o vínculo não"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/sonda_ve_gatilho.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do fato material (0148) — o que o documento diz em TEXTO"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fato_material.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

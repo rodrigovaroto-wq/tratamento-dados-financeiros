@@ -1,5 +1,44 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+## SESSÃO 101 (23–24/09/2026) — `0189`: a sonda passa a ver GATILHO, não só a função que ele chama
+
+> **PR [#242](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/242). Nada aplicado em produção.**
+>
+> **O defeito.** `fn_instalacao_conferir()` não tinha tipo para gatilho: catalogava a FUNÇÃO do
+> gatilho, que sobrevive a `drop trigger` e a `disable trigger`. Medido em 23/09: derrubar as três
+> guardas por gatilho da F1.7 deixava o painel verde (a F1.7 registrou isso como "achado sistêmico
+> NÃO corrigido" — é este).
+>
+> **A correção.** Tipo `gatilho` (`objeto = tabela.nome_do_gatilho`, presente só com `tgenabled` em
+> `'O'`/`'A'` — `'R'`, modo réplica, conta como DESLIGADO de propósito), `fn_instalacao_conferir`
+> reemitida inteira a partir da `0147`, e os **nove** gatilhos não-internos de `main` catalogados:
+> as quatro guardas do golden set (`0126`), `trg_auto_promover_dial` (`0137`),
+> `trg_entidade_ambigua` (`0153`) e os três da F1.7 — `trg_entidade_controlador_soma_maxima`
+> (`0182`), `trg_entidade_forma_de_controle_tem_vinculo` e `trg_instalacao_cobertura_nao_regride`
+> (`0183`). Mais o requisito corpo `sonda_ve_gatilho`. Ordens 820–829 (a `0187` usa 790–796, a
+> F1.7 chega a 815).
+>
+> **Teste `Supabase/test/sonda_ve_gatilho.test.sql`, 17 asserts**, com igualdade de conjuntos
+> entre `pg_trigger` e o catálogo: gatilho novo sem requisito deixa o `run.sh` vermelho. Medição
+> não-vazia (regra 2), ramo desligado × ok/FALHOU: `v_ok := true` → 6/6; `'R'` aceito → 15/1;
+> só `'O'` → 16/1; gatilho fora do catálogo → 1 FALHOU; ligado → 17/0.
+>
+> **O que o dono faz à mão, NESTA ORDEM** (a ordem importa):
+> 1. **A `0183` primeiro** — o roteiro da F1.7 logo abaixo. Ela conserta o marcador de cobertura,
+>    que está ERRADO em produção (`0182` por cima de `0188`).
+> 2. **Depois a `0189`:** `supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql`.
+>    Ela cataloga gatilhos que só existem com a `0183`; aplicada antes, a sonda acusa dois ausentes
+>    — o que é VERDADE, não defeito, mas confunde. Conferir:
+>    `select chave, objeto, detalhe from fn_instalacao_conferir() where tipo='gatilho' and not presente`
+>    → vazio. Uma linha ali é um gatilho de fato desligado em produção.
+> 3. Nenhum workflow, republicação ou deploy de portal.
+>
+> **Achado fora do escopo, registrado no PR:** `N8N/test/macro.test.mjs` regera
+> `workflow.macro.json` durante a suíte e `workflow-macro-sim.test.mjs` pode lê-lo truncado
+> (reprovou uma vez no CI, 535/536). Patch proposto no PR (gravação atômica no builder).
+
+---
+
 > ## F1.7 CONSTRUÍDA — `0182` APLICADA EM PRODUÇÃO, `0183` PENDENTE DO DONO (23/09/2026)
 >
 > **⚠️ PRODUÇÃO ESTÁ COM O MARCADOR DE COBERTURA ERRADO, e foi esta sessão que causou.** A `0182`
