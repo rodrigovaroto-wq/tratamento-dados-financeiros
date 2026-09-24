@@ -32,7 +32,8 @@ import {
 import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, PISO_BATCHING_MS, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
-import { parseEntidade } from './lib/classifier.mjs';
+import { classifyByFilename, parseTipo, parsePeriodo, parseAssinado, parseEntidade, THRESHOLD_AUTO } from './lib/classifier.mjs';
+import { normalize } from './lib/normalize.mjs';
 import { mergeClassification } from './lib/merge.mjs';
 import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, custoEstimadoPorTamanho, custoPorMbDeTextoUSD, CELULAS_POR_PAGINA_ESTIMADAS, CARACTERES_POR_CELULA_ESTIMADA, estimativaDoDocumento, esforcosDoProvedor, FORMATOS_DE_TEXTO, ehFormatoDeTexto } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
@@ -716,27 +717,39 @@ if (out.length === 0) {
 return out;
 `.trim();
 
-// --- Code (EACH ITEM): classificação por nome (espelha lib/classifier.mjs) ---
+// --- Code (EACH ITEM): classificação por nome = lib/classifier.mjs, embutida ---
 // Preserva o binário (Preparar Conteudo e Upload precisam dele adiante).
+//
+// A COMPOSIÇÃO TAMBÉM VEM DA LIB, não só as peças. Até 24/09/2026 este nó
+// embutia `parseEntidade` por `toString()` mas montava a classificação com uma
+// cópia à mão de `normalize`/`parsePeriodo`/`parseTipo` e da conta de
+// confiança — e a cópia perdeu a guarda `entidade = tipo ? parseEntidade(...) :
+// null` de `classifyByFilename`. Medido executando o jsCode commitado:
+// `ANEXO IV - planilha final REV3.pdf` gravava a entidade "Iv Rev3" (a lib:
+// null). O espelho-inline não via porque confere função por função, e as peças
+// batiam; o defeito estava na montagem. Agora o nó chama a MESMA
+// `classifyByFilename`, e o que sobra aqui é só o mapeamento para os campos
+// que o resto do workflow lê.
+const FONTE_CLASSIFICADOR = [
+  `const THRESHOLD_AUTO=${JSON.stringify(THRESHOLD_AUTO)};`,
+  `const normalize = ${normalize.toString()};`,
+  `const parsePeriodo = ${parsePeriodo.toString()};`,
+  `const parseTipo = ${parseTipo.toString()};`,
+  `const parseAssinado = ${parseAssinado.toString()};`,
+  FONTE_PARSE_ENTIDADE,
+  `const classifyByFilename = ${classifyByFilename.toString()};`,
+].join('\n');
 const CODE_CLASSIFICAR = `
-function normalize(s){return String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/\\.[a-z0-9]{2,4}$/i,'').replace(/[_\\-.]+/g,' ').replace(/\\s+/g,' ').trim();}
 const ALIASES=${ALIASES_JSON};
-function parsePeriodo(t0){const t=String(t0||'').replace(/^\\s*\\d{1,3}\\s*[-_. ]+/,'').replace(/(\\d)\\s*[x\\u00d7]\\s*(\\d)/g,'$1 $2');let m=t.match(/\\b(\\d{1,2})m(\\d{2,4})\\b/);if(m&&Number(m[1])===12)return{tipo:'anual',referencia:'12M'+m[2].slice(-2)};m=t.match(/\\bl(\\d{1,2})m\\b/)||t.match(/\\b(\\d{2})\\s*meses\\b/);if(m)return{tipo:'multi',referencia:'L'+m[1]+'M'};m=t.match(/\\b([1-4])t(\\d{2,4})\\b/);if(m)return{tipo:'trimestre',referencia:m[1]+'T'+m[2].slice(-2)};m=t.match(/\\b(20\\d{2}|\\d{2})\\s*(?:-|–|a)\\s*(20\\d{2}|\\d{2})\\b/);if(m){const full=y=>y.length===2?'20'+y:y;const start=Number(full(m[1])),end=Number(full(m[2]));if(start<=end&&end-start<=50){const anos=[];for(let y=start;y<=end;y++)anos.push(String(y).slice(-2));return{tipo:'multi',referencia:anos.join(',')};}}const a4=t.match(/\\b(19|20)\\d{2}\\b/g);if(a4&&a4.length===1)return{tipo:'anual',referencia:a4[0],fraco:true};if(a4&&a4.length>=2)return{tipo:'multi',referencia:[...a4].sort((p,q)=>Number(p)-Number(q)).map(x=>x.slice(-2)).join(',')};const a=t.match(/\\b(20)?\\d{2}\\b/g);if(a&&a.length>=2)return{tipo:'multi',referencia:a.map(x=>x.slice(-2)).join(',')};if(a&&a.length===1&&/^(19|20)\\d{2}$/.test(a[0]))return{tipo:'anual',referencia:a[0],fraco:true};return null;}
-function parseTipo(t){for(const a of ALIASES){for(const termo of a.termos){if(t.includes(termo))return a.codigo;}}return null;}
-${FONTE_PARSE_ENTIDADE}
+${FONTE_CLASSIFICADOR}
 const item=$input.item.json;
-// MESMA queda da lib (lib/classifier.mjs): so numero finito em (0,1] manda; o
-// resto cai em 0.7 -- limiar zero faria CADA documento passar sem a IA ler
-// nenhum. Se as duas quedas divergirem, o espelho-inline reprova.
+// O limiar do dial viaja no item; a queda (so numero finito em (0,1]) e a de
+// classifyByFilename, a mesma da lib -- limiar zero faria CADA documento passar
+// sem a IA ler nenhum.
 // SEM CRASE NESTE BLOCO: ele mora dentro de um template literal, e crase aqui
 // quebra o jsCode -- ja aconteceu duas vezes (memoria backtick-quebra-jscode).
-const _l=Number(item.limiar_classificacao);
-const LIMIAR=(Number.isFinite(_l)&&_l>0&&_l<=1)?_l:0.7;
-const t=normalize(item.nome_original);
-const tipo=parseTipo(t), periodo=parsePeriodo(t);
-const assinado=/\\bassinad[oa]s?\\b/.test(t)?true:null;
-let conf=0; if(tipo)conf+=0.6; if(periodo)conf+=(periodo.fraco?0.05:0.3); if(assinado===true)conf+=0.1; conf=Math.min(1,Number(conf.toFixed(2)));
-return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:parseEntidade(t,ALIASES), confianca:conf, fonte:'nome_arquivo', precisa_fallback_ia:(conf<LIMIAR|| !tipo), limiar_aplicado:LIMIAR}, binary: $input.item.binary};
+const r=classifyByFilename(item.nome_original, item.limiar_classificacao);
+return {json:{...item, tipo_taxonomia:r.tipo_taxonomia, periodo_tipo:r.periodo?r.periodo.tipo:null, periodo_ref:r.periodo?r.periodo.referencia:null, assinado:r.assinado, entidade:r.entidade, confianca:r.confianca, fonte:r.fonte, precisa_fallback_ia:r.precisa_fallback_ia, limiar_aplicado:r.limiar_aplicado}, binary: $input.item.binary};
 `.trim();
 
 // --- Code (EACH ITEM): prepara a parte de CONTEUDO (para todos os docs) ---

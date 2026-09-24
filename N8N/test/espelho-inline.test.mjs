@@ -33,7 +33,7 @@ import {
   byteEm, casaAssinatura, trechoLatin1, saborDoZip, pareceTexto, contarFora,
   formaDoTexto, detectarFormato,
 } from '../lib/formato.mjs';
-import { parseTipo, parsePeriodo, parseEntidade } from '../lib/classifier.mjs';
+import { parseTipo, parsePeriodo, parseEntidade, parseAssinado, classifyByFilename } from '../lib/classifier.mjs';
 import {
   avaliarCobertura, celulasDaLinha, celulasEstimadas, linhasComNumero, linhasDeConta,
   juntarFragmentosDeLinha, ehLinhaSemValor, ehLinhaDeConta,
@@ -319,15 +319,11 @@ function doWorkflow(nome) {
 const TABELA = [
   { nome: 'normalize', lib: normalize, casos: [['Balanço_2025.PDF'], ['a  b'], [null], ['']] },
 
-  // A DIFERENÇA DE CONTRATO, DECLARADA em vez de descoberta: a lib devolve
-  // `{codigo, termo}` e a cópia do workflow devolve só o `codigo`. Não muda
-  // comportamento — o nó usa apenas o código —, mas com o mesmo NOME e retornos
-  // diferentes, quem melhorar o desempate por `termo` na lib não teria como
-  // saber que o workflow não o carrega. Aqui a diferença fica escrita, e o
-  // CÓDIGO escolhido continua tendo de bater.
+  // A diferença de contrato que morava aqui (a cópia do workflow devolvia só o
+  // `codigo`) acabou em 24/09/2026: o nó passou a embutir a `parseTipo` da lib
+  // por `toString()`, junto com `classifyByFilename` — ver o comentário de
+  // `FONTE_CLASSIFICADOR` em build-workflow.mjs.
   { nome: 'parseTipo', lib: parseTipo,
-    porque: 'a lib devolve {codigo, termo}; o workflow devolve só o codigo',
-    projLib: (r) => (r ? r.codigo : null),
     casos: [['balanco patrimonial 2025'], ['dre 2025'], ['mapa de divida'], ['arquivo qualquer']] },
   { nome: 'parsePeriodo', lib: parsePeriodo,
     // O CRUZAMENTO DE SÉCULO ENTROU AQUI PORQUE A GUARDA JÁ DEIXOU PASSAR UMA
@@ -347,6 +343,14 @@ const TABELA = [
       ['balanco comparativo 1999 2001'], ['dre 2025 2023 2024'], ['sem periodo']] },
   { nome: 'parseEntidade', lib: parseEntidade,
     casos: [['balanco vertentes metalurgica 2025', ALIASES], ['relatorio auditor independente', ALIASES]] },
+  { nome: 'parseAssinado', lib: parseAssinado, casos: [['dre 2025 assinado'], ['bp assinadas'], ['bp 2025']] },
+  // A COMPOSIÇÃO, e não só as peças: a cópia à mão dela no nó perdeu a guarda
+  // `entidade = tipo ? ... : null` enquanto as quatro peças acima batiam
+  // (24/09/2026, "ANEXO IV - planilha final REV3.pdf" → entidade "Iv Rev3" no
+  // nó, null na lib). Os casos sem tipo no nome são os que exercitam essa guarda.
+  { nome: 'classifyByFilename', lib: classifyByFilename, casos: [
+    ['ANEXO IV - planilha final REV3.pdf'], ['34_Relatorio_do_Auditor_Independente_2025.pdf'],
+    ['01_BP_Vertentes_Metalurgica_2025x2024.pdf'], ['DRE_1T25_assinado.pdf', 0.85], ['x.pdf', 0]] },
 
   { nome: 'mergeClassification', lib: mergeClassification, casos: [
     [{ tipo_taxonomia: 'BALANCO', confianca: 0.6 }, { tipo_taxonomia: 'DRE', confianca: 0.9, justificativa: 'x' }],
