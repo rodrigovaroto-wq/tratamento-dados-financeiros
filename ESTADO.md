@@ -17,6 +17,9 @@
 > 1. SÓ a linha `alter type pendencia_tipo add value if not exists 'forma_de_controle_indefinida';`
 > 2. o resto de `Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql`, com
 >    aquela linha comentada (a API envolve o lote numa transação; ver o aviso no `Supabase/README.md`).
+>    Antes: `select pg_get_functiondef('fn_fundir_entidade(uuid,uuid,uuid,text)'::regprocedure)` em
+>    produção tem de ser o corpo da `0153` — a 0183 o reemite (item 10), e a diferença tem de ser só
+>    os blocos marcados `0183`.
 > 3. conferir: `select ate_migration from instalacao_cobertura` tem de voltar a `0188` (ou mais), e
 >    `fn_instalacao_conferir()` sem ausentes. O backfill abre **18** pendências `forma_de_controle_
 >    indefinida` (13 registros de entidade do caso AMO, que tem 8 empresas reais, + 5 dos casos
@@ -26,7 +29,9 @@
 > passa de 100 e nunca é obrigado a fechar 100) + `fn_grupo_por_controle_comum` (fecho transitivo).
 > `0183`: `entidade.forma_de_controle`, que torna `controladora_id` NULL distinguível de "ninguém
 > cadastrou". Medição (regra 2), remedida contra o código final: 0182 **5/32** (soma) e **3/32**
-> (fecho); 0183 **4/24** (check), **4/24** (vínculo), **1/24** + 1 na sonda (backfill). Detalhe em
+> (fecho); 0183 **4/24** (check), **4/24** (vínculo), **1/24** + 1 na sonda (backfill), **6/8**
+> (a fusão de entidades, item 10 — achado CRÍTICO do /revisar de 24/09: `fn_fundir_entidade` apagava
+> por cascata o vínculo de controle declarado na absorvida; `Supabase/test/fusao_preserva_controle.test.sql`). Detalhe em
 > `.claude/conhecimento/fichas/f1-controle-comum-0182-0183.md`.
 >
 > **O achado que muda o critério.** Com os sócios EXATOS dos 4 contratos legíveis, o modelo dá **dois

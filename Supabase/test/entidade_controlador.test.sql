@@ -32,7 +32,7 @@
 --     uma afirmação que parecia local. "B e C estão no mesmo grupo" é a única comparação de fato
 --     robusta a um salto, e não discrimina.
 --
--- (c) OS 27 QUE NÃO DISCRIMINAM NENHUM DOS DOIS PROTOCOLOS, nomeados pela mesma honestidade que a
+-- (c) OS 24 QUE NÃO DISCRIMINAM NENHUM DOS DOIS PROTOCOLOS, nomeados pela mesma honestidade que a
 --     0181 usou com os 25 dela: unicidade de documento por caso, checks de tabela por UPDATE
 --     direto, percentual NULL distinguível de linha ausente, reatribuição de percentual e
 --     controle cross-caso são invariantes GENUÍNOS, independentes das duas guardas — protegem

@@ -89,7 +89,7 @@
 --     {A,B} e B alcança {A,B,C}, e quando C ordena antes de A textualmente os dois grupo_id
 --     divergem. A quebra da transitividade VAZA para um assert que não pergunta nada sobre C.
 --
--- (c) OS 27 QUE NÃO DISCRIMINAM CADA REGRESSÃO, nomeados aqui pela mesma honestidade que a 0181
+-- (c) OS 24 QUE NÃO DISCRIMINAM CADA REGRESSÃO, nomeados aqui pela mesma honestidade que a 0181
 --     usou com os 25 dela: os testes de `controlador_caso_documento_unico`, dos checks de tabela
 --     por UPDATE direto, de reatribuição de percentual, de percentual NULL distinguível de linha
 --     ausente e de controle cross-caso são invariantes GENUÍNOS e independentes das duas guardas

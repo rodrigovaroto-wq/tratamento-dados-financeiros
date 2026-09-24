@@ -296,8 +296,12 @@ supabase db execute --file Supabase/migrations/0182_o_grupo_horizontal_que_a_con
 # envolve o lote numa TRANSAÇÃO IMPLÍCITA — onde o Postgres recusa com "unsafe use of new value of
 # enum type". Foi exatamente o que aconteceu com a 0179 (registrado no ESTADO.md), e quem aplicar
 # esta lista de uma vez vai receber o mesmo erro no meio, com a 0182 já aplicada.
-# Aplique a 0183 em dois envios: PRIMEIRO só até o `alter type ... add value` (inclusive),
-# DEPOIS o resto do arquivo.
+# Aplique a 0183 em dois envios: PRIMEIRO SÓ a linha `alter type pendencia_tipo add value if not
+# exists 'forma_de_controle_indefinida';`, DEPOIS o arquivo inteiro com essa linha comentada (o
+# mesmo roteiro do topo do ESTADO.md — antes daqui havia dois roteiros diferentes, e os dois
+# funcionavam, o que é pior: quem lê os dois não sabe qual o outro seguiu).
+# E ANTES do segundo envio: a 0183 reemite `fn_fundir_entidade` (0153). Compare o corpo de produção
+# com o da 0153 — a diferença para o da 0183 tem de ser só os blocos marcados `0183`.
 supabase db execute --file Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql
 
 # A 0185 NÃO EXISTE, e o buraco é deliberado. (A 0182 e a 0183, da F1.7, estão logo acima e SÃO
