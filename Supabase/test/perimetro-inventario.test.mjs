@@ -86,3 +86,41 @@ test('duas empresas do MESMO grupo com nome próximo não colapsam em normaliza�
     normalizarNomeEntidade('ARAUCÁRIA BIOENERGIA SPE LTDA.'),
   );
 });
+
+// --- O executor contra PRODUÇÃO: não escreve, e não vaza a senha ----------------------------------
+// Contra um Postgres DE VERDADE, não um psql de mentira: o que se afirma é o comportamento que o
+// banco impõe. No CI o job tem o serviço `postgres:16` de pé desde o início (PGHOST/PGUSER no env
+// do job), e ali estes testes são OBRIGATÓRIOS. Fora do CI, sem um Postgres alcançável, eles se
+// declaram NÃO CONFERIDOS pelo nome em vez de passar calados (regra 7). À mão:
+//   TESTE_PSQL="sudo -u postgres psql -h /tmp -p 5432" node --test Supabase/test/perimetro-inventario.test.mjs
+import { rodarPsql, NaoConferido } from './perimetro-inventario.mjs';
+import { execSync } from 'node:child_process';
+
+const TESTE_PSQL = process.env.TESTE_PSQL ?? 'psql';
+let bancoAlcancavel = true;
+try {
+  execSync(`${TESTE_PSQL} -X -q -At -c 'select 1'`, { stdio: ['pipe', 'pipe', 'pipe'] });
+} catch {
+  bancoAlcancavel = false;
+}
+const semBanco = !bancoAlcancavel && !process.env.CI
+  ? 'NÃO CONFERIDO: nenhum Postgres alcançável por TESTE_PSQL (no CI isto reprova)' : false;
+
+test('o executor lê (controle positivo: sem ele, "recusou escrever" podia ser "não conecta")', { skip: semBanco }, () => {
+  assert.deepEqual(rodarPsql('select 41 + 1;', TESTE_PSQL), ['42']);
+});
+
+test('o executor NÃO escreve: o Postgres recusa, e a recusa vira NÃO CONFERIDO', { skip: semBanco }, () => {
+  assert.throws(
+    () => rodarPsql('create temp table _inventario_nao_escreve (a int);', TESTE_PSQL),
+    (e) => e instanceof NaoConferido && /read-only|somente leitura|apenas leitura/i.test(e.message),
+  );
+});
+
+test('falha de conexão sai como NÃO CONFERIDO e a senha da URL não aparece na mensagem', () => {
+  const alvo = "psql 'postgresql://usuario:SENHA-QUE-NAO-PODE-VAZAR@127.0.0.1:1/postgres?connect_timeout=2'";
+  assert.throws(
+    () => rodarPsql('select 1;', alvo),
+    (e) => e instanceof NaoConferido && !e.message.includes('SENHA-QUE-NAO-PODE-VAZAR'),
+  );
+});

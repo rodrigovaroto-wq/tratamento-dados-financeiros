@@ -112,11 +112,28 @@ export const CAUSAS_SAO_BUG_DE_COMPARACAO = new Set([
 ]);
 
 // -----------------------------------------------------------------------------------------------
-function rodarPsql(sql) {
-  const out = execSync(`${ALVO} -X -A -t -F '\t' -c ${JSON.stringify(sql)}`, {
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
+// As DUAS proteções que os irmãos (`conferir-chamadas.mjs`, `sonda-producao.mjs`) documentam e
+// que este executor não tinha até 24/09/2026 — ele roda contra PRODUÇÃO:
+//   1. `start transaction read only`: "rodar este script não muda o banco" deixa de depender de
+//      só haver `select` aqui e passa a ser recusa do próprio Postgres;
+//   2. a falha NUNCA sai como `erro.message` do `execSync`, que começa com a linha de comando
+//      inteira — e `CONFERIR_PSQL` carrega a URL COM SENHA. Só o stderr do psql sai, e quem chama
+//      transforma a falha em NÃO CONFERIDO (saída 2), não em "Command failed" com saída 1.
+// `perimetro-inventario.test.mjs` prova as duas contra um Postgres de verdade.
+export class NaoConferido extends Error {}
+
+export function rodarPsql(sql, alvo = ALVO) {
+  let out;
+  try {
+    out = execSync(`${alvo} -X -q -A -t -F '\t' -v ON_ERROR_STOP=1`, {
+      encoding: 'utf8',
+      input: `start transaction read only;\n${sql}`,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch (erro) {
+    throw new NaoConferido(String(erro.stderr ?? '').trim() || `psql saiu com código ${erro.status}`);
+  }
   return out.split('\n').filter((l) => l.length > 0);
 }
 
@@ -131,16 +148,23 @@ function main() {
     process.exit(2);
   }
 
-  const porCaso = rodarPsql(
-    `select c.nome, count(*), count(*) filter (where e.cnpj is not null), ` +
-      `count(*) filter (where e.papel_no_grupo is not null) ` +
-      `from entidade e join caso c on c.id = e.caso_id group by 1 order by 2 desc;`,
-  );
+  let porCaso, pendencias;
+  try {
+    porCaso = rodarPsql(
+      `select c.nome, count(*), count(*) filter (where e.cnpj is not null), ` +
+        `count(*) filter (where e.papel_no_grupo is not null) ` +
+        `from entidade e join caso c on c.id = e.caso_id group by 1 order by 2 desc;`,
+    );
 
-  const pendencias = rodarPsql(
-    `select c.nome, p.descricao from pendencia p join caso c on c.id = p.caso_id ` +
-      `where p.tipo::text = 'entidade_incorreta' and p.estado::text = 'aberta' order by c.nome;`,
-  );
+    pendencias = rodarPsql(
+      `select c.nome, p.descricao from pendencia p join caso c on c.id = p.caso_id ` +
+        `where p.tipo::text = 'entidade_incorreta' and p.estado::text = 'aberta' order by c.nome;`,
+    );
+  } catch (erro) {
+    if (!(erro instanceof NaoConferido)) throw erro;
+    console.error(`NÃO CONFERIDO — a consulta ao banco falhou, então nada aqui foi medido:\n${erro.message}`);
+    process.exit(2);
+  }
 
   console.log(`--- entidades por caso (${porCaso.length} casos) ---`);
   for (const linha of porCaso) {
