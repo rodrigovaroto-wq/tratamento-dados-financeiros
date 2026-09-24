@@ -287,41 +287,30 @@ supabase db execute --file Supabase/migrations/0178_o_titulo_da_planilha_nao_e_p
 supabase db execute --file Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql
 supabase db execute --file Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql
 supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql
+supabase db execute --file Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql
+# ATENÇÃO — a 0183 precisa dos MESMOS DOIS PASSOS que a 0179 precisou, e pela mesma razão.
+# Ela faz `alter type pendencia_tipo add value 'forma_de_controle_indefinida'` e USA o rótulo no
+# mesmo arquivo. No `psql` isso funciona (cada statement de topo aplica em autocommit, e o
+# cabeçalho da migration explica isso), mas o CAMINHO REAL DE PRODUÇÃO não é o psql: a porta do
+# Postgres não é alcançável do container, aplica-se pela API de gerenciamento do Supabase, e ela
+# envolve o lote numa TRANSAÇÃO IMPLÍCITA — onde o Postgres recusa com "unsafe use of new value of
+# enum type". Foi exatamente o que aconteceu com a 0179 (registrado no ESTADO.md), e quem aplicar
+# esta lista de uma vez vai receber o mesmo erro no meio, com a 0182 já aplicada.
+# Aplique a 0183 em dois envios: PRIMEIRO SÓ a linha `alter type pendencia_tipo add value if not
+# exists 'forma_de_controle_indefinida';`, DEPOIS o arquivo inteiro com essa linha comentada (o
+# mesmo roteiro do topo do ESTADO.md — antes daqui havia dois roteiros diferentes, e os dois
+# funcionavam, o que é pior: quem lê os dois não sabe qual o outro seguiu).
+# E ANTES do segundo envio: a 0183 reemite `fn_fundir_entidade` (0153). Compare o corpo de produção
+# com o da 0153 — a diferença para o da 0183 tem de ser só os blocos marcados `0183`.
+supabase db execute --file Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql
 
-# A 0185 é seed puro (nove exigências novas em taxonomia_linha_exigida), mas
-# NÃO é "só dado parado": fn_recomputar_completude — chamada de dentro de
-# fn_registrar_campos_extraidos (0128) e mais sete lugares (0008, 0018, 0041,
-# 0043, 0111, 0129, e o nó "Recomputar Completude" do N8N,
-# N8N/workflow.e1-ingestao.json) — já lê QUALQUER exigência ativa via
-# fn_exigencias_do_caso. Aplicar a 0185 materializa as nove exigências novas
-# RETROATIVAMENTE, no primeiro recompute de completude que tocar cada caso —
-# que é qualquer extração nova ou qualquer revisão no portal, não só
-# documento novo. Meça o alcance ANTES de aplicar (lição da 0179,
-# .claude/memory/aplicar-migration-em-producao-pela-api.md):
-#   select tipo_taxonomia, count(distinct caso_id) from documento
-#     where tipo_taxonomia in ('AGING_AP','AGING_AR','EXTRATO_BANCARIO',
-#       'GARANTIAS','AVAIS_FIANCAS','CONTINGENCIAS','DEBITOS_TRIB','ESTOQUE',
-#       'HEADCOUNT')
-#     group by 1;
-# e rode fn_exigencias_do_caso(caso_id) em modo LEITURA sobre os casos reais
-# encontrados, para saber quantas pendências linha_exigida_ausente novas vão
-# aparecer antes que apareçam sozinhas na fila do dono.
-#
-# ⛔ NÃO APLIQUE A 0185. A LINHA ABAIXO ESTÁ COMENTADA DE PROPÓSITO.
-#
-# A medição de alcance acima FOI FEITA contra produção em 21/09/2026, e reprovou
-# a migration: dos 17 pares caso×tipo que ela abriria como pendência, os 17 TÊM
-# o dado. Em relatório itemizado o conceito não está no rótulo — o rótulo é o
-# ITEM (nome do fornecedor, do banco, do processo) e o conceito é o TIPO do
-# documento. Aplicar materializaria 17 pendências falsas retroativamente, no
-# primeiro recompute de cada caso. Detalhe no cabeçalho do próprio arquivo e em
-# .claude/memory/conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md.
-#
-# Por que comentada e não removida: esta lista é o que o dono copia para
-# aplicar, e o `run.sh` exige que toda migration do diretório seja citada aqui.
-# Comentada, ela continua citada (o portão passa) e deixa de rodar se o bloco for
-# colado num shell. A 0185 fica no repositório como registro até o redesenho.
-# supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql
+# A 0185 NÃO EXISTE, e o buraco é deliberado. (A 0182 e a 0183, da F1.7, estão logo acima e SÃO
+# aplicáveis; a 0184 foi reservada pela F1.7 e NÃO usada — lacuna declarada, nada a aplicar.) Ela propunha exigência LEXICAL para nove tipos de
+# relatório itemizado e foi REPROVADA na medição contra produção em 21/09/2026:
+# 17 de 17 pendências que abriria eram falsas — em relatório itemizado o rótulo é
+# o ITEM, não o conceito (.claude/memory/conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md).
+# Foi descartada em 22/09/2026 sem nunca ter sido aplicada em banco nenhum; o que
+# ela tentava responder (D6) é respondido pela 0187, por DECLARAÇÃO, não por termo.
 
 # A 0186 acrescenta reconciliacao.motivo_precondicao e reemite
 # fn_registrar_reconciliacao para gravá-la — resultado NÃO muda de
@@ -388,8 +377,144 @@ supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_e
 #          count(*) filter (where motivo_precondicao is null)     as continuam_null
 #     from reconciliacao where not precondicoes_ok;
 
-# IDEMPOTENTE: só catálogo (instalacao_requisito_tipo_check + SETE requisitos:
-# seis de tipo gatilho e o `sonda_ve_gatilho`, de tipo corpo) e a reemissão de fn_instalacao_conferir — sem efeito
+# A 0187 (portão D6) cria taxonomia_tipo_cobertura + fn_cobertura_de_tipos,
+# DESATIVA as exigências lexicais proposta de MUTUOS e FAT_INTRAGRUPO,
+# acrescenta localizador por SEÇÃO a CONTRATO_SOCIAL/capital_social, reemite
+# fn_sugerir_perguntas e RESOLVE pendências linha_exigida_ausente ABERTAS
+# desses três tipos que ficaram falsas (resolvida_por = 'sistema:0187'). Não
+# chama fn_recomputar_completude. Meça o alcance ANTES, somente leitura:
+#   select split_part(motivo, ':', 3) as tipo, estado, count(*)
+#     from pendencia
+#    where tipo = 'linha_exigida_ausente'
+#      and split_part(motivo, ':', 3) in ('MUTUOS','FAT_INTRAGRUPO','CONTRATO_SOCIAL')
+#      and estado <> 'resolvida'
+#    group by 1, 2 order by 1, 2;
+# Esperado em 22/09/2026: 1 MUTUOS + 3 FAT_INTRAGRUPO + 1 CONTRATO_SOCIAL
+# abertas, 1 MUTUOS aceita_com_ressalva (esta NÃO é tocada pela migration —
+# mas o próximo recompute daquele caso a resolve, como faz com toda exigência
+# desativada; ver o cabeçalho). A do CONTRATO_SOCIAL dependia de a versão
+# VIGENTE do documento ter a seção "…Capital social" preenchida — MEDIDO em
+# produção (22/09/2026, somente leitura): na versão vigente do documento
+# 9ae9ca0b-7b6a-4fa1-bf23-ef3cc8805ffc (GLOBAL STORE), 4 das 6 linhas têm
+# `secao` com 'capital' e 'social'. Previsão: 5 resolvidas, 0 abertas.
+#
+# CORRIGIDA após revisão independente (22/09/2026, antes de qualquer apply):
+#   (a) o {saldo_mutuos} da pergunta 5.1 deixou de ler léxico: o documento
+#       MUTUOS é o conceito — coluna do exercício mais recente, linha de total
+#       geral se houver, senão a soma dos itens; quando não dá para apurar, a
+#       pergunta diz "não foi possível apurar o saldo" e o porquê. Sonda por
+#       COMPORTAMENTO: instalacao_sonda_saldo_mutuos (4 linhas);
+#   (b) taxonomia_tipo_cobertura ganhou marcador/marcador_em: o trecho que faz a
+#       leitura precisa estar no corpo publicado (\r removido), senão
+#       DECLARACAO_QUEBRADA — o nome em pg_proc sozinho não prova a leitura;
+#   (c) DF_AUDITADA passou a sem_consumidor (só é lida como balanço substituto);
+#       consumidores nomeados: MUTUOS e BALANCETE;
+#   (d) o motivo de cada tipo diz o que foi medido PARA ELE (zero documentos =
+#       nada medido; os demais = parte dos 17 da medição agregada da 0185).
+supabase db execute --file Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql
+# DEPOIS DESTA (o raise notice é efêmero):
+#   select resolvida_por, count(*) from pendencia
+#    where tipo = 'linha_exigida_ausente' and resolvida_por = 'sistema:0187' group by 1;
+#   select * from fn_cobertura_de_tipos()
+#    where veredito in ('SEM_COBERTURA', 'DECLARACAO_QUEBRADA');   -- D6 estrito: ZERO linhas
+#   select * from instalacao_sonda_saldo_mutuos;                   -- QUATRO linhas
+
+# A 0188 EXIGE A 0186 APLICADA ANTES, e desde a revisão de 22/09/2026 ela
+# mesma diz isso: o bloco (0) aborta a instalação com "0188 exige a 0186
+# aplicada antes" se a coluna reconciliacao.motivo_precondicao não existir OU
+# se fn_registrar_reconciliacao não tiver o corpo da 0186. Sem essa guarda a
+# 0188 instalava LIMPA sobre um banco sem a 0186 (plpgsql só resolve coluna
+# quando roda) e toda fn_reconciliar_* morria depois, em runtime — e o n8n
+# (PG_RETRY continueRegularOutput) seguia com ZERO reconciliações, sem erro
+# visível. Provado num banco descartável (22/09/2026): até a 0181 + 0187, SEM
+# a 0186 → a 0188 aborta com a mensagem e não deixa nada (0 das funções
+# novas); com a guarda desligada, a mesma 0188 instalava com rc=0; aplicada a
+# 0186 → a 0188 passa, e reaplicá-la também passa. Para refazer a prova:
+#   createdb tdf_guarda; <aplicar os pré-requisitos do run.sh e as migrations
+#   0001..0181 e a 0187>; psql -d tdf_guarda -f Supabase/migrations/0188_*.sql
+#   → ERROR: 0188 exige a 0186 aplicada antes: …; dropdb tdf_guarda
+#
+# E A TOLERÂNCIA DA DESPFIN (revisão, 22/09/2026): a 0188 reemite
+# fn_reconciliar_despfin_dre_vs_divida, e a reemissão corrige
+# `p_tolerancia_abs * fator` (R$ 50 MILHÕES numa DRE em milhar) para a
+# tolerância na BASE, greatest(R$ 50.000, 5%). Medido em produção: 1 das 33
+# despfin 'ok' era falsa (R$ 12.400.000 saindo "confere"); na próxima rodada
+# daquele caso ela vira zona_cinzenta e abre pendência. Receita (0023) e caixa
+# (0031) têm o mesmo `× fator` e NÃO foram corrigidas (não medidas) — ver o
+# cabeçalho, parte 4. O alcance, somente leitura, ANTES (fonte_a/fonte_b guardam
+# o ÚLTIMO exercício comparado, então isto é aproximado para linha de vários
+# anos; esperado em 22/09/2026: 1 de 33):
+#   select count(*) as ok_hoje, count(*) filter (where abs(a - b) > greatest(50000, 0.05 * a)) as viram_zona
+#     from (select abs(fn_valor_em_base((fonte_a->>'valor')::numeric, fonte_a->>'unidade')) as a,
+#                  abs(fn_valor_em_base((fonte_b->>'soma_juros')::numeric, fonte_b->>'unidade')) as b
+#             from reconciliacao where tipo = 'despfin_dre_vs_divida' and resultado = 'ok') x;
+# E o mesmo para as duas NÃO corrigidas (troque tipo, as chaves de fonte e o piso):
+# receita_dre_vs_faturamento (greatest(50000, 5%)) e caixa_bp_fluxo (greatest(100, 0,5%)).
+#
+# A 0188 (depois da 0186 — ela usa os três motivos reservados pelo CONTRATO da
+# 0186, e a guarda de vocabulário da 0186 os aceita) faz as quatro checagens que
+# emitiam a precondição genérica passarem o motivo ESPECÍFICO quando o código o
+# sabe (linha_nao_localizada / unidade_divergente / sem_periodo_par), com
+# MOTIVO e REMÉDIO na frente da descrição; reemite fn_registrar_reconciliacao só
+# para DEVOLVER o resultado achatado (o laço de períodos lê esse valor — sem
+# isso o laço pararia no primeiro período); cria taxonomia_linha_alternativa
+# (DRE/despesa_financeira: "resultado financeiro" sem "antes"); reemite
+# fn_exigencias_do_caso (DROP + CREATE: duas colunas novas, grant refeito) e
+# fn_recomputar_completude (texto pela alternativa + a descrição passa a ser
+# atualizada na pendência que já existe); acrescenta o localizador
+# ["juros","bancari"] na exigência E na checagem de despesa financeira. NÃO roda
+# reconciliação nem recompute: o motivo específico aparece na PRÓXIMA rodada de
+# cada caso, e as linhas já gravadas continuam com o genérico.
+#
+# O único UPDATE dela é dirigido: fn_reescrever_recado_linha_exigida('DRE',
+# 'despesa_financeira') reescreve SÓ a descrição das pendências ABERTAS dessa
+# exigência cuja entidade tem a alternativa. Meça o alcance ANTES, somente
+# leitura (a atribuição de entidade abaixo é a aproximada — a migration usa a de
+# fn_exigencias_do_caso; esperado em 22/09/2026: ~50 de 52):
+#   select count(*) as abertas,
+#          count(*) filter (where exists (
+#            select 1 from documento d
+#              join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
+#             where d.caso_id = p.caso_id and d.tipo_taxonomia = 'DRE'
+#               and (p.entidade_id is null or d.entidade_id = p.entidade_id)
+#               and ce.valor_num is not null
+#               and fn_normalizar_texto(ce.chave) like '%resultado%'
+#               and fn_normalizar_texto(ce.chave) like '%financeiro%'
+#               and fn_normalizar_texto(ce.chave) not like '%antes%')) as com_resultado_financeiro
+#     from pendencia p
+#    where p.tipo = 'linha_exigida_ausente' and p.estado = 'aberta'
+#      and p.motivo like 'completude:linha_exigida:DRE:despesa\_financeira%';
+# E o alcance do localizador novo (a pendência FALSA que o próximo recompute do
+# caso resolve — a migration não a resolve; esperado: 1):
+#   select count(*) from pendencia p
+#    where p.tipo = 'linha_exigida_ausente' and p.estado <> 'resolvida'
+#      and p.motivo like 'completude:linha_exigida:DRE:despesa\_financeira%'
+#      and exists (
+#        select 1 from documento d
+#          join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
+#         where d.caso_id = p.caso_id and d.tipo_taxonomia = 'DRE'
+#           and (p.entidade_id is null or d.entidade_id = p.entidade_id)
+#           and ce.valor_num is not null
+#           and fn_normalizar_texto(ce.chave) like '%juros%'
+#           and fn_normalizar_texto(ce.chave) like '%bancari%'
+#           and fn_normalizar_texto(ce.chave) not like '%receita%'
+#           and fn_normalizar_texto(ce.chave) not like '%aplicac%');
+supabase db execute --file Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql
+# DEPOIS DESTA (o raise notice com a contagem é efêmero):
+#   select descricao like '%não existe como tal%' as com_recado, count(*) from pendencia
+#    where tipo = 'linha_exigida_ausente' and estado = 'aberta'
+#      and motivo like 'completude:linha_exigida:DRE:despesa\_financeira%' group by 1;
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where migration = '0188' and not presente;                 -- ZERO linhas
+# E, depois da próxima rodada de um caso, o motivo específico aparecendo:
+#   select motivo_precondicao, count(*) from reconciliacao
+#    where not precondicoes_ok and criado_em > '<data do apply>' group by 1 order by 2 desc;
+
+# A 0189 DEPOIS DA 0183: ela cataloga os três gatilhos da F1.7, que só existem
+# com a 0182 e a 0183 aplicadas — sem a 0183, a sonda acusa dois deles
+# ausentes, o que é verdade (a guarda não está lá). IDEMPOTENTE: só catálogo
+# (instalacao_requisito_tipo_check + DEZ requisitos: nove de tipo gatilho e
+# o `sonda_ve_gatilho`, de tipo corpo) e a reemissão de fn_instalacao_conferir — sem efeito
 # em dado. Testes: Supabase/test/sonda_ve_gatilho.test.sql (via run.sh).
 supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql
 # DEPOIS DE APLICAR, confira que nenhum gatilho está DE FATO desligado em

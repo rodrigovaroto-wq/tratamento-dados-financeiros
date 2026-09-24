@@ -2,8 +2,8 @@
 id: f2-localizador-chave-pendencia-falsa
 tipo: defeito
 toca:
-  - Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql
-  - Supabase/test/linha_exigida_tipos_variaveis.test.sql
+  - Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql
+  - Supabase/test/cobertura_de_tipos.test.sql
   - Supabase/test/fixture_book_canastra.sql
   - Arquitetura do Sistema/3 Estado e Execução/ARQUITETURA_ALVO_E_ROADMAP.md
 prova: Supabase/test/run.sh
@@ -14,6 +14,10 @@ substitui: []
 
 **Descoberto em:** 21/09/2026, rodada F2.1. **Veredito final: a `0185` NÃO deve ser aplicada.**
 A migration segue no repositório como registro; nunca entrou em banco de produção.
+**Atualização 22/09/2026:** a `0185` foi DESCARTADA do repositório (o número fica como lacuna) e
+D6 passou a ser respondido por DECLARAÇÃO na `0187` (`taxonomia_tipo_cobertura` +
+`fn_cobertura_de_tipos`), que também desativou as exigências lexicais de MUTUOS e FAT_INTRAGRUPO
+da 0113 — mesmo defeito, já no ar.
 
 > **Esta ficha foi reescrita depois da medição contra produção.** A primeira versão concluía que o
 > defeito era o localizador casar `chave` quando o termo mora em `secao`, e que a cascata

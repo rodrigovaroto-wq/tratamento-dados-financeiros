@@ -7,7 +7,7 @@
 -- no catálogo: `gatilho_da_promocao` (0137, tipo funcao, objeto
 -- `fn_trg_auto_promover_dial`), cujo `porque` diz "a função de promoção existe
 -- e NADA a chama" — e a sonda de tipo `funcao` confere exatamente a função.
--- MEDIDO, com a 0189: derrubar as seis guardas hoje instaladas NÃO mudava a
+-- MEDIDO, com a 0189: derrubar as guardas por gatilho (eram seis; nove depois da F1.7) NÃO mudava a
 -- contagem de ausentes antes desta migration; com ela, muda — é o que os casos
 -- b, c, d e e abaixo provam um a um.
 --
@@ -19,7 +19,7 @@
 --
 -- O QUE CADA CASO PROVA:
 --
---   a. o banco recém-migrado tem ≥6 requisitos `gatilho`, todos presentes —
+--   a. o banco recém-migrado tem ≥9 requisitos `gatilho`, todos presentes —
 --      guarda contra catálogo vazio (fixture que "passa" por não ter nada
 --      para reprovar é o defeito da própria `estagio-desligado-parece-limpo`).
 --   b. `drop trigger` num gatilho: a sonda acusa EXATAMENTE aquele requisito,
@@ -29,8 +29,8 @@
 --   d. `enable replica trigger`: acusa ausente — decisão deliberada da 0189,
 --      mais estrita que `tgenabled <> 'D'`, porque `'R'` não dispara na sessão
 --      normal (`session_replication_role = origin`, o padrão).
---   e. os seis gatilhos de uma vez: a contagem de ausentes sobe em exatamente
---      6 — o religamento por MIGRATION completa, não só por gatilho isolado.
+--   e. os nove gatilhos de uma vez: a contagem de ausentes sobe em exatamente
+--      9 — o religamento por MIGRATION completa, não só por gatilho isolado.
 --   f. a sonda não morre: requisito fabricado com tabela inexistente, e com
 --      nome de gatilho inexistente numa tabela que existe — as duas devolvem
 --      `presente=false`, nenhuma derruba a função.
@@ -73,7 +73,7 @@ begin
 end $$;
 
 -- -----------------------------------------------------------------------------
--- a. banco completo: todo requisito gatilho presente, e existem ≥6.
+-- a. banco completo: todo requisito gatilho presente, e existem ≥9.
 -- -----------------------------------------------------------------------------
 begin;
 do $$
@@ -89,8 +89,8 @@ begin
     coalesce(v_ausentes, ''));
 
   select count(*)::int into v_n from instalacao_requisito where tipo = 'gatilho';
-  perform teste_assert_gat(v_n >= 6,
-    'a. existem pelo menos 6 requisitos de gatilho catalogados (guarda contra catálogo vazio)',
+  perform teste_assert_gat(v_n >= 9,
+    'a. existem pelo menos 9 requisitos de gatilho catalogados (guarda contra catálogo vazio)',
     format('%s encontrado(s)', v_n));
 
   -- COMPLETUDE, em igualdade de conjuntos. Achado da revisão: com só `>= 6`,
@@ -215,9 +215,9 @@ end $$;
 rollback;
 
 -- -----------------------------------------------------------------------------
--- e. os seis gatilhos de uma vez: a contagem de ausentes sobe em exatamente 6.
---    (Os dois gatilhos da F1.7 — PR #238 — não existem em main; não entram
---    aqui, senão o teste morreria em "trigger does not exist".)
+-- e. os nove gatilhos de uma vez: a contagem de ausentes sobe em exatamente 9.
+--    Inclui os três da F1.7 — os mesmos da medição original de 23/09/2026,
+--    que derrubava as três guardas dela e via o painel continuar verde.
 -- -----------------------------------------------------------------------------
 begin;
 do $$
@@ -228,7 +228,10 @@ declare
     array['golden_rotulo',    'trg_golden_rotulo_congelada'],
     array['golden_campo',     'trg_golden_campo_congelada'],
     array['decisao',          'trg_auto_promover_dial'],
-    array['documento',        'trg_entidade_ambigua']
+    array['documento',        'trg_entidade_ambigua'],
+    array['entidade_controlador', 'trg_entidade_controlador_soma_maxima'],
+    array['entidade',             'trg_entidade_forma_de_controle_tem_vinculo'],
+    array['instalacao_cobertura', 'trg_instalacao_cobertura_nao_regride']
   ];
   v_par             text[];
   v_ausentes_antes  int;
@@ -244,8 +247,8 @@ begin
   select count(*)::int into v_ausentes_depois
     from fn_instalacao_conferir() where tipo = 'gatilho' and not presente;
 
-  perform teste_assert_gat(v_ausentes_depois = v_ausentes_antes + 6,
-    'e. derrubar os seis gatilhos de uma vez sobe a contagem de ausentes em exatamente 6',
+  perform teste_assert_gat(v_ausentes_depois = v_ausentes_antes + 9,
+    'e. derrubar os nove gatilhos de uma vez sobe a contagem de ausentes em exatamente 9',
     format('antes=%s depois=%s', v_ausentes_antes, v_ausentes_depois));
 end $$;
 rollback;

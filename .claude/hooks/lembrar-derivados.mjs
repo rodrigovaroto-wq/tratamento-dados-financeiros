@@ -44,6 +44,26 @@ const regras = [
       "terceira. Regere as três e confira o `git diff`.",
   },
   {
+    // O GRAFO DO CONHECIMENTO é derivado e versionado, e faltava aqui. MEDIDO em 21/09/2026 (PR
+    // #238): uma edição de 10 linhas no `suites.yml` deslocou o número de linha de TODO passo de CI
+    // abaixo dela — os nós `portao` guardam essa linha —, o grafo não foi regerado, e o CI reprovou
+    // em "o grafo commitado diverge". Este hook existe exatamente para lembrar isso e não sabia que
+    // o grafo existia. As entradas cobertas são as que `indexar.mjs` lê e que não são óbvias:
+    // o workflow de CI, as fichas e a memória, e o HANDOFF. (Migration já tem regra própria acima.)
+    //
+    // FORA DE PROPÓSITO, e revisado em 23/09/2026: `MEMORY.md` e `INSTRUCTIONS.md`, que o
+    // `indexar.mjs:269` exclui — avisar sobre eles era ruído. E os ARQUIVOS DE CÓDIGO, embora as
+    // arestas CHAMA do grafo guardem a linha de cada chamada (uma linha a mais num `.test.mjs`
+    // desloca o grafo): cobri-los faria este aviso disparar em quase toda edição, e portão que fala
+    // demais é ignorado (`portao-pode-reprovar-por-ruido.md`). Esse caso o CI pega.
+    quando: /\.github\/workflows\/suites\.yml$|\.claude\/conhecimento\/fichas\/[^/]+\.md$|\.claude\/memory\/(?!MEMORY\.md$|INSTRUCTIONS\.md$)[^/]+\.md$|(^|\/)HANDOFF\.md$/,
+    aviso:
+      "Você editou uma ENTRADA do grafo do conhecimento — `.claude/conhecimento/grafo.jsonl` é DERIVADO e " +
+      "versionado. Rode `node .claude/conhecimento/indexar.mjs` e commite o grafo na MESMA passada, senão o CI " +
+      "reprova em \"o grafo commitado diverge\". No `suites.yml`, até um comentário conta: os nós de portão " +
+      "guardam o NÚMERO DA LINHA de cada passo, e uma linha a mais desloca todos os que vêm depois.",
+  },
+  {
     quando: /portal\/src\/lib\/(export|modelo-institucional)\.ts/,
     aviso:
       "Endereço de célula é contrato: `spliceRows` na aba Macro desloca `linhaCabFocus` e cada INDEX/MATCH " +

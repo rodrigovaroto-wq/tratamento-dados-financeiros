@@ -1,148 +1,309 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-## SESSÃO 100 (23–24/09/2026) — `0189` pronta, cataloga gatilhos com tipo `gatilho`
+## SESSÃO 101 (23–24/09/2026) — `0189`: a sonda passa a ver GATILHO, não só a função que ele chama
+
+> **PR [#242](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/242). Nada aplicado em produção.**
+>
+> **O defeito.** `fn_instalacao_conferir()` não tinha tipo para gatilho: catalogava a FUNÇÃO do
+> gatilho, que sobrevive a `drop trigger` e a `disable trigger`. Medido em 23/09: derrubar as três
+> guardas por gatilho da F1.7 deixava o painel verde (a F1.7 registrou isso como "achado sistêmico
+> NÃO corrigido" — é este).
+>
+> **A correção.** Tipo `gatilho` (`objeto = tabela.nome_do_gatilho`, presente só com `tgenabled` em
+> `'O'`/`'A'` — `'R'`, modo réplica, conta como DESLIGADO de propósito), `fn_instalacao_conferir`
+> reemitida inteira a partir da `0147`, e os **nove** gatilhos não-internos de `main` catalogados:
+> as quatro guardas do golden set (`0126`), `trg_auto_promover_dial` (`0137`),
+> `trg_entidade_ambigua` (`0153`) e os três da F1.7 — `trg_entidade_controlador_soma_maxima`
+> (`0182`), `trg_entidade_forma_de_controle_tem_vinculo` e `trg_instalacao_cobertura_nao_regride`
+> (`0183`). Mais o requisito corpo `sonda_ve_gatilho`. Ordens 820–829 (a `0187` usa 790–796, a
+> F1.7 chega a 815).
+>
+> **Teste `Supabase/test/sonda_ve_gatilho.test.sql`, 17 asserts**, com igualdade de conjuntos
+> entre `pg_trigger` e o catálogo: gatilho novo sem requisito deixa o `run.sh` vermelho. Medição
+> não-vazia (regra 2), ramo desligado × ok/FALHOU: `v_ok := true` → 6/6; `'R'` aceito → 15/1;
+> só `'O'` → 16/1; gatilho fora do catálogo → 1 FALHOU; ligado → 17/0.
+>
+> **O que o dono faz à mão, NESTA ORDEM** (a ordem importa):
+> 1. **A `0183` primeiro** — o roteiro da F1.7 logo abaixo. Ela conserta o marcador de cobertura,
+>    que está ERRADO em produção (`0182` por cima de `0188`).
+> 2. **Depois a `0189`:** `supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql`.
+>    Ela cataloga gatilhos que só existem com a `0183`; aplicada antes, a sonda acusa dois ausentes
+>    — o que é VERDADE, não defeito, mas confunde. Conferir:
+>    `select chave, objeto, detalhe from fn_instalacao_conferir() where tipo='gatilho' and not presente`
+>    → vazio. Uma linha ali é um gatilho de fato desligado em produção.
+> 3. Nenhum workflow, republicação ou deploy de portal.
+>
+> **Achado fora do escopo, registrado no PR:** `N8N/test/macro.test.mjs` regera
+> `workflow.macro.json` durante a suíte e `workflow-macro-sim.test.mjs` pode lê-lo truncado
+> (reprovou uma vez no CI, 535/536). Patch proposto no PR (gravação atômica no builder).
+
+---
+
+> ## F1.7 CONSTRUÍDA — `0182` APLICADA EM PRODUÇÃO, `0183` PENDENTE DO DONO (23/09/2026)
+>
+> **⚠️ PRODUÇÃO ESTÁ COM O MARCADOR DE COBERTURA ERRADO, e foi esta sessão que causou.** A `0182`
+> foi aplicada em 23/09, DEPOIS da `0188` (a F2 aplicou 0186–0188 em 22/09), e o `update
+> instalacao_cobertura set ate_migration = '0182'` do fim dela rebaixou o marcador de `0188` para
+> `0182`. A sonda de produção agora SUBNOTIFICA o que está instalado. **Aplicar a `0183` conserta**:
+> ela cria um gatilho que impede o marcador de regredir e o recalcula a partir do catálogo. Enquanto
+> ela não for aplicada, `ate_migration = '0182'` em produção é falso.
+>
+> **O que o dono aplica, nesta ordem** (o classificador de modo automático do Claude Code bloqueou o
+> apply da `0183` como "Production Deploy" — nada dela rodou). **Caminho que funciona**, medido pela F2
+> em 22/09 (`.claude/memory/auto-mode-recusa-migration-producao.md`): trocar a sessão do Claude Code
+> para modo de permissão **manual** e aprovar cada chamada — ou aplicar à mão. Não adianta autorizar
+> no chat: a F2 mediu que a nova tentativa é recusada de novo.
+> 1. SÓ a linha `alter type pendencia_tipo add value if not exists 'forma_de_controle_indefinida';`
+> 2. o resto de `Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql`, com
+>    aquela linha comentada (a API envolve o lote numa transação; ver o aviso no `Supabase/README.md`).
+>    Antes: `select pg_get_functiondef('fn_fundir_entidade(uuid,uuid,uuid,text)'::regprocedure)` em
+>    produção tem de ser o corpo da `0153` — a 0183 o reemite (item 10), e a diferença tem de ser só
+>    os blocos marcados `0183`.
+> 3. conferir: `select ate_migration from instalacao_cobertura` tem de voltar a `0188` (ou mais), e
+>    `fn_instalacao_conferir()` sem ausentes. O backfill abre **18** pendências `forma_de_controle_
+>    indefinida` (13 registros de entidade do caso AMO, que tem 8 empresas reais, + 5 dos casos
+>    AMOBELEZA*) — medido em produção antes, não 365.
+>
+> **O que a fatia entrega.** `0182`: `controlador` + `entidade_controlador` (N:N, percentual que nunca
+> passa de 100 e nunca é obrigado a fechar 100) + `fn_grupo_por_controle_comum` (fecho transitivo).
+> `0183`: `entidade.forma_de_controle`, que torna `controladora_id` NULL distinguível de "ninguém
+> cadastrou". Medição (regra 2), remedida contra o código final: 0182 **5/32** (soma) e **3/32**
+> (fecho); 0183 **4/24** (check), **4/24** (vínculo), **1/24** + 1 na sonda (backfill), **6/8**
+> (a fusão de entidades, item 10 — achado CRÍTICO do /revisar de 24/09: `fn_fundir_entidade` apagava
+> por cascata o vínculo de controle declarado na absorvida; `Supabase/test/fusao_preserva_controle.test.sql`). Detalhe em
+> `.claude/conhecimento/fichas/f1-controle-comum-0182-0183.md`.
+>
+> **O achado que muda o critério.** Com os sócios EXATOS dos 4 contratos legíveis, o modelo dá **dois
+> grupos de dois**, não um de oito. Unir os dois exige decidir se sócios de mesmo sobrenome são um
+> bloco familiar — juízo, não medição. O critério foi revisado no roadmap (§12.2): "as 8 como um
+> grupo" depende dos 4 contratos que faltam e de uma decisão do dono, não de código.
+>
+> **Guardas construídas na origem dos erros desta sessão** (cada uma medida): `indexar.mjs`
+> respeita o `.gitignore` · o hook de derivados conhece o grafo · portão `medicao-denominador`
+> (denominador declarado tem de bater com o arquivo) · gatilho do marcador de cobertura · a sonda de
+> produção vê buraco no meio da sequência (compara com o `README`) · lições no agente
+> `migrations-postgres`. **Achado sistêmico NÃO corrigido, proposto como tarefa:** a sonda não
+> enxerga gatilho desligado (medido: derrubar as três guardas por gatilho da F1.7 deixa o painel verde).
+>
+> **Efeito esperado depois do merge:** a sonda agendada de produção fica VERMELHA até a `0183` ser
+> aplicada — ela passa a acusar o buraco que antes escondia. A `0184` foi reservada e NÃO usada.
+>
+> **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
+> - **F1.3**: `entidade.papel_no_grupo` tipado em enum + escrita explícita (`fn_entidade_definir_papel_no_grupo`) + guarda de pendência. Migration `0179`. **VERIFICADA**: reconstrução do banco do zero, correção desligada (reprova no ponto esperado), religada (todas as suítes passam).
+> - **F1.4**: tabela nova `perimetro(caso, entidade, escopo, desde, ate)` com funções de leitura/escrita. Migration `0180`. **VERIFICADA**: idem acima.
+> - **F1.5**: `entidade.controladora_id` (FK self-referencing) + `percentual_participacao`, guarda contra ciclo, funções de leitura/escrita. Migration `0181`. **VERIFICADA**: idem acima. 29 asserts novos, 4 medidos reprovando sem a guarda.
+>
+> **Colisão de duas sessões paralelas em F1.4 resolvida por merge** (não rebase, não force-push) — ambas compatíveis. Ver `.claude/memory/colisao-sessoes-paralelas-mesma-branch.md`.
+>
+> **F1.6 bloqueada**: depende do dono fornecer o COMBINADO real do cliente para conferir o perímetro contra ele. O mandato AMO teste 00 não tem COMBINADO real ingerido.
+
+---
+
+
+## SESSÃO 100 (22/09/2026) — F2: `0186`, `0187` e `0188` APLICADAS em produção; D6 VERDE em produção
+
+> **✅ APLICADAS EM PRODUÇÃO em 22/09/2026 (fim da S100): `0186` → `0187` → `0188`**, pela API de
+> gerenciamento, com o dono aprovando cada chamada em modo de permissão manual. Pré-medição repetida
+> imediatamente antes (nada tinha mudado). Efeito MEDIDO depois de cada uma:
+>
+> | Migration | Previsto | Medido |
+> |---|---|---|
+> | `0186` | backfill 5.023/5.023, 0 NULL | **5.023 preenchidas, 0 NULL** (1.708 `documento_ausente`, 3.315 genérico); sonda 0 ausentes |
+> | `0187` | 5 resolvidas, 0 abertas, 1 ressalva intocada | **5 resolvidas, 0 abertas, 1 ressalva, 5 eventos**; **D6 VERDE EM PRODUÇÃO**: 6 `exigencia_viva` + 2 `consumidor_nomeado` + 28 `sem_consumidor_declarado` = 36, zero `SEM_COBERTURA`/`DECLARACAO_QUEBRADA`; `instalacao_sonda_saldo_mutuos` = 4 |
+> | `0188` | ~50 de 52 com o recado da DRE líquida | **48 de 52** (as 4 sem: 2 sem linha financeira, 1 juros bancários — resolve no próximo recompute do caso —, e 1 sem explicação, a mesma que a conta 50+2+1=53 da S99 não fechava); sonda 0 ausentes, cobertura `0188` |
+>
+> **Prova de que a reconciliação RODA com as funções novas** (o risco silencioso da revisão): `fn_reconciliar_caso`
+> num caso real dentro de um bloco com rollback proposital — 61 linhas em todas as checagens, motivo
+> gravado em cada precondição, uma despfin agora `zona_cinzenta` onde a tolerância de R$ 50 mi dizia
+> "confere". Nada gravado. **Os motivos específicos da 0188 aparecem nas PRÓXIMAS rodadas de cada caso** —
+> as linhas antigas ficam com o que o backfill da 0186 recuperou.
+
 
 ### Estado atual de produção e repositório
 
 | | |
 |---|---|
-| **Última migration APLICADA** | **NÃO CONFERIDO nesta rodada** — a última conferência pela sonda desta branch é `0181` (18/09/2026), mas duas branches irmãs registram aplicação depois disso: `origin/claude/inspiring-clarke-j339ju` (commit `1824891`, 22/09) diz `0186` → `0187` → `0188` aplicadas, com backfill 5.023/5.023; e a `0183` da F1.7 (`origin/claude/amazing-galileo-x1qnsn`) registra a `0182` aplicada em produção DEPOIS da `0188`, em 23/09. Quem responde é `fn_instalacao_conferir()` contra produção — rode-a antes de aplicar qualquer coisa |
-| **Migrations PRONTAS mas NÃO APLICADAS** | `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — REPROVADA na medição contra produção) · `0186_o_motivo_que_o_achatamento_engolia.sql` (F2 suporte — segundo a branch irmã, JÁ APLICADA em 22/09; NÃO CONFERIDO aqui) · `0189_o_gatilho_que_a_sonda_nao_via.sql` (a sonda passa a ver GATILHO como tipo novo, não só a função que ele chama — catálogo dos seis gatilhos não-internos de `main`; PRONTA, `run.sh` verde, 17 asserts, aguarda aplicação) |
+| **Última migration APLICADA** | **ATUALIZADO 23/09/2026:** produção tem `0186`→`0187`→`0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql` (F2, 22/09, ver S100 abaixo) e a `0182` (F1.7a, aplicada em 23/09, DEPOIS da 0188). O marcador `ate_migration` de produção está em `0182` por REGRESSÃO — o real é `0188`, e a `0183` o repara. A S100 registrou `0188, 0 ausentes` em 22/09, correto naquele dia. |
+| **Migrations PRONTAS mas NÃO APLICADAS** | **`0183`** (F1.7b) — bloqueada pelo classificador de auto mode; o dono aplica em modo manual (ver o topo e `.claude/memory/auto-mode-recusa-migration-producao.md`). `0184`: reserva da F1.7, NÃO usada. `0185`: DESCARTADA pela F2 (arquivo removido na 0187). |
 | **Decisão do dono, 21/09/2026** | **F2 (cobertura de tipos) escolhida entre 1.7/F2/F3b**. Acrescentado: "não é ideal deixar etapas abertas, visando fechar cada etapa anterior o mais rápido possível quando deixada para trás" |
 
-### Entrega 1: Migration `0186` — motivo da precondição para deixar de ser jogado fora
+### Entrega 1: Pré-condições da `0186` MEDIDAS contra produção e LIBERADAS — aplicação RECUSADA pelo classificador de auto mode
 
-**Escrita, testada localmente com suíte verde (10 asserts), revisada 3 vezes, pronta para aplicação.**
+**A `0186` não mudou de conteúdo desde a sessão 99.** O que esta sessão fez foi rodar as 3
+consultas somente-leitura do `Supabase/README.md` contra o banco real (0181) antes de aplicar,
+como o passo "O que o dono faz à mão" da rodada anterior pedia:
 
-`fn_registrar_reconciliacao` achatava `documento_ausente` ("contraparte não entregue") e `linha_nao_localizada` ("extração falha") no mesmo literal `precondicao_nao_satisfeita`. Coluna nova `reconciliacao.motivo_precondicao` guarda o motivo verdadeiro, com backfill de `evento_auditoria` para linhas já gravadas. Vocabulário amarrado em `p_resultado` — erro de uma letra agora levanta exceção (defende o denominador de toda a medição desta fase). `resultado` não muda de vocabulário — portal/export/suítes leem o mesmo texto sempre.
+| Consulta | Medido em produção |
+|---|---|
+| Linhas com `precondicoes_ok=false` | **5.023** (não 1.926 — esse número da sessão 99 era só de `ativo_passivo_pl`; o total contando todas as checagens é 5.023) |
+| Backfill alcança | 5.023/5.023 — **0** ficariam `NULL` |
+| Eventos múltiplos ou motivos conflitantes na mesma linha | **0** |
+| Vocabulário emitido em produção | **6 valores**: `precondicao_nao_satisfeita` 3.315 · `documento_ausente` 1.708 · `ok` 898 · `zona_cinzenta` 128 · `divergente` 124 · `divergencia` 69 — todos dentro da guarda nova |
 
-**⚠️ CRÍTICO — `documento_ausente` NÃO significa "contraparte não entregue":** 42 linhas de `secao_fecha` e 9 de `mutuos_planilha_vs_balanco` têm este motivo COM o documento PRESENTE (a `0133:371` emite para "seção sem filhos", a `0123` com planilha entregue). **O motivo garante só o que o código faz: não abre pendência.** Tela que o traduza para "cobrar o documento" vai pedir o que o cliente já mandou — a causa real nunca chega à fila.
+Nenhuma das três consultas mandou NÃO APLICAR. A `0186` estava, portanto, liberada para
+aplicação nesta sessão.
 
-Revisor independente pegou que a própria rodada de correção reintroduzia o erro invertido ("motivo afirma presença" quando documento pode estar ausente). Medido e corrigido com a forma FORTE de reprova (comportamento, não mecanismo).
+**O que NÃO aconteceu: a aplicação em si.** O classificador de permissão do auto mode recusou o
+`curl` contra a API de gerenciamento do Supabase (rótulo "Production Deploy") **duas vezes**,
+inclusive depois de o dono autorizar explicitamente no chat. Autorização em texto não muda a
+regra de permissão configurada — precisa de regra em `settings.json` (ver lição de ambiente
+nova, abaixo). Sonda segue em `0181`; `0186` continua PRONTA, MEDIDA e LIBERADA, mas NÃO
+aplicada.
 
-**Aplicação:** quem aplicar mede ANTES com as 3 consultas somente-leitura em `Supabase/README.md` — uma delas pode mandar NÃO APLICAR. A guarda de vocabulário transforma valor inesperado em exceção; a reconciliação roda no fluxo de ingestão sem tratamento de erro — um motivo desconhecido aborta a transação do caso.
+**Ordem de aplicação confirmada**: `0186` → `0187` → `0188`. `0182`–`0184` são lacuna reservada à
+fatia 1.7 (outra sessão, em paralelo).
 
-### Entrega 2: Migration `0185` — cobertura de tipos (F2.1) REJEITADA NA MEDIÇÃO CONTRA PRODUÇÃO
+### Entrega 2: `0187` — D6 por declaração; a suspeita MUTUOS/FAT_INTRAGRUPO da sessão 99 CONFIRMADA e corrigida
 
-**Escrita, testada localmente (51 asserts, bloco 2 contra fixture canastra), revisada para 4 localizadores que casavam `chave` em vez de `secao`. Medida contra banco real em 21/09/2026 — E REPROVADA.**
+**Escrita, 27 asserts verdes, `0185` DESCARTADA do repositório.**
 
-Nove tipos mudos ganharam exigência `origem='proposta'` cada (padrão `0113`): AGING_AP, AGING_AR, EXTRATO_BANCARIO, GARANTIAS, AVAIS_FIANCAS, CONTINGENCIAS, DEBITOS_TRIB, ESTOQUE, HEADCOUNT.
+Censo D6 medido em produção (banco 0181): **24 tipos com documento**, **6 com exigência viva**
+(lida por alguma checagem — BALANCO, DRE, COMBINADO, FATURAMENTO_24M, MAPA_DIVIDA, FLUXO_CAIXA),
+**18 sem**. `taxonomia_tipo_cobertura` (30 tipos declarados: 3 `consumidor_nomeado` — MUTUOS→
+`fn_reconciliar_mutuos`, BALANCETE→`fn_reconciliar_arvore`, DF_AUDITADA→
+`fn_reconciliar_intragrupo` — e 27 `sem_consumidor` com motivo+efeito) e `fn_cobertura_de_tipos()`
+respondem D6 de forma estrita sobre todos os tipos ativos.
 
-**Medição de alcance contra PRODUÇÃO (banco em 0181, somente leitura):** 190 documentos dos 9 tipos em 14 casos, 64 com conteúdo, 17 abririam `linha_exigida_ausente` — **todos os 17 TÊM o dado**. Causa-raiz, não é escolha de termo: **em relatório ITEMIZADO o conceito não está no rótulo — o rótulo é o ITEM (fornecedor, banco, processo), o conceito é o TIPO.** AGING_AP tem chaves `41518 - WELLA BRASIL`, ESTOQUE `2500 - ASSALA PRIME` (484 linhas), CONTINGENCIAS descrições de processo com seções `Trabalhista`/`Cível`/`Tributário` — nunca a palavra "contingência".
+**A suspeita aberta na sessão 99 (MUTUOS/FAT_INTRAGRUPO reprovam contra fixture, mesmo defeito da
+`0185`) foi CONFIRMADA nesta sessão e corrigida.** As 5 pendências `linha_exigida_ausente`
+ABERTAS em produção de MUTUOS (1), FAT_INTRAGRUPO (3) e CONTRATO_SOCIAL (1) foram conferidas
+UMA A UMA — **todas falsas** (o item está na chave, o conceito mora na seção ou no tipo). `0187`
+desativa a exigência `proposta` de MUTUOS e FAT_INTRAGRUPO, e dá a CONTRATO_SOCIAL um localizador
+de seção. Previsão medida do efeito em produção: 5 pendências resolvidas, 0 abertas; a 1
+`aceita_com_ressalva` de MUTUOS fica intocada pela migration (comportamento pré-existente para
+exigência desativada — só o próximo recompute daquele caso a fecha).
 
-E o outro lado erra junto: 22 dos 47 que "passam" se satisfazem por UMA linha residual (`Demais fornecedores`/`clientes agregados`), que é exatamente o que o aging não abre.
+Resolução dirigida (`fn_resolver_linha_exigida_superada`) e `fn_sugerir_perguntas` reemitida
+({saldo_mutuos} não pode dizer "não localizado" só porque a exigência foi desativada). `0185` e
+seu teste DESCARTADOS — nunca aplicada, número fica como lacuna, explicado no `Supabase/README.md`.
 
-**Armadilha de portão:** `secao` não é estável entre versões do extrator. Fixture tem `secao` preenchida, produção às vezes não — teste verde contra fixture, falso em produção (terceira vez).
+Desligando (regra 2): declaração 4 · desativação 2 (RE-MEDIDA pela sessão principal: 2, os
+mesmos) · localizador de seção 4 · resolução dirigida 4 · `{saldo_mutuos}` 3+1.
 
-**Próximo passo: REDESENHO, não conserto de termo.** Para tipo itemizado a pergunta é estrutural (quantas linhas com valor, eixo esperado do relatório) ou nenhuma (assumir `item_sem_conteudo` 0036 cobre "chegou vazio"). A `0185` fica no repositório não aplicada até essa decisão. **DECISÃO DO DONO: os nove tipos ficam COMPLEMENTARES, não bloqueante.**
+### Entrega 3: `0188` — o motivo específico por checagem, e o recado da DRE líquida
 
-**Suspeita aberta (NÃO investigada):** MUTUOS e FAT_INTRAGRUPO (exigências `proposta` da `0113` em produção desde então) também reprovam contra fixture — pode ser o mesmo defeito de termo/seção, mais antigo.
+**Escrita, 28 asserts verdes.**
 
-### Entrega 3: Migration `0189` — a sonda passa a catalogar o gatilho por si, não pela função que ele chama
+53 linhas das fixtures perturbadas passam a ter motivo específico em vez do genérico (12
+`linha_nao_localizada`, 15 `sem_periodo_par`, 26 `unidade_divergente`); retorno de
+`fn_registrar_reconciliacao` ACHATADO para os três motivos novos (os despachantes da `0152`
+fazem `exit when resultado <> 'precondicao_nao_satisfeita'` e parariam no primeiro período sem
+isso). `taxonomia_linha_alternativa` dá o recado da DRE líquida — medido em produção: a
+alternativa `['resultado','financeiro']` exceto `['antes']` casa "resultado financeiro liquido"
+em **71 entidades**. Localizador `['juros','bancari']` exceto `['receita','aplicac']` casa "juros
+e comissoes bancarias" — medido: **8 linhas, 4 entidades**.
 
-**Escrita, testada localmente com 17 asserts em igualdade de conjuntos, revisada, pronta para aplicação.**
+Desligando: motivo 8 · retorno achatado 4 (RE-MEDIDO pela sessão principal: 4, os mesmos) ·
+alternativa 4 · descrição 1 · bancari código 1 · bancari seed 2 · reescrita dirigida 2.
 
-`fn_instalacao_conferir()` tinha seis tipos de requisito (tabela, coluna, função, corpo, seed, comportamento) e **nenhum para "o gatilho está instalado e ligado".** Quando o catálogo precisava afirmar isso, catalogava a FUNÇÃO do gatilho — e a função sobrevive a `drop trigger` e a `alter table ... disable trigger`, tornando a sonda cega a esse risco. Um DBA depurando um deadlock ou uma restauração parcial de backup pode desligar a guarda e a sonda continua vendo "presente", porque o que ela mediu nunca foi o vínculo.
+**Esperado em produção** (previsão, não medição — a `0188` não foi aplicada): das 52 pendências
+de despesa financeira, ~50 mudam de texto (recado da DRE líquida); a 1 falsa de juros bancários
+só resolve no próximo recompute do caso.
 
-Migration 0189 cria o tipo `gatilho` (objeto `tabela.nome_do_gatilho`, presente só com `tgenabled` em 'O'/'A'), reemite a função inteira a partir da 0147 (que já contém a 0132), cataloga os 6 gatilhos não-internos de main: as quatro guardas do golden set (0126) — `golden_rodada.trg_golden_rodada_imutavel`, `golden_documento.trg_golden_documento_congelada`, `golden_rotulo.trg_golden_rotulo_congelada`, `golden_campo.trg_golden_campo_congelada` —, `decisao.trg_auto_promover_dial` (0137) e `documento.trg_entidade_ambigua` (0153).
+### Entrega 4 (F2.4): terceiro book — `book-distress`, Grupo Piraquara
 
-Teste novo `Supabase/test/sonda_ve_gatilho.test.sql` (17 asserts) prova igualdade de conjuntos entre `pg_trigger` (não-internos) e o catálogo: com o ramo `gatilho` desligado (`v_ok := true`), reprova 6 blocos; com 'R' aceito como habilitado, reprova 1; rodado inteiro, passa. `run.sh` verde em 24/09 após o último commit.
+3 entidades × 2023–2025, 14 PDFs, 262 linhas de conta. PL da Metalúrgica 10.641 → 11.006 →
+(7.355); covenant DL/EBITDA chega a 12,25x contra limite 3,0x; aging AP de 12 fornecedores
+rotulados por nome, total **14.900 = Fornecedores do BP**; extrato de 12 meses fecha em
+**676** = caixa do BP. Determinístico (md5 idêntico em 2 gerações); CI gera. **Achado:** A=P+PL e
+ΔPL valem por construção (+1 no imobilizado 2023 NÃO reprova o motor) — README corrigido para não
+prometer o que o gerador não confere. **Achado:** o `book-canastra` NÃO é determinístico ao byte
+(PDF muda de md5; `METRICAS.json` estável). Sem fixture SQL ainda — nenhuma checagem lê
+aging/extrato hoje.
 
-**Ordem de aplicação e o marcador de cobertura:** até a `0183` da F1.7, `instalacao_cobertura` aceita valor MENOR sem erro — e isso JÁ aconteceu em produção (a `0182` depois da `0188`, 23/09, registrado na própria `0183`). A `0183` cria `trg_instalacao_cobertura_nao_regride`, que ignora o rebaixamento, e o cria ANTES do próprio `update` — então, com ela aplicada, a ordem entre ela e a `0189` deixa de importar para o marcador. Sem ela, aplicar qualquer migration anterior depois da `0189` rebaixa o marcador em silêncio.
+### F2.2 e F2.3 — medidas, não construídas
 
-**F1.7 bloqueador (PR #238):** cria TRÊS gatilhos — `entidade_controlador.trg_entidade_controlador_soma_maxima` (0182), `entidade.trg_entidade_forma_de_controle_tem_vinculo` (0183) e `instalacao_cobertura.trg_instalacao_cobertura_nao_regride` (0183). O `run.sh` (teste `sonda_ve_gatilho`, igualdade de conjuntos) ficará VERMELHO até os três serem catalogados com tipo `gatilho`. **Deliberado** — é o assert que impede um gatilho novo de entrar sem requisito.
+**F2.2 (MAPA_DIVIDA fino):** MEDIDO e NÃO construído. 51 mapas com conteúdo em produção, 2.268
+linhas; 12 com linha de juros, 12 com saldo, **0 com taxa, 0 com vencimento, 0 com covenant** —
+essas colunas não chegam como linha de conta. Depende da F3 (schema da linha).
 
-### Medição da camada de reconciliação — o que reprovaria F2 hoje
+**F2.3 (consumidor real para MUTUOS/FAT_INTRAGRUPO/CONTRATO_SOCIAL):** NÃO fechada. MUTUOS já tem
+consumidor (`fn_reconciliar_mutuos`). FAT_INTRAGRUPO e CONTRATO_SOCIAL ficaram declarados
+`sem_consumidor` (com efeito, regra 1) na `0187`. Escrever uma checagem que leia FAT_INTRAGRUPO
+(pares A→B por ano contra a eliminação do COMBINADO/FATURAMENTO_24M) é desenho novo, não feito
+nesta sessão.
 
-**Medido em produção (21/09), contra veredito final por caso × entidade (ela concluiu em algum período?):**
+### Aceite financeiro da F2 — NÃO VERIFICADO
 
-| Checagem | Pares | Concluiu | Nunca | % | 
-|---|---|---|---|---|
-| `caixa_bp_vs_fluxo` | 33 | **0** | 33 | **0,0%** |
-| `mutuos` | 12 | 1 | 11 | 8,3% |
-| `caixa_bp_fluxo` | 163 | 14 | 149 | 8,6% |
-| `despfin` | 109 | 15 | 94 | 13,8% |
-| `receita` | 109 | 23 | 86 | 21,1% |
-| `intragrupo` | 12 | 4 | 8 | 33,3% |
-| `ativo_passivo_pl` | 196 | 112 | 84 | 57,1% |
-| `secao_fecha` | 118 | 80 | 38 | 67,8% |
-| `duplicidade`·`conflito` | 221 | todos | 0 | 100% |
+"Mandato sem aging/extrato não é declarado pronto": nenhum indicador de prontidão implementa
+esse critério hoje, e os extratos reais do mandato AMO não passam pela ingestão (limite de
+tamanho, ~125–150 mil itens). Isso é NÃO VERIFICADO, diferente de verificado e OK.
 
-**Diagnóstico medido:** `precondicao_nao_satisfeita` confunde 4 estados — contraparte não existe (278 pares), linha não localizada (ours ou theirs), unidade divergente, período sem par. Em 1.922/1.926 linhas, `fonte_a`/`fonte_b` estão NULAS — nada a jusante consegue distinguir. **Fila não é acionável.** Para `despfin` em particular: 50 entidades com DRE que publica resultado LÍQUIDO em vez de despesa bruta — ausência real, legítima, pendência com recado errado. 254 de 283 pares não concluem; fila só mostrava 52 (a fila subestima em 5×).
+### Achados registrados e NÃO corrigidos nesta sessão
 
-**Consequência:** a F2 acrescenta exigência nova a uma camada cujos consumidores atuais concluem **entre 8,3% e 67,8%** por caso × entidade. Sem saber por que não concluem, é construir em andar não verificado. Precisão de exigência não resolve — é diagnóstico estrutural que falta.
+- `fn_reconciliar_arvore` (`0133`) devolve `ok` ("As 0 seções fecham…") quando nenhuma seção pôde
+  ser conferida — viola a regra 7 (estágio desligado parece estágio limpo).
+- `fn_reconciliar_caso` (`0152`) itera sem `order by` — o período da pendência varia entre
+  rodadas.
+- `fn_reconciliar_mutuos` com escala ausente de um lado termina em `documento_ausente` (a unidade
+  aparece como "sem par").
+- `consumidor_existe` só olha `pg_proc` — não percebe consumidor que deixou de LER o tipo.
+- DVA/DMPL entram na soma do realizado — possível dupla contagem, não investigado.
+- `fn_conflitos_do_caso` compara número de NOTAS_EXPL/DVA/DMPL por rótulo idêntico, mas foi
+  declarado "não consumidor" — decisão a revisar.
 
-> **Não escreva "entre 0% e 40%".** Essa faixa já foi publicada duas vezes nesta rodada e é falsa
-> nas duas pontas: o 0% vem de `caixa_bp_vs_fluxo`, que é NOME MORTO (renomeado em 27/07/2026, nenhuma
-> função o menciona hoje) — medir um cadáver infla o alarme; e o teto de 40% vinha da métrica por
-> PERÍODO, que superestimava, enquanto por caso × entidade `ativo_passivo_pl` está em 57,1% e
-> `secao_fecha` em 67,8%. A faixa honesta, já excluído o tipo morto, é **8,3% a 67,8%**.
+### Revisão independente (`/revisar`, 22/09/2026) — três ALTOS corrigidos antes de qualquer apply
 
-**O que fica medido para quem vier depois:** dois formatos, cita qual está citando (a métrica anterior, por período, superestimava o problema).
+Duas lentes (defeito silencioso + fidelidade do número) sobre `5bea570..HEAD`. Corrigido no próprio
+arquivo da `0187`/`0188` (commit `3542342`), porque nenhuma foi aplicada:
+
+- **ALTO — a `0188` instalava limpa sem a `0186`** e toda reconciliação morreria em runtime; o n8n
+  (`continueRegularOutput`) seguiria com ZERO reconciliações. Agora a `0188` aborta com
+  "0188 exige a 0186 aplicada antes" — provado em banco descartável.
+- **ALTO — tolerância da despfin = 50.000 × fator = R$ 50 milhões** em DRE em milhar. **Medido em
+  produção: 1 dos 33 "confere" é falso, divergência de R$ 12.400.000.** Tolerância passa para a base.
+- **ALTO — a pergunta 5.1 ao CLIENTE** dizia "(não localizado)" no arranjo real de mútuos e, em
+  outros, somava TOTAL + itens. Redesenhada sem léxico; sem saldo seguro, diz por que não apurou.
+- **MÉDIO — D6 ficava verde** se o consumidor existisse mas deixasse de ler o tipo: agora há
+  `marcador` conferido no corpo. DF_AUDITADA passou a `sem_consumidor` (2 nomeados, 28 sem).
+- **MÉDIO — textos do seed** ("17/17" em tipo com zero documento) corrigidos.
+- **Book-distress:** a MEP de 2025 saía em branco com a nota dizendo zero (`76662dc`).
+- **Latente, NÃO corrigido, medido:** receita (`50.000 × fator`) e caixa (`100 × fator`) têm o mesmo
+  vício de tolerância — **0 "confere" falsos hoje em produção** (receita no máximo 4,8%). Fatia própria.
+
+> **DECISÕES DO DONO, 22/09/2026 (fim da S100):** (1) **F2.3 VALE** — escrever a checagem que lê FAT_INTRAGRUPO é a próxima fatia da F2, logo depois do apply das `0186`→`0187`→`0188`. (2) O **aceite financeiro da F2 fica NÃO VERIFICADO até a F3 começar** — não é pendência desta fase; reabre quando a ingestão aguentar os extratos grandes (`CR`/`CP`). (3) O apply NÃO pode ser feito pelo agente em auto mode: o classificador recusou `curl` à API ("Production Deploy") e, quando o agente acrescentou a regra de permissão ele mesmo, recusou por "Self-Modification" — a edição foi desfeita. Caminho: o dono troca o modo de permissão da sessão para manual e aprova o comando no prompt, ou aplica pelo SQL Editor do Supabase.
+
+### Onde estamos
+
+**F2 com D6 VERDE NO REPOSITÓRIO — não em produção.** Para a F2 fechar: aplicar `0186`→`0187`→
+`0188` (nesta ordem) e rodar `fn_cobertura_de_tipos()` em produção; decidir F2.3 (checagem de
+FAT_INTRAGRUPO) ou aceitar a declaração `sem_consumidor` como final; o aceite financeiro da F2
+depende da F3/ingestão (extratos grandes não entram hoje).
 
 ### O que fica ABERTO, nomeado
 
-- **Fatia 1.7** — em construção em outra sessão em paralelo. Migrations `0182–0184` reservadas àquela sessão.
-- **Suspeita F2.1:** MUTUOS e FAT_INTRAGRUPO (exigências `proposta` da `0113`) também reprovam contra fixture — pode ser o mesmo defeito de termo, investigar com `select x.tipo, x.satisfeita from fn_exigencias_do_caso('<uuid>') x where x.origem='proposta'` contra banco de teste.
-- **As 52 pendências de despesa_financeira:** correção não é fazer checagem passar — é pendência DIZER que DRE veio líquido, mapa de dívida precisa da abertura bruta.
-- **Fatia 0185 redesenho:** estrutural, não lexical (quantas linhas com valor, eixo esperado).
-- **Fatia 1.7:** modelar controle comum por pessoa física (grupo horizontal, sem holding).
-- **F2.2–F2.4:** MAPA_DIVIDA fino · dar consumidor real a MUTUOS/FAT_INTRAGRUPO/CONTRATO_SOCIAL · terceiro book distress.
+- **Aplicar `0186`→`0187`→`0188` em produção** — pré-condições medidas e liberadas, falta só a
+  aplicação (bloqueada pelo classificador de auto mode nesta sessão). *(→ APLICADAS no fim da S100, em modo manual; ver o bloco da S100.)*
+- **F2.2 fino (MAPA_DIVIDA: taxa, vencimento, covenant)** — depende da F3.
+- **F2.3 (checagem de FAT_INTRAGRUPO)** — desenho novo, decisão do dono se vale a pena antes da
+  F3.
+- **Aceite financeiro da F2** — depende da F3/ingestão de extratos grandes.
+- **Os 6 achados registrados acima** — nenhum corrigido.
+- **Tolerância de receita e caixa multiplicada pela escala** — latente (0 falsos hoje), fatia própria.
+- **Fatia 1.7** — segue em outra sessão, `0182`–`0184` reservadas. *(→ construída e incorporada com a F2 nesta branch; `0182` aplicada, `0183` pendente do dono; ver o topo.)*
 
 ### O que o dono faz à mão
 
-**Aplicar `0189`:** `supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql`. Depois: `select chave, objeto, detalhe from fn_instalacao_conferir() where tipo='gatilho' and not presente` deve voltar vazio. Nenhum workflow, nenhuma republicação, nenhum deploy do portal.
+**Aplicar, NESTA ORDEM, `0186` → `0187` → `0188`** — as pré-condições das três estão medidas e
+liberadas nesta sessão (ver Entregas 1–3 acima). **A aplicação precisa de uma regra de permissão
+em `settings.json`** que libere a chamada de gerenciamento do Supabase para o auto mode, ou
+precisa ser feita fora do auto mode — o classificador recusou mesmo com autorização no chat (ver
+lição de ambiente nova em `.claude/memory/`). Depois de aplicar, rodar `fn_cobertura_de_tipos()`
+contra produção e conferir os efeitos previstos nas Entregas 2 e 3 (5 pendências MUTUOS/
+FAT_INTRAGRUPO/CONTRATO_SOCIAL resolvidas; ~50 de 52 pendências de despesa financeira com texto
+novo). Nenhum workflow tocado, nenhuma republicação, nenhum deploy do portal nesta sessão.
 
-**`0186` — CONFIRA ANTES se já não está aplicada** (a branch irmã diz que sim, 22/09): `select presente from fn_instalacao_conferir() where migration = '0186'`. Só se ausente: `supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql`, precedido de 3 consultas somente-leitura em `Supabase/README.md` — uma pode mandar NÃO APLICAR. Depois: consulta de pós-apply que conta `motivo_precondicao` preenchidas × NULL. Nenhum workflow, nenhuma republicação, nenhum deploy do portal.
+## SESSÃO 99 (21–22/09/2026, resumo) — F2 escolhida, `0185` rejeitada na medição, `0186` pronta e não aplicada
 
-**Aplicar `0185` NÃO** — ficou no repositório não aplicada até redesenho estrutural.
->
-> **O susto do handoff anterior, registrado aqui porque é o motivo de todo este rigor**: ao
-> retomar, a sessão da fatia 1.3 encontrou no remoto DUAS versões divergentes da mesma migration
-> (uma quebrada, comitada localmente como "não confiar"; outra — `14e80da` — corrigida e melhor
-> medida, de uma continuação autônoma do mesmo agente). A quebrada foi descartada; a `14e80da` só
-> foi aceita depois de reconstruir o banco do zero e repetir a medição desligar→reprova→religar→
-> passa, a mesma bateria que qualquer fatia própria recebe antes do commit. **O mesmo padrão se
-> repetiu ao empurrar a 1.4**: o push foi rejeitado porque a sessão anterior tinha empurrado seu
-> commit de handoff entre o despacho e o commit desta sessão — resolvido com um merge (não rebase,
-> não force-push) depois de confirmar que os dois lados eram compatíveis.
->
-> **A F1.6 NÃO VAI FECHAR COMO ESTAVA DESENHADA, e a causa foi MEDIDA em 18/09/2026.** O dono
-> informou não conseguir o COMBINADO do cliente; a investigação foi para os contratos sociais já
-> ingeridos e achou o porquê: **não há holding neste grupo** — nos 4 contratos legíveis, todos os
-> sócios são pessoas físicas e nenhuma empresa é sócia de outra. São empresas irmãs sob controle
-> comum, e "demonstração combinada" é justamente a forma contábil desse arranjo, não exigida em
-> formato padrão — **o cliente provavelmente nunca preparou uma**. O aceite financeiro da F1 fica
-> **NÃO VERIFICADO, com motivo declarado** (regra 1), e NÃO foi substituído por uma soma que o
-> próprio sistema faria — isso seria circular. Ver
-> `.claude/memory/grupo-por-controle-comum-sem-holding.md` e a seção 12.2 do roadmap.
->
-> **Fatia 1.7 nasceu dessa medição e está documentada, NÃO construída** (decisão do dono): a
-> `0181` modela participação como FK entre EMPRESAS, e não tem onde registrar controle comum por
-> pessoa física — hoje `controladora_id` NULL por "grupo horizontal" é indistinguível de NULL por
-> "ninguém cadastrou" (regra 7). A 1.5 segue válida para mandatos COM holding.
->
-> **AS QUATRO MIGRATIONS DA F1 ESTÃO APLICADAS EM PRODUÇÃO desde 18/09/2026** (`0178`–`0181`),
-> conferidas pela sonda: 107 requisitos, **0 ausentes**, cobertura em `0181`. O que a F1 construiu
-> agora VALE no sistema real — ver a linha "Aplicadas no Supabase" abaixo para o efeito medido de
-> cada uma e para a armadilha do `alter type` da `0179`, que precisa de duas chamadas.
->
-> **O que ainda depende de gente, não de código:** `perimetro` está com **0 linhas** e
-> `controladora_id` está NULL em todas as entidades — as duas corretas, porque ninguém decidiu
-> ainda (e, no caso do controle, porque o grupo real não tem holding). As 18 pendências de "papel
-> indefinido" que ficaram abertas são o convite para essa decisão; quem decidir chama
-> `fn_entidade_definir_papel_no_grupo` e `fn_perimetro_definir_escopo`.
->
-> **O que fica para a próxima sessão** (seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`): decidir
-> entre a fatia 1.7, a F2 (dar consumidor aos 27 tipos mudos) ou a F3b (completude por linha) —
-> as três dependem só da F0, que está fechada.
->
-> **11 commits nesta rodada** (de `14e80da` até `be9e1bf`), **nenhum arquivo de código tocado nesta
-> última passada** — só documentação de estado, ficha e handoff.
->
-> PR [#237](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/237) segue
-> aberto, rascunho. Uma sessão nova que continuar aqui deve chamar `subscribe_pr_activity` de novo
-> (a inscrição não atravessa sessões) e reconferir o CI antes de decidir entre as fatias 1.7, F2 ou F3b.
+`0186` escrita e testada (10 asserts) mas não medida contra produção nesta sessão; `0185` (F2.1,
+nove tipos itemizados com exigência lexical) escrita, testada localmente (51 asserts) e REPROVADA
+na medição contra produção — 17/17 pendências que abriria eram falsas (em relatório itemizado o
+conceito não está no rótulo, é o tipo do documento). Camada de reconciliação medida: consumidores
+atuais concluem entre 8,3% e 67,8% por caso × entidade. Decisão do dono: F2 escolhida entre
+1.7/F2/F3b; os nove tipos da `0185` ficam complementares, não bloqueantes. Suspeita aberta,
+não investigada: MUTUOS/FAT_INTRAGRUPO também reprovavam contra fixture — **confirmada e
+corrigida na sessão 100, ver acima**. Detalhe completo em `HANDOFF.md` (cabeçalho anterior,
+arquivado) e na ficha `f2-localizador-chave-pendencia-falsa.md`.
 
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
@@ -191,8 +352,8 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql` — fatia 1.5 do plano F1 (seção 12.2 do roadmap). Colunas novas `entidade.controladora_id` (FK self-referencing, no máximo uma controladora DIRETA por entidade — não um grafo completo de participação, limitação deliberada e documentada) e `entidade.percentual_participacao` (`numeric(6,3)`, checado em (0,100]). Guarda contra CICLO (`fn_entidade_criaria_ciclo_participacao`, limite de 50 saltos) chamada ANTES de gravar por `fn_entidade_definir_participacao` (humano, nunca inferência automática; remover a controladora exige percentual também null) e consumidor mínimo de leitura `fn_entidade_cadeia_controladora` (sobe a cadeia, para no topo). NÃO deriva nada de `perimetro` (0180) nem de `papel_no_grupo` (0179) — é a FK preparada que a F4 (consolidação/intercompany) vai consumir. 29 asserts novos em `Supabase/test/entidade_participacao.test.sql`, 4 dos 29 MEDIDOS reprovando (não estimados) contra o estado sem a guarda de ciclo em `fn_entidade_definir_participacao` — os outros 25 passam com ou sem a correção (ver o cabeçalho do arquivo de teste). **APLICADA em produção em 18/09/2026** — ver a linha abaixo. |
-| **Aplicadas no Supabase** | **até a `0181`** — a `0178`–`0181` (fatias 1.2 a 1.5 do F1) foram aplicadas em **18/09/2026**, pela API de gerenciamento do Supabase (a porta do Postgres não é alcançável do container; `psql` contra o pooler expira). MEDIDO contra a sonda, não suposto: `fn_instalacao_conferir()` devolve **107 requisitos, 0 ausentes**, e `instalacao_cobertura.ate_migration = '0181'`. **A `0179` foi aplicada em DOIS passos**, e quem aplicar de novo precisa saber: o `alter type pendencia_tipo add value` tem de ser confirmado numa chamada SEPARADA antes do resto do arquivo, senão o Postgres recusa com "unsafe use of new value of enum type" (a migration não tem `begin;`/`commit;` por causa disso, mas a API de gerenciamento envolve o lote numa transação implícita). **EFEITO MEDIDO de cada uma:** `0178` marcou **7** entidades como nome suspeito (previsto 7 antes de aplicar, conferido depois — o backfill não surpreendeu); `0179` abriu **365** pendências `papel_no_grupo_indefinido`, uma por entidade de TODO o banco (70 casos, a maioria teste antigo) — dessas, **347 foram resolvidas em lote** por esta sessão com `resolvida_por = 'sessao-claude:ruido-de-caso-de-teste'` e evento de auditoria `pendencias_papel_resolvidas_em_lote`, restando **18 abertas** (mandato real `AMO teste 00` + casos `AMOBELEZA*`); `0180` e `0181` criaram estrutura sem abrir pendência nenhuma. **O backfill da `0179` não distingue mandato real de caso de teste** — quem aplicar num banco novo vai ver o mesmo ruído e precisa repetir essa triagem. |
+| **Última migration** | **`Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql`** no repositório (atualizado 23/09/2026, com a F2 incorporada). Em produção: 0182 e 0186–0188 aplicadas, 0183 pendente, 0184 reservada e não usada, 0185 descartada — ver o topo. *(Linha anterior, da F1.5: `Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql` — fatia 1.5 do plano F1 (seção 12.2 do roadmap). Colunas novas `entidade.controladora_id` (FK self-referencing, no máximo uma controladora DIRETA por entidade — não um grafo completo de participação, limitação deliberada e documentada) e `entidade.percentual_participacao` (`numeric(6,3)`, checado em (0,100]). Guarda contra CICLO (`fn_entidade_criaria_ciclo_participacao`, limite de 50 saltos) chamada ANTES de gravar por `fn_entidade_definir_participacao` (humano, nunca inferência automática; remover a controladora exige percentual também null) e consumidor mínimo de leitura `fn_entidade_cadeia_controladora` (sobe a cadeia, para no topo). NÃO deriva nada de `perimetro` (0180) nem de `papel_no_grupo` (0179) — é a FK preparada que a F4 (consolidação/intercompany) vai consumir. 29 asserts novos em `Supabase/test/entidade_participacao.test.sql`, 4 dos 29 MEDIDOS reprovando (não estimados) contra o estado sem a guarda de ciclo em `fn_entidade_definir_participacao` — os outros 25 passam com ou sem a correção (ver o cabeçalho do arquivo de teste). **APLICADA em produção em 18/09/2026** — ver a linha abaixo.)* |
+| **Aplicadas no Supabase** | **ATUALIZADO 23/09/2026: `0182` (F1.7a) aplicada nesta data, e a F2 aplicou `0186`–`0188` em 22/09 — produção tem 0182 e 0186–0188, e NÃO tem a `0183` (bloqueada, ver o topo) nem a `0185` (reprovada, nunca aplicada). O marcador `ate_migration` de produção está em `0182` por REGRESSÃO (a 0182 foi aplicada depois da 0188) — o valor real é 0188, e a 0183 o repara.** Histórico anterior, mantido: até a `0181` — a `0178`–`0181` (fatias 1.2 a 1.5 do F1) foram aplicadas em **18/09/2026**, pela API de gerenciamento do Supabase (a porta do Postgres não é alcançável do container; `psql` contra o pooler expira). MEDIDO contra a sonda, não suposto: `fn_instalacao_conferir()` devolve **107 requisitos, 0 ausentes**, e `instalacao_cobertura.ate_migration = '0181'`. **A `0179` foi aplicada em DOIS passos**, e quem aplicar de novo precisa saber: o `alter type pendencia_tipo add value` tem de ser confirmado numa chamada SEPARADA antes do resto do arquivo, senão o Postgres recusa com "unsafe use of new value of enum type" (a migration não tem `begin;`/`commit;` por causa disso, mas a API de gerenciamento envolve o lote numa transação implícita). **EFEITO MEDIDO de cada uma:** `0178` marcou **7** entidades como nome suspeito (previsto 7 antes de aplicar, conferido depois — o backfill não surpreendeu); `0179` abriu **365** pendências `papel_no_grupo_indefinido`, uma por entidade de TODO o banco (70 casos, a maioria teste antigo) — dessas, **347 foram resolvidas em lote** por esta sessão com `resolvida_por = 'sessao-claude:ruido-de-caso-de-teste'` e evento de auditoria `pendencias_papel_resolvidas_em_lote`, restando **18 abertas** (mandato real `AMO teste 00` + casos `AMOBELEZA*`); `0180` e `0181` criaram estrutura sem abrir pendência nenhuma. **O backfill da `0179` não distingue mandato real de caso de teste** — quem aplicar num banco novo vai ver o mesmo ruído e precisa repetir essa triagem. |
 | **Última rodada real** | **"AMO teste 00", 118 documentos, 17/09/2026 — análise de 89 pendências abertas nesta sessão (session_014M6WjcbLvjBUkQodRYTH7J). Triagem: 4 achados nomeados — 2 DIFERIDOS (F2 e F4), 1 CORRIGIDO (PR #234, commit 378f23a), 1 NÃO CONFERIDO. Decisão de escopo: recusada adição de premissas de modelagem (fora de F0). Portal/export: tsc/eslint/next build limpos, 7 suítes verificar-*.mts todas verdes, e2e 46/0. Descoberta: hipótese anterior "esgotamento de RAM" era stack overflow em `push(...arr)` no nó merge nativo do n8n (~125.000–150.000 itens no Node 22). Ver "A SESSÃO ATUAL (17/09/2026)" abaixo. |
 | **Modelagem do mandato AMO** | **APLICADA no Supabase de produção em 17/09/2026** (a pedido explícito do dono, fora do escopo F0 e sem tocar o repositório na aplicação em si). Parâmetros: entidade **`AMOBELEZA COMERCIO DIGITAL E OFFLINE LTDA`**, último exercício real 2025, índice macro IPCA, setor varejo, 5 anos projetados. **A entidade tem de ser uma STRING QUE EXISTE nos dados, não um rótulo descritivo:** a primeira tentativa gravou "AMOBELEZA / Grupo AMO" e o modelo institucional não montou — `fn_valores_por_ano(caso, entidade)` FILTRA por ela, devolveu vazio, e o export escreveu a aba "Modelagem não montada" dizendo "nenhum exercício tem valor NUMÉRICO". Medido, para trocar em uma linha se o dono preferir outra: GENERAL CORPORATE 636 linhas/2023-2026 · OMNIBEAUTY Marcas 572/2023-2026 · General Tabaco 486/2023-2026 · AMOBELEZA 452/2023-2026 · OMNIBEAUTY RS 253/2024-2026 · GLOBAL STORE 146/2023-2025. **26 premissas ativas cobrindo as 11 naturezas do catálogo** — macro (IPCA, IGP-M, SELIC, Câmbio) com valores do Focus, o resto `digitado` com a âncora declarada no comentário de cada uma. **1.188 de 1.252 linhas projetáveis com premissa (94,9%)**, escolhida pela natureza contábil da conta: caixa/aplicação→SELIC, clientes→PMR, fornecedores→PMP, estoque por marca→GIRO_ESTOQUE, folha→HEADCOUNT, aluguel→IGP-M, imobilizado→CAPEX_PCT, contingência DIFAL→SELIC. 34 linhas de venda com curva de sazonalidade derivada de 60 meses do próprio faturamento. **64 linhas fora, com motivo declarado:** 30 totais (dupla contagem), 20 cláusulas narrativas de contrato social, 14 resultados apurados. `fn_conferir_modelagem`: `pronto: true`, 0 órfãos, 0 premissa sem valor, 0 sazonalidade sem curva. |
 | **Schema materializado** | `Supabase/schema.sql` — gerado pelo `Supabase/test/run.sh`, conferido pelo CI |

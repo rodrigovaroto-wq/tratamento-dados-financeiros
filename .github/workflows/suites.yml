@@ -248,6 +248,16 @@ jobs:
         working-directory: Dados de Teste/book-canastra
         run: PYTHONPATH=. python3 gerar.py
 
+      # ---- o book distress (F2.4): PL negativo, covenant rompido, aging, extrato ----
+      - name: Gerar o book-distress
+        # Mesmo papel do passo acima: o `motor.validar()` é o teste. 16 identidades
+        # por `assert` — balanço fecha nas 3 entidades × 3 anos, DRE = variação do
+        # PL, DFC reconstrói o caixa sem linha de ajuste, aging AP = Fornecedores
+        # do BP (14.900), extrato = caixa do BP (676), covenant 12,25x > 3,0x.
+        # Medido não-vazio em 22/09/2026: 5 de 5 alterações no gerador reprovam.
+        working-directory: Dados de Teste/book-distress
+        run: PYTHONPATH=. python3 gerar.py
+
       - name: Custo do lote (medido no artefato, sem chamar a OpenAI)
         # Reprova quando um documento custa mais que a estimativa por chamada que
         # sustenta o teto de US$ 3 — que foi como se descobriu que o livro razão
@@ -284,7 +294,27 @@ jobs:
         # SUSPEITA), e o PISO de cobertura — que é a regra 7 aplicada ao próprio
         # índice, porque uma regex que parou de casar continua verde e devolve
         # briefing curto, que se lê como "não há nada sobre isso".
+        #
+        # A TERCEIRA metade, acrescentada em 21/09/2026 depois de o portão abaixo
+        # reprovar por um defeito que ele NÃO sabia nomear: o grafo tinha 50 nós de
+        # `Verificação/saida/` (gitignored), porque a sessão rodou `variacoes.mts`
+        # antes de `indexar.mjs`. O `git diff --exit-code` acusou "diverge", que é
+        # verdade e é inútil — não diz que a causa foi artefato gerado. O teste
+        # afirma o invariante direto e NOMEIA os caminhos: rodado contra aquele
+        # grafo (070b0c2), reprova com 25 caminhos distintos.
+        #
+        # ELE RODA PRIMEIRO, E A ORDEM É O PONTO — achado da revisão independente.
+        # Ligado DEPOIS do `indexar.mjs`, como ele estava na primeira versão, o teste
+        # era MORTO: o `indexar.mjs` reescreve o `grafo.jsonl` antes dele, e o
+        # `git diff --exit-code` já garantiu que o arquivo bate com o commitado,
+        # gerado num checkout onde nada ignorado existe — a asserção ficava verdadeira
+        # por construção sempre que a linha anterior passava. Pior, no cenário que ele
+        # existe para nomear (alguém commita um grafo poluído) o `exit 1` do diff
+        # abortava a etapa ANTES dele, com exatamente a mensagem inútil que ele veio
+        # substituir. Rodando primeiro, ele lê o grafo COMMITADO — que é o estado de um
+        # checkout limpo — e é o único ponto em que essa pergunta tem resposta.
         run: |
+          node --test '.claude/conhecimento/test/*.test.mjs'
           node .claude/conhecimento/indexar.mjs
           git diff --exit-code -- .claude/conhecimento/grafo.jsonl \
             || { echo "::error::o grafo commitado diverge do repositório — rode node .claude/conhecimento/indexar.mjs e commite o resultado"; exit 1; }
@@ -411,6 +441,16 @@ jobs:
         # chamada a função que migration nenhuma cria (nome trocado num rename,
         # `.rpc()` com typo) para de esperar produção para aparecer.
         run: CONFERIR_DB=tdf_test node Supabase/test/conferir-chamadas.mjs
+
+      - name: A sonda do buraco no meio não dá alarme falso num banco completo
+        # CONTROLE POSITIVO da detecção de buraco da `sonda-producao.mjs` (PR #238). Contra
+        # este banco, montado com TODAS as migrations, a resposta tem de ser zero buracos.
+        # A primeira versão do critério passou verde nos testes e acusaria 0163 e 0171 em
+        # produção — o teste montava "produção" a partir da saída da própria função testada,
+        # e o remédio que a sonda manda ("aplique as pendentes") reaplicaria a 0171, que
+        # reemite fn_upsert_entidade e desfaz 18 migrations. Este passo é o que impede o
+        # critério de voltar a ser testado só contra ele mesmo.
+        run: SONDA_PSQL="psql -d tdf_test" node Supabase/test/sonda-producao.mjs --so-buraco
 
       - name: Suíte e2e (extração → banco → export)
         run: ./portal/node_modules/.bin/tsx Verificação/run.mts

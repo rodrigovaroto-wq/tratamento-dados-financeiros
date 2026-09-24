@@ -12,7 +12,10 @@
 --   #4  a linha aparece numa extração nova → a pendência resolve SOZINHA;
 --   #5  documento VAZIO não abre linha_exigida (já é item_sem_conteudo da
 --       0036) — sem dupla cobrança;
---   #6  exigência de origem 'proposta' (MUTUOS) cobra e se declara proposta;
+--   #6  exigência de origem 'proposta' (CONTRATO_SOCIAL) cobra e se declara proposta
+--       (era MUTUOS até a 0187, que desativou a exigência lexical de MUTUOS por ser
+--       falsa em relatório itemizado — a propriedade sob teste é a da ORIGEM proposta,
+--       e CONTRATO_SOCIAL/capital_social é a proposta que continua ativa);
 --   #7  política do dono (bloqueante/não-sobrepujável) vale por linha e
 --       PROPAGA para pendência já aberta;
 --   #8  idempotência: recomputar de novo não duplica;
@@ -158,21 +161,21 @@ begin
     where caso_id = v_caso and tipo = 'item_sem_conteudo' and estado <> 'resolvida';
   perform teste_assert_le(v_n = 1, 'o vazio continua sendo item_sem_conteudo (0036)', 'achou ' || v_n);
 
-  raise notice '--- 6. exigência PROPOSTA (MUTUOS) cobra e se declara proposta ---';
-  v_caso := (fn_upsert_caso('Caso linha exigida — mutuos'))::uuid;
+  raise notice '--- 6. exigência PROPOSTA (CONTRATO_SOCIAL) cobra e se declara proposta ---';
+  v_caso := (fn_upsert_caso('Caso linha exigida — contrato social'))::uuid;
   v_r := fn_registrar_documento(
-    v_caso, 'Grupo Alfa', 'anual', '2025', 'MUTUOS', 0.9, 'nome_arquivo',
-    'supabase_storage', 'bucket/mutuos.pdf', 'Mutuos 2025.pdf', true, 'HASH-LE-6', 'ok');
+    v_caso, 'Grupo Alfa', 'anual', '2025', 'CONTRATO_SOCIAL', 0.9, 'nome_arquivo',
+    'supabase_storage', 'bucket/contrato.pdf', 'Contrato Social 2025.pdf', true, 'HASH-LE-6', 'ok');
   v_ver := (v_r->>'documento_versao_id')::uuid;
-  -- Linhas com valor, mas nenhuma com "mútuo" no rótulo.
+  -- Linhas com valor, mas nenhuma com "capital social" no rótulo nem na seção.
   perform fn_registrar_campos_extraidos(v_ver, '[
     {"chave": "Saldo com controlada Beta", "valor_num": "120", "confianca": "0.9"}
   ]'::jsonb, 'N0');
 
   select count(*), min(descricao) into v_n, v_txt from pendencia
     where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
-      and motivo = 'completude:linha_exigida:MUTUOS:saldo_de_mutuo';
-  perform teste_assert_le(v_n = 1, 'MUTUOS sem linha de mútuo abre a pendência proposta', 'achou ' || v_n);
+      and motivo like 'completude:linha_exigida:CONTRATO_SOCIAL:capital_social%';
+  perform teste_assert_le(v_n = 1, 'CONTRATO_SOCIAL sem linha de capital social abre a pendência proposta', 'achou ' || v_n);
   perform teste_assert_le(v_txt like '%PROPOSTA%',
     'a descrição declara que a exigência é proposta (nenhuma checagem a lê hoje)', left(v_txt, 160));
 

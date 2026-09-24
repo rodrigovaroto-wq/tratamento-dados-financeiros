@@ -268,22 +268,20 @@ comment on function fn_instalacao_conferir() is
 grant execute on function fn_instalacao_conferir() to authenticated;
 
 -- -----------------------------------------------------------------------------
--- (3) OS SEIS GATILHOS NÃO-INTERNOS DE `main`, catalogados um por um.
+-- (3) OS NOVE GATILHOS NÃO-INTERNOS DE `main`, catalogados um por um.
 --
--- Levantados agora por `select tgrelid::regclass, tgname from pg_trigger where
--- not tgisinternal` contra um banco montado do zero pelas migrations até a
--- 0186 (a mais nova antes desta). São exatamente seis; nenhum outro existe em
--- `main` hoje.
+-- Levantados por `select tgrelid::regclass, tgname from pg_trigger where not
+-- tgisinternal` contra um banco montado do zero pelas migrations até a 0188.
+-- Eram seis quando esta migration nasceu (antes do merge da F1.7, PR #238);
+-- a F1.7 trouxe mais três (0182/0183), catalogados aqui no mesmo passe em
+-- que a branch recebeu o main. São nove; nenhum outro existe hoje. Todo
+-- gatilho novo tem de entrar neste catálogo: o `sonda_ve_gatilho.test.sql`
+-- exige igualdade de conjuntos entre pg_trigger e os requisitos `gatilho`.
 --
--- OS TRÊS GATILHOS DA F1.7 NÃO ENTRAM AQUI: eles vivem no PR #238, ainda não
--- mergeado em `main`, e catalogá-los agora faria `instalacao.test.sql`
--- reprovar neste banco (que não os tem). QUEM MERGEAR/RENUMERAR A F1.7 deve
--- acrescentá-los com `tipo = 'gatilho'`, mesmo padrão deste bloco — e o
--- `sonda_ve_gatilho.test.sql` REPROVA até isso ser feito (igualdade de
--- conjuntos entre pg_trigger e o catálogo). Os `objeto`:
---   `entidade_controlador.trg_entidade_controlador_soma_maxima` (0182)
---   `entidade.trg_entidade_forma_de_controle_tem_vinculo` (0183)
---   `instalacao_cobertura.trg_instalacao_cobertura_nao_regride` (0183)
+-- DEPENDÊNCIA EM PRODUÇÃO: os três da F1.7 só existem com a 0182 e a 0183
+-- aplicadas. Aplicar a 0189 num banco sem a 0183 faz a sonda acusar dois
+-- deles ausentes — o que é VERDADE (a guarda não está lá), não defeito desta
+-- migration. A ordem recomendada é 0183 antes da 0189.
 --
 -- SEVERIDADE: as quatro guardas do golden set (rodada/documento/rótulo/campo
 -- congelados) e o gatilho de entidade ambígua ficam 'importante', não
@@ -292,7 +290,12 @@ grant execute on function fn_instalacao_conferir() to authenticated;
 -- ser notado. É a mesma família de dano dos outros requisitos 'importante' do
 -- catálogo (0142–0146): número errado silencioso, não painel fora do ar.
 -- `gatilho_da_promocao_dispara` segue a MESMA severidade do requisito
--- `gatilho_da_promocao` que ele complementa (0137, 'importante').
+-- `gatilho_da_promocao` que ele complementa (0137, 'importante'). Os três da
+-- F1.7 também: a soma > 100% e o controle_comum sem vínculo gravariam um
+-- fato financeiro falso em silêncio, e o marcador que regride faz a sonda
+-- subnotificar — nenhum derruba o sistema.
+--
+-- ORDEM 820+: a 0187 usa 790–796 e a 0182/0183 chegam a 815.
 -- -----------------------------------------------------------------------------
 
 insert into instalacao_requisito
@@ -303,26 +306,26 @@ insert into instalacao_requisito
    'Uma rodada golden CONGELADA aceita descongelar, mudar de nome ou de taxonomia — o número que '
    'o dial de autonomia mede deixa de ser reprodutível, porque o conjunto que o sustenta pode ter '
    'mudado depois da medição sem deixar rastro.',
-   'importante', 800),
+   'importante', 820),
 
   ('gatilho_guarda_documento_congelada', '0126', 'gatilho',
    'golden_documento.trg_golden_documento_congelada', null,
    'Uma rodada golden CONGELADA aceita documento novo dentro dela — o conjunto que sustentou uma '
    'medição do dial deixa de ser o mesmo conjunto quando alguém for reproduzi-la.',
-   'importante', 801),
+   'importante', 821),
 
   ('gatilho_guarda_rotulo_congelada', '0126', 'gatilho',
    'golden_rotulo.trg_golden_rotulo_congelada', null,
    'Uma rodada golden CONGELADA aceita rótulo novo — o gabarito contra o qual o sistema é medido '
    'muda depois de a rodada já ter produzido um veredito, e o veredito anterior fica '
    'silenciosamente desatualizado.',
-   'importante', 802),
+   'importante', 822),
 
   ('gatilho_guarda_campo_congelada', '0126', 'gatilho',
    'golden_campo.trg_golden_campo_congelada', null,
    'Uma rodada golden CONGELADA aceita campo novo — mesmo defeito do rótulo: o gabarito de uma '
    'medição já fechada muda por baixo, e ninguém que olhar o resultado antigo vai saber.',
-   'importante', 803),
+   'importante', 823),
 
   ('gatilho_da_promocao_dispara', '0137', 'gatilho',
    'decisao.trg_auto_promover_dial', null,
@@ -331,14 +334,37 @@ insert into instalacao_requisito
    'não produz efeito nenhum — pior que não ter promoção automática, porque parece ligada. (Este '
    'requisito complementa `gatilho_da_promocao`, tipo funcao/0137, que confere só a função — os '
    'dois juntos é que fecham o caso: função existe E está de fato amarrada ao gatilho.)',
-   'importante', 804),
+   'importante', 824),
 
   ('gatilho_entidade_ambigua_dispara', '0153', 'gatilho',
    'documento.trg_entidade_ambigua', null,
    'A pendência de entidade ambígua depende deste gatilho para abrir — sem ele, um documento que '
    'chega com entidade ambígua não gera pendência nenhuma, e a ambiguidade fica resolvida em '
    'silêncio pelo primeiro palpite, sem que ninguém decida.',
-   'importante', 805),
+   'importante', 825),
+
+  -- ---- os três da F1.7 (0182/0183), entraram no merge do PR #238 ----------
+  ('gatilho_guarda_soma_de_controle', '0182', 'gatilho',
+   'entidade_controlador.trg_entidade_controlador_soma_maxima', null,
+   'A soma dos percentuais conhecidos de controle de uma empresa passa a aceitar mais de 100%: '
+   'uma terceira participação é gravada em silêncio, e o grupo por controle comum passa a ser '
+   'montado sobre um quadro societário impossível.',
+   'importante', 827),
+
+  ('gatilho_guarda_controle_comum_tem_vinculo', '0183', 'gatilho',
+   'entidade.trg_entidade_forma_de_controle_tem_vinculo', null,
+   'Uma empresa passa a poder ser declarada "controle comum" sem nenhum controlador registrado — '
+   'o perímetro do grupo afirma um vínculo que ninguém mediu, e a tela não distingue isso de um '
+   'vínculo real.',
+   'importante', 828),
+
+  ('gatilho_cobertura_nao_regride', '0183', 'gatilho',
+   'instalacao_cobertura.trg_instalacao_cobertura_nao_regride', null,
+   'O marcador de cobertura da própria sonda volta a aceitar valor MENOR: uma migration aplicada '
+   'fora de ordem (já aconteceu, a 0182 depois da 0188) rebaixa ate_migration sem erro, e a sonda '
+   'passa a subnotificar o que está instalado. (Complementa `cobertura_nao_regride`, tipo corpo/'
+   '0183, que confere só a função.)',
+   'importante', 829),
 
   -- ---- o requisito CORPO que prova que esta própria reemissão está no ar ----
   --
@@ -354,7 +380,7 @@ insert into instalacao_requisito
    'A sonda de instalação não vê gatilho desligado: `drop trigger`/`disable trigger` numa guarda '
    'do golden set ou da promoção do dial passa despercebido, porque o único requisito que existia '
    'para essas guardas era sobre a FUNÇÃO — que sobrevive aos dois.',
-   'importante', 806)
+   'importante', 826)
 
 on conflict (chave) do update
   set migration = excluded.migration,
@@ -371,11 +397,11 @@ on conflict (chave) do update
 update instalacao_cobertura
    set ate_migration = '0189', revisado_em = current_date,
        observacao = 'A 0189 acrescenta o tipo gatilho (instalacao_requisito_tipo_check + o ramo '
-         'novo de fn_instalacao_conferir) e cataloga os seis gatilhos não-internos de main: as '
+         'novo de fn_instalacao_conferir) e cataloga os nove gatilhos não-internos de main: as '
          'quatro guardas de imutabilidade do golden set (0126), o gatilho de auto-promoção do dial '
-         '(0137, complementa gatilho_da_promocao que já existia como tipo funcao) e o gatilho de '
-         'entidade ambígua (0153). A função do gatilho sobrevive a drop trigger/disable trigger, '
-         'então nenhum desses seis tinha prova real de estar LIGADO antes desta migration — só de '
-         'a função existir. Os três gatilhos da F1.7 (PR #238, não mergeado) ficam de fora até o '
-         'merge; quem mergear os acrescenta com o mesmo tipo gatilho.'
+         '(0137, complementa gatilho_da_promocao que já existia como tipo funcao), o gatilho de '
+         'entidade ambígua (0153) e os três da F1.7 (soma de controle 0182; vínculo do controle '
+         'comum e marcador que não regride 0183). A função do gatilho sobrevive a drop trigger/'
+         'disable trigger, então nenhum desses nove tinha prova real de estar LIGADO antes desta '
+         'migration — só de a função existir.'
  where id = true;
