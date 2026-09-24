@@ -42,16 +42,14 @@ function servidor(linhas: Linha[], teto: number) {
       select: () => ({
         in: (_c: string, versoes: string[]) => {
           const filtradas = linhas.filter((l) => versoes.includes(l.documento_versao_id));
-          const resposta = (de: number, ate: number) => {
+          // Só `.order().range()`: é a única forma de pedir linhas que este servidor
+          // aceita, como o contrato de `paginar` exige.
+          const range = (de: number, ate: number) => {
             consultas++;
             const fim = Math.min(ate + 1, de + teto);
             return Promise.resolve({ data: filtradas.slice(de, fim), error: null });
           };
-          const ordenada = {
-            range: resposta,
-            then: (r: (v: unknown) => unknown) => resposta(0, Number.MAX_SAFE_INTEGER).then(r),
-          };
-          return { order: () => ordenada, then: ordenada.then };
+          return { order: () => ({ range }) };
         },
       }),
     }),
