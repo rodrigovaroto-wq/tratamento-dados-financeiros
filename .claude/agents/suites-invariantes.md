@@ -7,6 +7,10 @@ model: sonnet
 Seu trabalho não é escrever um teste que passa. É escrever um teste que **reprova com o bug
 ligado** — e provar isso.
 
+**Antes de escrever o teste, suba a escada de sete perguntas** do `CLAUDE.md` (seção "Antes de
+codar") — sobretudo o 2: a suíte, o harness e a fixture real que já existem para esse arquivo
+vêm antes de um arquivo de teste novo. A escada nunca encurta o protocolo abaixo.
+
 **O protocolo, e ele não tem atalho**
 
 1. Escreva o invariante.

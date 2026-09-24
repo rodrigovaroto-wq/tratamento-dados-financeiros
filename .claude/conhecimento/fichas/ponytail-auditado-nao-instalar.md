@@ -1,12 +1,17 @@
 ---
 name: ponytail-auditado-nao-instalar
-description: o plugin ponytail 4.10.0 ("lazy senior dev") foi auditado e NÃO foi instalado — é always-on em três hooks, contradiz as regras 2, 5 e 6 e o "pedido aberto → 5 Prompts"; duas técnicas dele entraram no /rodada como texto
+description: o plugin ponytail 4.10.0 ("lazy senior dev") foi auditado e NÃO foi instalado — é always-on em três hooks e contradiz as regras 2, 5 e 6; a escada de sete perguntas dele entrou no CLAUDE.md, adaptada, para todo código escrito aqui
 tipo: doutrina
 toca:
+  - CLAUDE.md
   - .claude/commands/rodada.md
+  - .claude/agents/migrations-postgres.md
+  - .claude/agents/n8n-workflow.md
+  - .claude/agents/portal-export.md
+  - .claude/agents/suites-invariantes.md
 ---
 
-# Ponytail 4.10.0: auditado, NÃO instalado — duas técnicas entraram no `/rodada`
+# Ponytail 4.10.0: auditado, NÃO instalado — a escada dele entrou no `CLAUDE.md`
 
 `DietrichGebert/ponytail` (v4.10.0, commit `e3ba2aa`) foi lido inteiro em 24/09/2026: as 6 skills
 (`ponytail`, `-review`, `-audit`, `-debt`, `-gain`, `-help`), os hooks do Claude Code e as
@@ -34,14 +39,26 @@ escopo; o painel do `/revisar` foi cortado de cinco para três lentes em 16/09 j
 multiplicar revisores. `/ponytail-gain` mostra números de benchmark de outro repositório (e o
 próprio README admite que os 80–94% originais eram em parte artefato da linha de base).
 
-## O que foi trazido — como texto no `/rodada`, sem hook nenhum
+## O que foi trazido — como texto, sem hook nenhum
 
-1. **Passo 2: listar todos os chamadores antes de editar uma função** e corrigir no ponto por onde
-   todos passam. É a regra "bug fix = root cause" do ponytail, aterrada no caso daqui que custou
-   caro: `custoEstimadoPorTamanho` promovida a decisora (`.claude/memory/conta-parcial-vira-v31-quando-promovida.md`).
-2. **Passo 3: confirmar que a função/helper/nó ainda não existe antes de planejá-lo** — o degrau 2
-   da escada dele ("already in this codebase? reuse it"), apontado para o `buscar.mjs`. Duas
-   implementações da mesma conta divergem sem erro, que é a lente central do projeto.
+A primeira versão (24/09) trouxe só duas técnicas para dentro do `/rodada`. O dono corrigiu no
+mesmo dia: a escada vale para **toda execução que cria código**, não só para quem abre uma rodada.
+Por isso ela mora no `CLAUDE.md`, que toda sessão carrega, e não num comando que se invoca.
+
+1. **`CLAUDE.md`, "Antes de codar": a escada de sete perguntas**, adaptada — o degrau 2 aponta para
+   o `buscar.mjs`, o 4 põe constraint/função do Postgres antes de validação em nó Code e fórmula do
+   Excel antes de valor calculado — e a lista do que ela **nunca corta**, que inclui as sete regras.
+   É essa lista que tira o conflito da tabela acima: menos código nunca vale menos nota de ausência,
+   menos invariante medido ou menos porquê no comentário.
+2. **Mesma seção: listar todos os chamadores antes de editar uma função** e corrigir no ponto por
+   onde todos passam — o "bug fix = root cause" dele, aterrado no caso `custoEstimadoPorTamanho`
+   (`.claude/memory/conta-parcial-vira-v31-quando-promovida.md`).
+3. **Um ponteiro de quatro linhas** em cada agente que escreve código (`migrations-postgres`,
+   `n8n-workflow`, `portal-export`, `suites-invariantes`), e o `/rodada` aponta para a seção em vez
+   de repetir o texto — duas cópias da mesma regra divergem.
+
+O que NÃO veio: o modo de saída ("code first, three lines"), o check único sem medir não-vazio, os
+níveis lite/full/ultra, o marcador `ponytail:` e os seis comandos de barra.
 
 ## O que esta ficha NÃO afirma
 
