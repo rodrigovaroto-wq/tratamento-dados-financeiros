@@ -75,6 +75,9 @@ node --test 'Supabase/test/*.test.mjs'       # a tradução de "não perguntei a
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-kit-basico.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-modelagem-cobertura.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-limite-de-envio.mts
+node --test '.claude/conhecimento/test/*.test.mjs'  # ANTES de indexar: o grafo COMMITADO não pode
+                                                   # citar arquivo que o git ignora (depois do
+                                                   # indexar essa pergunta é verdadeira por construção)
 node .claude/conhecimento/indexar.mjs && git diff --exit-code -- .claude/conhecimento/grafo.jsonl \
   && node .claude/conhecimento/conferir.mjs   # o índice do conhecimento é derivado e tem portão
 node .claude/verificar-comandos.mjs           # todo subagent_type citado por comando existe
@@ -82,6 +85,8 @@ node .claude/verificar-espelho-claude-md.mjs  # este bloco não ficou para trás
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 CONFERIR_PSQL="sudo -u postgres psql -h /tmp -p 5432" CONFERIR_DB=tdf_test \
   node Supabase/test/conferir-chamadas.mjs
+SONDA_PSQL="sudo -u postgres psql -h /tmp -p 5432 -d tdf_test" \
+  node Supabase/test/sonda-producao.mjs --so-buraco   # banco completo tem de dar ZERO buracos
 E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" ./portal/node_modules/.bin/tsx Verificação/run.mts
 ./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 

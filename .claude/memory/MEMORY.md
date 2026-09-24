@@ -13,6 +13,9 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 
 - [Estágio desligado parece estágio limpo](estagio-desligado-parece-limpo.md) — o modo de falha
   que mais custou aqui: nada de erro, nada de pendência, e o estágio simplesmente não rodou
+- [Verificador sem controle positivo](verificador-sem-controle-positivo.md) — a mesma regra na
+  verificação à mão: um "nenhum encontrado" só vale se a checagem PROVADAMENTE acha o que procura.
+  Cinco do PR #238 responderam outra pergunta, três dizendo "tudo certo"
 
 ## Doutrina (viola isto e o defeito chega ao cliente)
 
@@ -79,7 +82,11 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 
 - [Aplicar migration em produção é pela API de gerenciamento](aplicar-migration-em-producao-pela-api.md)
   — `psql` não alcança a porta; e a API envolve tudo numa transação, então `alter type … add
-  value` exige DUAS chamadas. Backfill: meça o alcance do `where` em produção ANTES (365 × 7)
+  value` exige DUAS chamadas. Backfill: meça o alcance do `where` em produção ANTES (365 × 7) —
+  e a 0183 REPETIU o erro com esta linha escrita, porque quem escreve migration é o agente
+- [Sessões paralelas aplicam fora de ordem](sessoes-paralelas-aplicam-fora-de-ordem.md) — a
+  numeração reservada segurou; o marcador de cobertura regrediu (0188→0182) e a sonda não viu o
+  buraco. Antes de aplicar: compare com produção o corpo de toda função que você reemite
 - [O auto mode recusa aplicar migration em produção mesmo autorizado no chat](auto-mode-recusa-migration-producao.md)
   — o classificador de permissão decide por categoria de ação, não por instrução lida na hora;
   e recusa o agente escrever a própria regra ("Self-Modification"). Funciona: o dono passa a
@@ -87,7 +94,8 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 - [O mandato real não tem holding](grupo-por-controle-comum-sem-holding.md) — as 8 empresas são
   irmãs sob controle comum de PESSOAS FÍSICAS, medido nos contratos sociais; `controladora_id`
   (0181) fica NULL por estar certo, não por faltar cadastro, e é por isso que o COMBINADO do
-  cliente provavelmente nunca existiu
+  cliente provavelmente nunca existiu. Com o dado real, o modelo da 1.7 dá DOIS grupos de dois —
+  "as 8 como um grupo" exige decidir se controle familiar conta, e isso é juízo, não medição
 
 - [A republicação do n8n perde toggles](republicacao-do-n8n-perde-toggles.md) — `multipleFiles`,
   `onError` em 23 nós, `retryOnFail` em 11

@@ -287,9 +287,25 @@ supabase db execute --file Supabase/migrations/0178_o_titulo_da_planilha_nao_e_p
 supabase db execute --file Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql
 supabase db execute --file Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql
 supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql
+supabase db execute --file Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql
+# ATENÇÃO — a 0183 precisa dos MESMOS DOIS PASSOS que a 0179 precisou, e pela mesma razão.
+# Ela faz `alter type pendencia_tipo add value 'forma_de_controle_indefinida'` e USA o rótulo no
+# mesmo arquivo. No `psql` isso funciona (cada statement de topo aplica em autocommit, e o
+# cabeçalho da migration explica isso), mas o CAMINHO REAL DE PRODUÇÃO não é o psql: a porta do
+# Postgres não é alcançável do container, aplica-se pela API de gerenciamento do Supabase, e ela
+# envolve o lote numa TRANSAÇÃO IMPLÍCITA — onde o Postgres recusa com "unsafe use of new value of
+# enum type". Foi exatamente o que aconteceu com a 0179 (registrado no ESTADO.md), e quem aplicar
+# esta lista de uma vez vai receber o mesmo erro no meio, com a 0182 já aplicada.
+# Aplique a 0183 em dois envios: PRIMEIRO SÓ a linha `alter type pendencia_tipo add value if not
+# exists 'forma_de_controle_indefinida';`, DEPOIS o arquivo inteiro com essa linha comentada (o
+# mesmo roteiro do topo do ESTADO.md — antes daqui havia dois roteiros diferentes, e os dois
+# funcionavam, o que é pior: quem lê os dois não sabe qual o outro seguiu).
+# E ANTES do segundo envio: a 0183 reemite `fn_fundir_entidade` (0153). Compare o corpo de produção
+# com o da 0153 — a diferença para o da 0183 tem de ser só os blocos marcados `0183`.
+supabase db execute --file Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql
 
-# A 0185 NÃO EXISTE, e o buraco é deliberado (0182–0184 também são lacuna,
-# reservada a outra sessão). Ela propunha exigência LEXICAL para nove tipos de
+# A 0185 NÃO EXISTE, e o buraco é deliberado. (A 0182 e a 0183, da F1.7, estão logo acima e SÃO
+# aplicáveis; a 0184 foi reservada pela F1.7 e NÃO usada — lacuna declarada, nada a aplicar.) Ela propunha exigência LEXICAL para nove tipos de
 # relatório itemizado e foi REPROVADA na medição contra produção em 21/09/2026:
 # 17 de 17 pendências que abriria eram falsas — em relatório itemizado o rótulo é
 # o ITEM, não o conceito (.claude/memory/conceito-nao-esta-no-rotulo-de-relatorio-itemizado.md).

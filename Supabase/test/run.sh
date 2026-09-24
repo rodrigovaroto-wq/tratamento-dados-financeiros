@@ -596,6 +596,26 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_participacao.test.sql
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0182 — grupo por controle comum: controlador/entidade_controlador, sem holding (fatia 1.7a do plano F1)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_controlador.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== 0183 — forma_de_controle: o vazio de controladora_id distinguível de não preenchido (fatia 1.7b, fecha a 1.7)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_forma_de_controle.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== 0183 — o marcador de cobertura da sonda não regride (a 0182 aplicada depois da 0188 o rebaixou em produção)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/instalacao_cobertura_nao_regride.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== 0183 — a fusão de entidades não apaga o controle declarado (o on delete cascade da 0182 o levava junto)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fusao_preserva_controle.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \

@@ -1171,12 +1171,36 @@ CERTA, e o sistema fica sem onde registrar que elas são um grupo. É a regra 7 
 por "o grupo é horizontal" é hoje indistinguível de NULL por "ninguém cadastrou".
 **O que falta:** uma forma de registrar o vínculo que existe de fato — controle comum por
 sócio/controlador — sem inventar uma holding que não existe.
-**Pronto quando:** as 8 entidades do mandato real podem ser reconhecidas como um grupo, e um
-`controladora_id` vazio passa a ser distinguível de um não preenchido.
+**Pronto quando (como estava escrito em 18/09):** as 8 entidades do mandato real podem ser
+reconhecidas como um grupo, e um `controladora_id` vazio passa a ser distinguível de um não
+preenchido.
 *Agente: `migrations-postgres`. Risco: médio — mexe no mesmo modelo que a 1.5 acabou de criar.*
-**NÃO INICIADA** — documentada em 18/09/2026, construção adiada por decisão do dono. A 1.5
-continua válida e correta para mandatos que TENHAM holding; esta fatia a complementa, não a
-substitui.
+
+**CONSTRUÍDA, MEDIDA E REVISADA (21–23/09/2026, PR #238) — `0182` APLICADA em produção em 23/09,
+`0183` PENDENTE de aplicação pelo dono.** A 1.5 continua válida para mandatos COM holding; esta
+fatia a complementa. `0182`: `controlador` + `entidade_controlador` + `fn_grupo_por_controle_comum`
+(fecho transitivo). `0183`: `entidade.forma_de_controle` (`indefinido` · `controlada_por_entidade`
+· `controle_comum`), com check de coerência e gatilho de vínculo. Números e achados em
+`.claude/conhecimento/fichas/f1-controle-comum-0182-0183.md`.
+
+**A metade "distinguível" está entregue** (na `0183`): `indefinido`/NULL e `controle_comum`/NULL
+são estados diferentes por consulta, provado por teste.
+
+**A metade "as 8 como um grupo" NÃO é alcançável pelo dado medido, e isso é achado, não atraso.**
+MEDIDO em 23/09 rodando o modelo sobre os sócios e quotas EXATOS dos 4 contratos legíveis (banco
+local, transação desfeita): **dois grupos de dois**, cada um ligado por um sócio pessoa física, e as
+quatro entidades sem contrato lido fora da saída. Unir os dois grupos exigiria afirmar que sócios de
+MESMO SOBRENOME formam um bloco de controle familiar — juízo, não medição, e o modelo se recusa a
+fabricá-lo (regra 1). É o padrão da 1.6 de novo: o critério presumiu algo que o dado não mostra.
+
+**Pronto quando (revisado em 23/09, com a medição acima):** (a) `0183` aplicada em produção; (b)
+os sócios dos contratos LEGÍVEIS registrados, e a forma de controle das entidades com base nisso —
+o que dá os dois grupos que o dado sustenta. "As 8 como um grupo" sai deste critério e passa a
+depender de duas coisas que não são código: **os 4 contratos que faltam** (AMOBELEZA e CORPORATE
+vieram com zero campos; DISTRIBUIDORAS PR/RS não têm contrato) e **uma decisão do dono sobre se
+controle familiar conta como controle comum** — relevante na prática de grupo econômico, mas sem
+conceito correspondente no modelo (não há "bloco familiar"; `controlador` é uma pessoa). Se o dono
+decidir que conta, é uma fatia nova de modelo, não um cadastro.
 
 ### 12.3 O que a F1 NÃO faz, dito de propósito
 
