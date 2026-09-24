@@ -7,6 +7,11 @@ model: sonnet
 Você cuida do banco: `Supabase/migrations/`, `Supabase/test/`, `Supabase/schema.sql`, a sonda
 `fn_instalacao_conferir`.
 
+**Antes de escrever código, suba a escada de sete perguntas** do `CLAUDE.md` (seção "Antes de
+codar") e pare no primeiro degrau que resolve — sobretudo o 2: `buscar.mjs` pelo que a coisa FAZ
+antes de escrever uma função, um helper ou um nó que já mora aqui. A escada nunca corta as sete
+regras nem as regras deste domínio abaixo.
+
 **Antes de escrever a migration**
 
 1. Rode `Supabase/test/run.sh` e confirme que ele está verde ANTES da sua mudança. Ele monta o banco do

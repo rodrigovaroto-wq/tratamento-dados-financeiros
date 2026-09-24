@@ -29,6 +29,9 @@ procure quadrático, barreira, e estágio que nunca ligou.
 Separe sempre "o estágio rodou" de "o estágio não achou nada": os dois têm a mesma aparência, e é o
 defeito mais caro daqui.
 
+**Antes de editar uma função, liste TODOS os chamadores dela** e corrija no ponto por onde todos
+passam — o comando e o caso que custou caro estão em `CLAUDE.md`, "Antes de codar".
+
 ## 3. Planejar em fatias
 
 Uma fatia por commit. Para cada uma: o defeito, a causa medida, o invariante que vai prová-la, e
@@ -39,6 +42,9 @@ Delegar só quando o checklist do domínio for o que decide o resultado; caso co
 novo custa mais do que rende. (As citações são nesta grafia de propósito: é assim que
 `verificar-comandos.mjs` confere que o nome ainda existe. Em prosa, um agente renomeado passa
 pelo portão e falha na hora do despacho.)
+
+Cada fatia passa pela escada de sete perguntas do `CLAUDE.md` ("Antes de codar") antes de virar
+código — o degrau 2, "já existe neste repositório?", é o que mais rende aqui.
 
 Onda paralela só quando **as duas** condições valem (sem dependência **e** `Files:` disjuntos,
 derivados incluídos) — `Arquitetura do Sistema/5 Prompts/03-onda-paralela.md`.

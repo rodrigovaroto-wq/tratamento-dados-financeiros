@@ -193,7 +193,31 @@ capturando o `HEAD` na hora. Ver `Arquitetura do Sistema/5 Prompts/03-onda-paral
 
 Pedido aberto (mais de uma leitura razoável) → `Arquitetura do Sistema/5 Prompts/` primeiro, código depois.
 Bug → causa raiz antes de qualquer correção; três correções falhas seguidas param a linha e
-questionam a arquitetura, não tentam a quarta.
+questionam a arquitetura, não tentam a quarta. **Antes de editar uma função, liste TODOS os
+chamadores** (`grep -rn <nome> Supabase/ N8N/ portal/src/`) e corrija no ponto por onde todos
+passam — mudar a semântica de uma muda a de todos (`custoEstimadoPorTamanho`, 46× abaixo, v31
+reaberto: `.claude/memory/conta-parcial-vira-v31-quando-promovida.md`).
+
+**A escada — sete perguntas antes de escrever QUALQUER código** (migration, nó, gerador, portal,
+teste, script). Ela roda *depois* de entender o problema e ler o que a mudança toca, nunca no lugar
+disso. Pare no primeiro degrau que resolve:
+
+1. **Isto precisa existir?** Necessidade especulativa → não faça, e diga em uma linha.
+2. **Já existe neste repositório?** `buscar.mjs` pelo que a coisa FAZ, não pelo nome que você daria
+   → reuse. Duas implementações da mesma conta divergem sem erro nenhum.
+3. **A biblioteca padrão resolve?** (Node, Python, as funções nativas do Postgres.)
+4. **A plataforma resolve?** `check`/`unique`/FK/função no Postgres antes de validação em nó Code
+   ou TypeScript; fórmula do Excel antes de valor calculado no export.
+5. **Uma dependência que JÁ está no lock resolve?** Nunca uma nova para o que poucas linhas fazem.
+6. **Cabe em uma linha?** Uma linha.
+7. **Só então:** o mínimo que funciona — sem abstração de uma implementação só, sem configuração
+   para valor que nunca muda, sem andaime "para depois".
+
+**O que a escada NUNCA corta:** validação na fronteira de confiança (o documento do cliente, a
+saída da extração), tratamento que evita perda de dado, segurança, e as sete regras — a nota de
+ausência (1), o invariante medido não-vazio (2), o porquê com o número no comentário e no commit
+(5 e 6), o sinal positivo de que o estágio rodou (7). Simplificação deliberada com teto conhecido
+leva comentário com o teto e quando subir. Menos código é consequência, não meta.
 
 ## Memória
 

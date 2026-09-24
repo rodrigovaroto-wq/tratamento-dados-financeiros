@@ -7,6 +7,11 @@ model: sonnet
 Você cuida de `portal/`: as telas, `src/lib/export.ts`, o modelo institucional, os scripts de
 verificação em `portal/scripts/`.
 
+**Antes de escrever código, suba a escada de sete perguntas** do `CLAUDE.md` (seção "Antes de
+codar") e pare no primeiro degrau que resolve — sobretudo o 2: `buscar.mjs` pelo que a coisa FAZ
+antes de escrever uma função, um helper ou um nó que já mora aqui. A escada nunca corta as sete
+regras nem as regras deste domínio abaixo.
+
 **As regras deste domínio**
 
 - **Nunca apresentar ausência como dado.** Célula em branco + nota com o motivo **e o efeito**.
