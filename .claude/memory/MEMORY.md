@@ -51,6 +51,9 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
   `FOR ROLE postgres`: schema idêntico, CI vermelho
 - [Portão calibra sobre a entrada de PRODUÇÃO](portao-mede-a-entrada-de-producao.md) — o texto
   que o n8n extrai não é o de nenhum extrator local: +3% no portão, 161% de erro em produção
+- [`item_sem_conteudo` só cobre tipo OBRIGATÓRIO](item-sem-conteudo-so-cobre-obrigatorio.md) —
+  documento COMPLEMENTAR vazio só aparece via `extracao_falhou` por documento (`0111`); a `0185`
+  teria assumido cobertura que não existe se tivesse ido adiante
 
 - [Agente interrompido deixa a correção DESLIGADA](agente-morto-deixa-a-correcao-desligada.md) —
   um `false and` no meio da expressão, o arquivo com cara de pronto; e não rode a suíte enquanto
@@ -84,6 +87,10 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 - [Sessões paralelas aplicam fora de ordem](sessoes-paralelas-aplicam-fora-de-ordem.md) — a
   numeração reservada segurou; o marcador de cobertura regrediu (0188→0182) e a sonda não viu o
   buraco. Antes de aplicar: compare com produção o corpo de toda função que você reemite
+- [O auto mode recusa aplicar migration em produção mesmo autorizado no chat](auto-mode-recusa-migration-producao.md)
+  — o classificador de permissão decide por categoria de ação, não por instrução lida na hora;
+  e recusa o agente escrever a própria regra ("Self-Modification"). Funciona: o dono passa a
+  sessão para modo manual e aprova cada chamada (0186–0188 aplicadas assim, 22/09)
 - [O mandato real não tem holding](grupo-por-controle-comum-sem-holding.md) — as 8 empresas são
   irmãs sob controle comum de PESSOAS FÍSICAS, medido nos contratos sociais; `controladora_id`
   (0181) fica NULL por estar certo, não por faltar cadastro, e é por isso que o COMBINADO do

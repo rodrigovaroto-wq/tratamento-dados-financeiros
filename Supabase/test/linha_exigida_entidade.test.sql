@@ -221,22 +221,22 @@ declare
   v_n int;
   v_doc uuid := gen_random_uuid();
 begin
-  raise notice '--- 4. granularidade CASO (MUTUOS): comportamento da 0113, intocado ---';
-  v_caso := (fn_upsert_caso('Caso mutuos por caso'))::uuid;
+  raise notice '--- 4. granularidade CASO (MAPA_DIVIDA — era MUTUOS até a 0187): comportamento da 0113, intocado ---';
+  v_caso := (fn_upsert_caso('Caso mapa de divida por caso'))::uuid;
   v_r := fn_registrar_documento(
-    v_caso, 'Grupo Dinamo', 'anual', '2025', 'MUTUOS', 0.9, 'nome_arquivo',
-    'supabase_storage', 'bucket/mutuos-ent.pdf', 'Mutuos Dinamo.pdf', true, 'HASH-MUT-ENT', 'ok');
+    v_caso, 'Grupo Dinamo', 'anual', '2025', 'MAPA_DIVIDA', 0.9, 'nome_arquivo',
+    'supabase_storage', 'bucket/mapa-ent.pdf', 'Mapa Divida Dinamo.pdf', true, 'HASH-MAPA-ENT', 'ok');
   v_ver := (v_r->>'documento_versao_id')::uuid;
   perform fn_registrar_campos_extraidos(v_ver, '[
-    {"chave": "Saldo com controlada Zeta", "valor_num": "150", "confianca": "0.9"}
+    {"chave": "Saldo devedor contrato Zeta", "valor_num": "150", "confianca": "0.9"}
   ]'::jsonb, 'N0');
 
   select count(*) into v_n from pendencia
     where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
-      and motivo = 'completude:linha_exigida:MUTUOS:saldo_de_mutuo'
+      and motivo = 'completude:linha_exigida:MAPA_DIVIDA:juros_por_contrato'
       and entidade_id is null;
   perform teste_assert_lee(v_n = 1,
-    'MUTUOS (granularidade caso) cobra por caso: motivo SEM sufixo, entidade_id nulo', 'achou ' || v_n);
+    'MAPA_DIVIDA (granularidade caso) cobra por caso: motivo SEM sufixo, entidade_id nulo', 'achou ' || v_n);
 
   raise notice '--- 5. fallback: balanço SEM entidade nenhuma não vira pendência falsa por entidade ---';
   v_caso := (fn_upsert_caso('Caso sem entidade rotulada'))::uuid;

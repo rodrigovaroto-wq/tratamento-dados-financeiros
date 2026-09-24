@@ -248,6 +248,16 @@ jobs:
         working-directory: Dados de Teste/book-canastra
         run: PYTHONPATH=. python3 gerar.py
 
+      # ---- o book distress (F2.4): PL negativo, covenant rompido, aging, extrato ----
+      - name: Gerar o book-distress
+        # Mesmo papel do passo acima: o `motor.validar()` é o teste. 16 identidades
+        # por `assert` — balanço fecha nas 3 entidades × 3 anos, DRE = variação do
+        # PL, DFC reconstrói o caixa sem linha de ajuste, aging AP = Fornecedores
+        # do BP (14.900), extrato = caixa do BP (676), covenant 12,25x > 3,0x.
+        # Medido não-vazio em 22/09/2026: 5 de 5 alterações no gerador reprovam.
+        working-directory: Dados de Teste/book-distress
+        run: PYTHONPATH=. python3 gerar.py
+
       - name: Custo do lote (medido no artefato, sem chamar a OpenAI)
         # Reprova quando um documento custa mais que a estimativa por chamada que
         # sustenta o teto de US$ 3 — que foi como se descobriu que o livro razão

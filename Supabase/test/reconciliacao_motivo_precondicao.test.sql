@@ -31,7 +31,9 @@
 -- fn_registrar_reconciliacao com 'documento_ausente' quando falta a
 -- contraparte, e com 'precondicao_nao_satisfeita' DIRETO (sem motivo mais
 -- fino — é o caso que o CONTRATO da 0186 documenta) quando os dois documentos
--- estão presentes mas o Caixa/Disponível não foi localizado.
+-- estão presentes mas o Caixa/Disponível não foi localizado. Desde a 0188 esse
+-- segundo ramo passa o motivo fino, 'linha_nao_localizada' (cenário 2);
+-- os motivos por ramo estão em motivo_especifico.test.sql.
 --
 -- O CENÁRIO 4 é diferente de propósito: chama fn_registrar_reconciliacao
 -- DIRETO, sem costura, porque o que ele prova é uma propriedade da PRÓPRIA
@@ -157,8 +159,15 @@ begin
   -- literal fora do vocabulário (o que o achado 1 mostrou fabricar
   -- 'a checagem concluiu'). O CONTRATO diz o valor exato que
   -- fn_reconciliar_caixa_bp_fluxo passa direto neste ramo (0031): afirme-o.
-  perform teste_assert_motivo(v_motivo = 'precondicao_nao_satisfeita',
-    'e motivo_precondicao é exatamente precondicao_nao_satisfeita — o valor que o CONTRATO diz '
+  --
+  -- 0188: o valor exato MUDOU, e é a fatia seguinte que o CONTRATO da 0186
+  -- reservou: o Balanço tem coluna de 2025 e nenhum rótulo de caixa casou, e o
+  -- corpo da 0188 sabe disso — passa 'linha_nao_localizada' em vez do
+  -- genérico. A propriedade que este cenário trava continua a mesma (remédio
+  -- oposto ao do cenário 1, e ABRE pendência — o assert de baixo); o valor é o
+  -- que a checagem de hoje diz.
+  perform teste_assert_motivo(v_motivo = 'linha_nao_localizada',
+    'e motivo_precondicao é exatamente linha_nao_localizada — o que a checagem sabe desde a 0188 '
     '(remédio oposto ao cenário 1: revisar a extração/localizador, não cobrar checklist)',
     coalesce(v_motivo, '(null)'));
 

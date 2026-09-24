@@ -37,4 +37,8 @@ nova e nada mais), mas foi feito à mão, e só porque houve desconfiança.
 **E o bloqueio:** o classificador de modo automático do Claude Code bloqueou o apply da 0183 como
 "Production Deploy" — e depois, dentro da mesma linha de trabalho, bloqueou até consultas somente
 leitura. Aplicar em produção pode não estar ao alcance da sessão mesmo com o token no ambiente e a
-permissão no `settings.local.json`; deixe os comandos exatos prontos para o dono.
+permissão no `settings.local.json`. A sessão paralela da F2 já tinha medido o mesmo bloqueio e o que
+o contorna legitimamente — o dono trocar a sessão para modo de permissão manual e aprovar cada
+chamada —, mas essa memória estava na branch DELA e só chegou aqui na incorporação do PR #240. Ver
+`auto-mode-recusa-migration-producao.md`, e NÃO retentar a chamada depois de uma recusa: a F2 mediu
+que a segunda tentativa, mesmo autorizada no chat, é recusada de novo.
