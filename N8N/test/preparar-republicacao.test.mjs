@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { prepararRepublicacao, credenciaisPendentes, idsDeCredencialDoAmbiente,
   idsDeCredencialDoPublicado, arquivoDoRepo } from '../preparar-republicacao.mjs';
 
@@ -312,3 +315,34 @@ test('sem a variável, o padrão continua a ingestão — quem já automatizou i
   assert.equal(arquivoDoRepo({ N8N_ARQUIVO_REPO: '' }), 'N8N/workflow.e1-ingestao.json');
   assert.equal(arquivoDoRepo({ N8N_ARQUIVO_REPO: '   ' }), 'N8N/workflow.e1-ingestao.json');
 });
+
+// --- O repositório nunca grava id de credencial que a trava deixe passar ------
+// A trava 2 do `republicar.sh` só procura `REPLACE`, e `ehIdUtilizavel` aceita
+// qualquer outro id como real. Até 24/09/2026 o `workflow.macro.json` gravava
+// `SUPABASE_PG` nas três credenciais Postgres: republicado numa instância sem essa
+// credencial, o macro saía com um id inexistente e passava pela trava — e a
+// republicação foi generalizada para os quatro workflows em 16/09. O que se afirma
+// é o contrato, nos quatro arquivos commitados: toda credencial ou é `REPLACE`
+// (a trava a cobre) ou não existe.
+const PASTA_N8N = join(dirname(fileURLToPath(import.meta.url)), '..');
+const WORKFLOWS = readdirSync(PASTA_N8N).filter((f) => /^workflow\..+\.json$/.test(f));
+
+test('os quatro workflows commitados existem (controle positivo do teste abaixo)', () => {
+  assert.equal(WORKFLOWS.length, 4, `achei ${WORKFLOWS.join(', ')}`);
+});
+
+for (const arq of WORKFLOWS) {
+  test(`${arq}: toda credencial grava REPLACE, que é o que a trava do republicar.sh procura`, () => {
+    const wf = JSON.parse(readFileSync(join(PASTA_N8N, arq), 'utf8'));
+    const fora = [];
+    let credenciais = 0;
+    for (const n of wf.nodes) {
+      for (const [tipo, c] of Object.entries(n.credentials ?? {})) {
+        credenciais++;
+        if (c?.id !== 'REPLACE') fora.push(`${n.name} (${tipo}): id ${JSON.stringify(c?.id)}`);
+      }
+    }
+    assert.ok(credenciais > 0, `${arq} não tem credencial nenhuma — o teste não mediu nada`);
+    assert.deepEqual(fora, [], `credencial com id que a trava não pega: ${fora.join('; ')}`);
+  });
+}
