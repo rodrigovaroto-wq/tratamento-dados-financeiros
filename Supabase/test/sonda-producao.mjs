@@ -42,8 +42,8 @@
 // nenhum no catálogo, então não há o que acusar como ausente.
 //
 // A correção não precisa de lista nova escrita à mão: `Supabase/README.md` JÁ é a lista declarada do
-// que deve ser aplicado, e a migration que não deve (a 0185, reprovada na medição) já está COMENTADA
-// lá. A sonda compara produção contra essa lista: toda migration listada sem comentário, que cataloga
+// que deve ser aplicado. Migration que não deve ser aplicada simplesmente não tem linha ali: a 0185,
+// reprovada, primeiro ficou comentada e depois foi REMOVIDA pela F2 (0187). A sonda compara produção contra essa lista: toda migration listada sem comentário, que cataloga
 // requisito com o próprio número, tem de ter pelo menos um requisito no catálogo de produção.
 // Derivar, nunca duplicar — o mesmo princípio do `indexar.mjs`.
 import { execSync } from 'node:child_process';
