@@ -41,5 +41,3 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Evidencia de inspecao visual do impeccable (PNG de build, nao codigo).
-.impeccable/review/
