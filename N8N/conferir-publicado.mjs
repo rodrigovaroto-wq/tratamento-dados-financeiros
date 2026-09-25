@@ -57,6 +57,7 @@
 //   • a `position` dos nós, que é do editor.
 import { readFileSync } from 'node:fs';
 import { lerWorkflowDaEntradaPadrao, ehExecucaoDireta } from './entrada-workflow.mjs';
+import { ehPlaceholderDeCredencial } from './preparar-republicacao.mjs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -177,14 +178,16 @@ function conferirCredenciais(nome, oVivo, doRepo) {
         no: nome, campo: `credentials.${tipo}`,
         vivo: noVivo ? 'presente' : '(ausente)', repo: noRepo ? 'presente' : '(ausente)',
       });
-    } else if (noVivo.id === 'REPLACE' && !oVivo.disabled) {
+    } else if (ehPlaceholderDeCredencial(noVivo.id) && !oVivo.disabled) {
+      // Qualquer placeholder do repositório, não só `REPLACE`: o `SUPABASE_PG` que o
+      // gerador do macro gravava até 24/09/2026 passava calado por aqui.
       // O `REPLACE` publicado: a publicação não passou pela substituição, e o
       // nó vai falhar na primeira execução com "Credential with ID REPLACE
       // does not exist" — a menos que esteja desabilitado, que é o único caso
       // em que o repositório publica um placeholder de propósito.
       achados.push({
         no: nome, campo: `credentials.${tipo}.id`,
-        vivo: 'REPLACE (o placeholder do repositório) num nó HABILITADO',
+        vivo: `${noVivo.id} (placeholder do repositório) num nó HABILITADO`,
         repo: '(um id da instalação)',
       });
     }

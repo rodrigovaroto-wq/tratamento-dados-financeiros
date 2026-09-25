@@ -346,3 +346,18 @@ for (const arq of WORKFLOWS) {
     assert.deepEqual(fora, [], `credencial com id que a trava não pega: ${fora.join('; ')}`);
   });
 }
+
+// E o que JÁ ESTÁ NO AR. Se o `SUPABASE_PG` chegou à instalação, o publicado o
+// traz como se fosse id real; a republicação o preservava (o VIVO ganha) e a trava
+// não o via. Placeholder publicado é ausência, não resposta: cai para o irmão, o
+// mapa do ambiente, ou o `REPLACE` que trava o portão.
+test('o `SUPABASE_PG` publicado não sobrevive à republicação: vira REPLACE, ou o id do mapa', () => {
+  const repo = structuredClone(REPO);
+  repo.nodes[1].credentials = { postgres: { id: 'REPLACE', name: 'Supabase Postgres' } };
+  const vivo = structuredClone(VIVO);
+  vivo.nodes[1].credentials = { postgres: { id: 'SUPABASE_PG', name: 'Supabase Postgres' } };
+  const semMapa = porNome(prepararRepublicacao(vivo, repo))['IA Extrair'].credentials.postgres;
+  assert.equal(semMapa.id, 'REPLACE', 'sem mapa, sai REPLACE — e a trava do republicar.sh aborta');
+  const comMapa = porNome(prepararRepublicacao(vivo, repo, { idsPorNome: { 'Supabase Postgres': 'pgReal123' } }))['IA Extrair'].credentials.postgres;
+  assert.equal(comMapa.id, 'pgReal123', 'com o mapa, sai o id real');
+});

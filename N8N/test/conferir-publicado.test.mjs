@@ -230,3 +230,14 @@ test('MEDIDO: o macro contra o arquivo ERRADO acusa dezenas; contra o seu, nenhu
   assert.equal(contraOSeu.length, 0, 'o macro tem de bater consigo mesmo');
   assert.ok(contraOErrado.length > 20, `alvo errado deveria acusar dezenas, acusou ${contraOErrado.length}`);
 });
+
+// O `SUPABASE_PG` JÁ PUBLICADO. Até 24/09/2026 o gerador do macro gravava esse id
+// nas três credenciais Postgres; se ele chegou à instalação (o n8n não casou a
+// credencial pelo nome), o publicado o carrega e este conferidor não acusava nada,
+// porque só punia `REPLACE`. Achado da revisão do PR #244: o conserto do
+// repositório não alcança o que já está no ar.
+test('o `SUPABASE_PG` antigo do macro num nó HABILITADO é divergência, como o REPLACE', () => {
+  const vivo = publicadoSaudavel();
+  vivo.nodes[1].credentials.httpHeaderAuth = { id: 'SUPABASE_PG', name: 'Google AI (Gemini)' };
+  assert.deepEqual(campos(conferir(vivo, REPO)), ['IA Extrair.credentials.httpHeaderAuth.id']);
+});
