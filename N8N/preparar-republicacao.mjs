@@ -44,6 +44,20 @@ const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CAMPOS_DO_PUT = ['name', 'nodes', 'connections', 'settings'];
 
 /**
+ * OS PLACEHOLDERS DE CREDENCIAL — ids que o REPOSITÓRIO grava e que nenhuma
+ * instalação tem. Qualquer um deles, no mapa do ambiente ou no publicado, é
+ * AUSÊNCIA, não resposta.
+ *
+ * `SUPABASE_PG` entrou em 24/09/2026: o gerador do macro o gravava nas três
+ * credenciais Postgres até então (os outros três geradores gravam `REPLACE`). Se
+ * ele chegou à instalação, o publicado o carrega como se fosse id real — e, com só
+ * `REPLACE` aqui, a republicação o preservava (o VIVO ganha) e a trava do
+ * `republicar.sh` não o via. `conferir-publicado.mjs` usa a mesma lista.
+ */
+export const PLACEHOLDERS_DE_CREDENCIAL = new Set(['REPLACE', 'SUPABASE_PG']);
+export const ehPlaceholderDeCredencial = (id) => PLACEHOLDERS_DE_CREDENCIAL.has(String(id ?? '').trim());
+
+/**
  * IDs DE CREDENCIAL VINDOS DE FORA, por NOME — a saída para o que o vivo não conta.
  *
  * POR QUE ISTO EXISTE, e o número é medido. `prepararRepublicacao` resolve o id
@@ -92,7 +106,7 @@ export function idsDeCredencialDoAmbiente(env = process.env) {
   }
   const limpo = {};
   for (const [nome, id] of Object.entries(mapa)) {
-    if (typeof id === 'string' && id.trim() && id !== 'REPLACE') limpo[nome] = id.trim();
+    if (typeof id === 'string' && id.trim() && !ehPlaceholderDeCredencial(id)) limpo[nome] = id.trim();
   }
   return limpo;
 }
@@ -145,9 +159,9 @@ export function idsDeCredencialDoPublicado(vivo) {
   return vistos;
 }
 
-/** `REPLACE` e vazio são ausência, não resposta — ver `idsDeCredencialDoPublicado`. */
+/** Placeholder (`REPLACE`, `SUPABASE_PG`) e vazio são ausência, não resposta — ver `idsDeCredencialDoPublicado`. */
 function ehIdUtilizavel(id) {
-  return typeof id === 'string' && !!id.trim() && id !== 'REPLACE';
+  return typeof id === 'string' && !!id.trim() && !ehPlaceholderDeCredencial(id);
 }
 
 function ehNomePreenchido(nome) {
@@ -209,7 +223,7 @@ export function prepararRepublicacao(vivo, repo, { idsPorNome = {} } = {}) {
         // dele — quem está publicado é a verdade sobre a instalação, e o mapa é
         // a queda para quando ela se cala. Ver `idsDeCredencialDoPublicado`.
         const idDoIrmao = idDoIndice(doPublicado, tipo, cred.name);
-        if (idVivo && idVivo !== 'REPLACE') {
+        if (ehIdUtilizavel(idVivo)) {
           saida.credentials[tipo] = { id: idVivo, name: nomeVivo ?? cred.name };
         } else if (idDoIrmao) {
           saida.credentials[tipo] = { id: idDoIrmao, name: cred.name };

@@ -17,7 +17,8 @@ Estes dois documentos são a primeira medição contra texto de produção do ar
 | `020_Balanco_Patrimonial_Comparativo_Araucaria_Florestal_2025x2024` | 56 | 56 | **44** | **exato** — 44 contas |
 | `090_Balancete_Analitico_Araucaria_Comercial_2023` | 82 | **36** | **24** | **exato** — 23 contas + a linha de TOTAIS |
 
-**Zero falso positivo e zero falso negativo nos dois.** A régua excluiu corretamente o cabeçalho
+**Zero falso positivo e zero falso negativo nos dois** — e, desde 24/09/2026, reconferido a cada
+execução por `N8N/test/cobertura.test.mjs` (44, 24, e a emenda de 82 para 36 linhas). A régua excluiu corretamente o cabeçalho
 de página, a razão social, o CNPJ, o título, a linha "(Valores expressos…)", o cabeçalho de
 colunas `31/12/2025 31/12/2024`, a nota de rodapé e o bloco de assinatura.
 

@@ -39,3 +39,8 @@ a edição foi desfeita). **O que funcionou: o dono trocar o modo de permissão 
 manual e aprovar cada `curl` no prompt.** Uma chamada por migration (`0186`, `0187`, `0188`), com a
 consulta de pós-apply entre cada uma — as consultas somente leitura pelo MCP do Supabase passam
 sem bloqueio em qualquer modo.
+
+**Ressalva de 24/09/2026:** esse "sem bloqueio" vinha do `.claude/settings.local.json`
+VERSIONADO (commit 3b9292e), que liberava o MCP do Supabase para todo clone. Ele saiu do git (PR
+#244, fatia B1): num clone novo, ou depois do `pull` que o remove, as consultas do MCP voltam a pedir
+confirmação até o dono recriar o arquivo NA PRÓPRIA MÁQUINA.

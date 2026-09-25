@@ -16,8 +16,10 @@
 # reprovasse, o número contra produção seria lido com uma régua que mudou sem aviso.
 #
 # MESMO SEGREDO DA SONDA (`SONDA_DB_URL`), porque é o mesmo requisito: leitura, transação somente-
-# leitura (`set default_transaction_read_only`, como a `cobertura-do-lote.sql`), papel
-# somente-leitura basta.
+# leitura (o script abre `start transaction read only` antes de cada consulta, desde 24/09/2026),
+# papel somente-leitura basta. Este job NÃO tem Postgres: por isso não define `TESTE_PSQL`, e os
+# testes do executor que precisam de banco se declaram NÃO CONFERIDOS aqui (quem os exige é o
+# `suites.yml`).
 
 name: Inventário do perímetro (F1.1)
 

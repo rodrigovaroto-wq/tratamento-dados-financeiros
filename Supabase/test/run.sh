@@ -111,6 +111,30 @@ if [ -n "$faltando" ]; then
 fi
 echo "   as $(ls Supabase/migrations/*.sql | wc -l) migrations estão na lista de aplicação"
 
+# TODO *.test.sql É CHAMADO POR ESTE ARQUIVO — a mesma guarda de cima, para os testes.
+#
+# Até 24/09/2026 um teste novo que alguém esquecesse de acrescentar abaixo passava com o CI verde
+# SEM NUNCA RODAR — estágio que não rodou com a aparência de estágio que rodou e não achou nada
+# (regra 7). Os 67 de hoje estão todos aqui; o que esta guarda impede é o 68º. O critério é o
+# arquivo aparecer num `-f` deste script (o teste de escala da 0164 conta: ele é chamado, só que
+# condicionado a ESCALA_0164=1, e o motivo está escrito junto).
+echo "== todo Supabase/test/*.test.sql é executado por este run.sh"
+este="${BASH_SOURCE[0]}"
+sem_chamada=""
+for f in Supabase/test/*.test.sql; do
+  # Linha COMENTADA não conta: `# DESLIGADO: psql … -f <teste>` é exatamente o estágio desligado
+  # com cara de limpo que esta guarda existe para barrar (achado da 3ª revisão do PR #244).
+  grep -F -- "-f $f" "$este" | grep -qv '^[[:space:]]*#' || sem_chamada="$sem_chamada $f"
+done
+if [ -n "$sem_chamada" ]; then
+  echo "FALHOU: teste que existe e que este run.sh nunca executa:"
+  for f in $sem_chamada; do echo "     - $f"; done
+  echo "   Acrescente a linha 'psql -v ON_ERROR_STOP=1 -d \"\$DB\" -f <arquivo>' no ponto certo da ordem."
+  echo "   Sem isso o teste fica no repositório com cara de portão e o CI fica verde sem rodá-lo."
+  exit 1
+fi
+echo "   os $(ls Supabase/test/*.test.sql | wc -l) testes .sql estão na lista de execução"
+
 # O ESTADO.md CITA A MIGRATION MAIS NOVA — e é assim que ele não envelhece.
 #
 # O cabeçalho do HANDOFF.md passou 17 PRs congelado em "migrations até 0034",
@@ -232,6 +256,59 @@ psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fixture_book_vertentes.sql
 
 echo "== fixture (book CANASTRA, extração fiel dos documentos DIFÍCEIS)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fixture_book_canastra.sql
+
+# O ACEITE FINANCEIRO DA F0 (`cobertura-do-lote.sql`) RODA AQUI — e antes de 24/09/2026 não rodava
+# em lugar nenhum. É consulta manual contra produção (CLAUDE.md, bloco "contra PRODUÇÃO"), mas nada
+# a executava nem contra o schema do banco de teste: uma coluna renomeada numa migration só seria
+# descoberta no dia do aceite, com o dono diante do SQL Editor. Aqui ela roda sobre o caso da
+# fixture do Vertentes com `default_transaction_read_only=on` — o que prova também a frase
+# "somente leitura" do cabeçalho dela: qualquer escrita aborta a sessão — e o resumo tem de dar os
+# 14 documentos da fixture, todos com linha.
+echo "== o aceite da F0 (cobertura-do-lote.sql) roda no schema atual, somente leitura"
+resumo_lote="$(PGOPTIONS='-c default_transaction_read_only=on' psql -X -q -At -F'|' -v ON_ERROR_STOP=1 -d "$DB" \
+  -v caso_id="'11111111-1111-1111-1111-111111111111'" -f Supabase/test/cobertura-do-lote.sql)"
+if ! grep -qx '14|14|0|0|0|100.0' <<< "$resumo_lote"; then
+  echo "FALHOU: o resumo do cobertura-do-lote.sql sobre a fixture do Vertentes não é 14 documentos, 14 com linha:"
+  echo "$resumo_lote" | sed 's/^/     /'
+  exit 1
+fi
+echo "   14 documentos, 14 com linha, 0 sem linha, 0 nunca extraídos — a consulta do aceite está viva"
+
+# E AS TRÊS SITUAÇÕES QUE SÃO A RAZÃO DE SER DO ACEITE. Sobre a fixture pura só o ramo `com_linha`
+# era exercitado (achado da 3ª revisão do PR #244): se a chave `tem_dado_financeiro` ou a ação
+# `extracao_sombra` fossem renomeadas no produtor, o portão ficaria verde e, em produção, todo
+# documento sem linha cairia em `sem_linha_silencioso`. Aqui três documentos sem linha entram
+# numa transação que VOLTA, e os eventos saem da função de PRODUÇÃO que os grava
+# (`fn_registrar_campos_extraidos`), não de um insert feito à mão: um declara que não tinha dado,
+# outro volta vazio sem declarar, o terceiro nunca é extraído.
+echo "== o aceite da F0 separa as três situações de documento sem linha"
+situacoes="$(psql -X -q -At -F'|' -v ON_ERROR_STOP=1 -d "$DB" \
+  -v caso_id="'11111111-1111-1111-1111-111111111111'" <<'SQL'
+begin;
+insert into documento (id, caso_id, entidade_id, periodo_id, tipo_taxonomia, status, confianca, fonte)
+select v.id, d.caso_id, d.entidade_id, d.periodo_id, 'CERTIDOES', 'valido', 0.9, 'fixture'
+  from (values ('aaaaaaaa-0000-0000-0000-000000000001'::uuid), ('aaaaaaaa-0000-0000-0000-000000000002'::uuid),
+               ('aaaaaaaa-0000-0000-0000-000000000003'::uuid)) v(id),
+       (select * from documento where caso_id = '11111111-1111-1111-1111-111111111111' limit 1) d;
+insert into documento_versao (id, documento_id, n_versao, arquivo_ref, nome_original, hash)
+select ('bbbbbbbb-0000-0000-0000-00000000000' || n)::uuid, ('aaaaaaaa-0000-0000-0000-00000000000' || n)::uuid, 1,
+       'fixture/sem-linha-' || n || '.pdf', 'sem-linha-' || n || '.pdf', md5(n::text)
+  from generate_series(1, 3) n;
+select fn_registrar_campos_extraidos('bbbbbbbb-0000-0000-0000-000000000001', '[]'::jsonb, p_falha_motivo => null, p_tem_dado_financeiro => false);
+select fn_registrar_campos_extraidos('bbbbbbbb-0000-0000-0000-000000000002', '[]'::jsonb, p_falha_motivo => 'resposta vazia', p_tem_dado_financeiro => true);
+\i Supabase/test/cobertura-do-lote.sql
+rollback;
+SQL
+)"
+for esperado in 'sem_linha_declarado|CERTIDOES|sem-linha-1.pdf|' 'sem_linha_silencioso|CERTIDOES|sem-linha-2.pdf|' \
+                'extracao_nunca_chamada|CERTIDOES|sem-linha-3.pdf|' '17|14|1|1|1|82.4'; do
+  if ! grep -qF -- "$esperado" <<< "$situacoes"; then
+    echo "FALHOU: o cobertura-do-lote.sql não classificou como esperado — faltou: $esperado"
+    echo "$situacoes" | sed 's/^/     /'
+    exit 1
+  fi
+done
+echo "   declarado, silencioso e nunca extraído: cada um na sua situação (17 documentos, 82,4% com linha)"
 
 # O TESTE DA 0188 VEM ANTES DE QUALQUER OUTRA RECONCILIAÇÃO, E A ORDEM É
 # OBRIGATÓRIA: os blocos 1 e 2 comparam o que as checagens produzem sobre as

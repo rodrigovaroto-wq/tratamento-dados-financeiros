@@ -141,7 +141,7 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "SUPABASE_PG",
+          "id": "REPLACE",
           "name": "Supabase Postgres"
         }
       },
@@ -165,7 +165,7 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "SUPABASE_PG",
+          "id": "REPLACE",
           "name": "Supabase Postgres"
         }
       },
@@ -256,7 +256,7 @@
       ],
       "credentials": {
         "postgres": {
-          "id": "SUPABASE_PG",
+          "id": "REPLACE",
           "name": "Supabase Postgres"
         }
       },

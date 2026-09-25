@@ -152,6 +152,13 @@ jobs:
         # O que dá para provar aqui é a única parte que decide alguma coisa: que "não consegui
         # perguntar" (código 2) nunca colapsa em "está tudo bem" (código 0). MEDIDO em 16/09 com
         # o colapso religado de propósito: 4 asserts reprovam.
+        #
+        # `TESTE_PSQL` declara que ESTE job tem banco (o serviço postgres:16, via PGHOST/PGUSER do
+        # job): com ela, os testes do executor do `perimetro-inventario.mjs` — não escreve, não vaza
+        # a senha — são obrigatórios aqui. O `perimetro-inventario.yml`, que roda o mesmo glob sem
+        # Postgres, não a define e os vê declarados NÃO CONFERIDOS, em vez de ficar vermelho.
+        env:
+          TESTE_PSQL: psql
         run: node --test 'Supabase/test/*.test.mjs'
 
       - name: Suíte dos hooks do agente
@@ -398,6 +405,22 @@ jobs:
         # em vez do corpo do multipart.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-limite-de-envio.mts
 
+      - name: Suíte da contagem por documento (o teto de 1000 do PostgREST não corta em silêncio)
+        # A contagem "quantas linhas cada documento rendeu" morava em duas cópias,
+        # e só uma paginava: o painel fazia uma consulta só, e o PostgREST corta
+        # em 1000 linhas sem erro. Agora é uma função (`contarLinhasPorVersao`),
+        # provada contra um servidor que corta em 1000 e em 500, e nenhuma leitura
+        # de linhas de campo_extraido em portal/src fica fora do `paginar`.
+        # Medido com a correção desligada: o painel antigo reprova 1 verificação;
+        # a função sem paginar reprova 7. Revisão do PR #244: o varredor passou a
+        # ler o `.select(` da própria consulta (tirar o `head: true` da contagem
+        # total passava verde — agora reprova 1), e página que falha no meio tem de
+        # se declarar `incompleto` (com o erro descartado, 2 reprovam). Quarta revisão:
+        # parênteses casados só no CÓDIGO (comentário citando `paginar(` abria um falso) e
+        # a cadeia da própria leitura tem de chegar a `.range` — cinco mutações, uma
+        # reprovação cada.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-linhas-por-versao.mts
+
       - name: Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)
         # A 0158 endureceu o `pronto` e publicou a FRAÇÃO de contas com premissa,
         # mas um número no banco que a tela não mostra não corrige nada: o chip
@@ -441,6 +464,22 @@ jobs:
         # chamada a função que migration nenhuma cria (nome trocado num rename,
         # `.rpc()` com typo) para de esperar produção para aparecer.
         run: CONFERIR_DB=tdf_test node Supabase/test/conferir-chamadas.mjs
+
+      - name: O conferidor em SQL (o que o dono cola no SQL Editor) é gerado e diz PODE RODAR
+        # `Supabase/conferir/conferir_chamadas.sql` se dizia gerado e não tinha
+        # gerador: em 24/09/2026, 3 das 15 consultas já diferiam do workflow (dois
+        # nós tinham ganhado `p_cnpj`, que tem default — a cópia velha dizia PODE
+        # RODAR num banco sem ele). Agora ele sai de `gerar-conferir-chamadas.mjs`,
+        # que lê os nós pelo MESMO módulo do `conferir-chamadas.mjs`; o `git diff`
+        # prende o commitado ao gerado, e executá-lo aqui prova que o arquivo que
+        # se cola funciona. Medido: com o .sql antigo, o `git diff` reprova nas 3.
+        run: |
+          node Supabase/conferir/gerar-conferir-chamadas.mjs > Supabase/conferir/conferir_chamadas.sql
+          git diff --exit-code -- Supabase/conferir/conferir_chamadas.sql \
+            || { echo "::error::conferir_chamadas.sql diverge do gerado — rode o gerador e commite"; exit 1; }
+          psql -d tdf_test -X -v ON_ERROR_STOP=1 -f Supabase/conferir/conferir_chamadas.sql | tee /tmp/conferir.out
+          grep -q "PODE RODAR —" /tmp/conferir.out \
+            || { echo "::error::o conferidor em SQL não disse PODE RODAR no banco completo — NAO RODE, ou CONFERENCIA INCOMPLETA (algum nó Postgres virou não conferível: modo expressão ou mais de um comando)"; exit 1; }
 
       - name: A sonda do buraco no meio não dá alarme falso num banco completo
         # CONTROLE POSITIVO da detecção de buraco da `sonda-producao.mjs` (PR #238). Contra

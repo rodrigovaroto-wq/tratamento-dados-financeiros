@@ -217,9 +217,27 @@ test('MEDIDO: o macro contra o arquivo ERRADO acusa dezenas; contra o seu, nenhu
   const macro = JSON.parse(readFileSync(resolve(RAIZ_REPO, 'N8N/workflow.macro.json'), 'utf8'));
   const ingestao = JSON.parse(readFileSync(resolve(RAIZ_REPO, 'N8N/workflow.e1-ingestao.json'), 'utf8'));
 
-  const contraOErrado = conferir(macro, ingestao);
-  const contraOSeu = conferir(macro, escolherDoRepo(macro).doRepo);
+  // O "publicado" é o do repositório com as credenciais já resolvidas, como a
+  // republicação o deixa: o repositório grava `REPLACE`, e `REPLACE` em nó ligado
+  // é divergência de verdade no publicado. Até 24/09/2026 este teste não precisava
+  // disto porque o macro gravava `SUPABASE_PG`, um id que a trava não pegava.
+  const publicado = structuredClone(macro);
+  for (const n of publicado.nodes) for (const c of Object.values(n.credentials ?? {})) c.id = 'id-real-da-instancia';
+
+  const contraOErrado = conferir(publicado, ingestao);
+  const contraOSeu = conferir(publicado, escolherDoRepo(publicado).doRepo);
 
   assert.equal(contraOSeu.length, 0, 'o macro tem de bater consigo mesmo');
   assert.ok(contraOErrado.length > 20, `alvo errado deveria acusar dezenas, acusou ${contraOErrado.length}`);
+});
+
+// O `SUPABASE_PG` JÁ PUBLICADO. Até 24/09/2026 o gerador do macro gravava esse id
+// nas três credenciais Postgres; se ele chegou à instalação (o n8n não casou a
+// credencial pelo nome), o publicado o carrega e este conferidor não acusava nada,
+// porque só punia `REPLACE`. Achado da revisão do PR #244: o conserto do
+// repositório não alcança o que já está no ar.
+test('o `SUPABASE_PG` antigo do macro num nó HABILITADO é divergência, como o REPLACE', () => {
+  const vivo = publicadoSaudavel();
+  vivo.nodes[1].credentials.httpHeaderAuth = { id: 'SUPABASE_PG', name: 'Google AI (Gemini)' };
+  assert.deepEqual(campos(conferir(vivo, REPO)), ['IA Extrair.credentials.httpHeaderAuth.id']);
 });

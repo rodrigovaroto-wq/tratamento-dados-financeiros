@@ -7,6 +7,7 @@ import {
   MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS, TOKENS_POR_CELULA, LIMIAR_COBERTURA,
 } from '../lib/cobertura.mjs';
 import { MAX_OUTPUT_TOKENS } from '../lib/extract.mjs';
+import { readFileSync } from 'node:fs';
 
 // O caso REAL que motivou o arquivo inteiro (book-canastra, 13/08/2026): 1.139
 // das 2.893 células de valor chegaram ao banco. Dois documentos truncaram e
@@ -794,4 +795,68 @@ test('a forma que separa dinheiro de código: todo grupo depois do primeiro tem 
   for (const valor of ['Saldo 9.420.000', 'Saldo 51.300.000']) {
     assert.equal(ehLinhaSemValor(valor), false, valor);
   }
+});
+
+// -----------------------------------------------------------------------------
+// O ARAUCÁRIA — a única medição da régua contra texto de produção de um book
+// EXTERNO, e até 24/09/2026 nada a reconferia.
+//
+// `Dados de Teste/capturas/2026-09-01-texto-extraido-araucaria/` guarda o texto
+// que o nó `Extrair Texto` produziu em 2 dos 190 documentos da rodada de 01/09, e
+// o README dela afirma "régua exata, zero falso positivo e zero falso negativo":
+// 44 contas no balanço comparativo e 24 linhas (23 contas + TOTAIS) no balancete,
+// que chega FRAGMENTADO — 82 linhas brutas que `juntarFragmentosDeLinha` junta em
+// 36. A auditoria de 24/09 achou o arquivo sem leitor: se a régua regredisse no
+// araucária, nada ficava vermelho. A contagem conferida linha a linha está no
+// README; aqui ela vira portão. Dado de produção, não fixture (regra 4).
+// -----------------------------------------------------------------------------
+const ARAUCARIA = JSON.parse(readFileSync(new URL(
+  '../../Dados de Teste/capturas/2026-09-01-texto-extraido-araucaria/textos.json', import.meta.url), 'utf8')).documentos;
+
+test('araucária (produção, 01/09): a captura tem os dois documentos que o README mede', () => {
+  assert.deepEqual(Object.keys(ARAUCARIA).sort(), [
+    '020_Balanco_Patrimonial_Comparativo_Araucaria_Florestal_2025x2024',
+    '090_Balancete_Analitico_Araucaria_Comercial_2023',
+  ]);
+});
+
+test('araucária: a régua conta exatamente as contas conferidas à mão (44 e 24)', () => {
+  assert.equal(linhasDeConta(ARAUCARIA['020_Balanco_Patrimonial_Comparativo_Araucaria_Florestal_2025x2024'].texto).length, 44);
+  assert.equal(linhasDeConta(ARAUCARIA['090_Balancete_Analitico_Araucaria_Comercial_2023'].texto).length, 24);
+});
+
+test('araucária: o balancete chega fragmentado e a emenda junta 82 linhas em 36', () => {
+  const texto = ARAUCARIA['090_Balancete_Analitico_Araucaria_Comercial_2023'].texto;
+  const naoVazias = (t) => t.split('\n').filter((l) => l.trim()).length;
+  assert.equal(naoVazias(texto), 82, 'o texto bruto da captura mudou');
+  assert.equal(naoVazias(juntarFragmentosDeLinha(texto)), 36);
+});
+
+// E O "ZERO FALSO POSITIVO, ZERO FALSO NEGATIVO" do README, não só a contagem — a terceira
+// revisão do PR #244 notou que 44 e 24 podiam continuar certos com a régua trocando um CNPJ
+// contado por um TOTAIS perdido. As categorias abaixo são as que o README da captura lista como
+// excluídas corretamente (cabeçalho de página, razão social, CNPJ, título, período, "(Valores
+// expressos…)", cabeçalho de colunas, nota e rodapé, bloco de assinatura).
+const RUIDO_DO_ARAUCARIA = [
+  /^Página \d/, /LTDA\.$/, /^CNPJ /, /^BALAN/, /^Exercícios encerrados/, /^Encerramento do exercício/,
+  /Valores expressos/, /^\d{2}\/\d{2}\/\d{4} \d{2}\/\d{2}\/\d{4}$/, /^Código Conta/, /notas explicativas/,
+  /^Nota —/, /^redutora do passivo/, /^_+$/, /Contador|Diretor Presidente/,
+];
+const ehRuido = (l) => RUIDO_DO_ARAUCARIA.some((r) => r.test(l));
+
+for (const nome of Object.keys(ARAUCARIA)) {
+  test(`araucária ${nome.slice(0, 3)}: nada contado é ruído, e nada descartado é conta`, () => {
+    const texto = ARAUCARIA[nome].texto;
+    const contadas = linhasDeConta(texto);
+    const descartadas = juntarFragmentosDeLinha(texto).split('\n').filter((l) => l.trim() && !contadas.includes(l));
+    assert.deepEqual(contadas.filter(ehRuido), [], 'falso positivo: a régua contou uma linha de ruído');
+    assert.deepEqual(descartadas.filter((l) => !ehRuido(l)), [], 'falso negativo: a régua descartou uma linha que não é ruído');
+  });
+}
+
+test('araucária 090: toda linha contada é conta analítica, mais exatamente uma linha de TOTAIS', () => {
+  const contadas = linhasDeConta(ARAUCARIA['090_Balancete_Analitico_Araucaria_Comercial_2023'].texto);
+  const totais = contadas.filter((l) => /^TOTAIS /.test(l));
+  assert.equal(totais.length, 1, 'a linha de TOTAIS tem de ser contada, uma vez');
+  assert.deepEqual(contadas.filter((l) => !/^\d\.\d\.\d{2}\.\d{3} /.test(l) && !/^TOTAIS /.test(l)), []);
 });

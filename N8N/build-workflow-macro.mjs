@@ -179,7 +179,11 @@ if (obs.length === 0) {
 return [{ json: { expectativas: obs, n: obs.length } }];
 `.trim();
 
-const PG = { credentials: { postgres: { id: 'SUPABASE_PG', name: 'Supabase Postgres' } },
+// `REPLACE`, como nos outros três geradores: é a única marca que a trava 2 do
+// `republicar.sh` procura. Com `SUPABASE_PG` aqui (até 24/09/2026), o macro
+// republicado numa instância sem essa credencial saía com um id inexistente e
+// passava pela trava, porque `ehIdUtilizavel` o aceita como real.
+const PG = { credentials: { postgres: { id: 'REPLACE', name: 'Supabase Postgres' } },
   onError: 'continueRegularOutput', retryOnFail: true, maxTries: 3 };
 
 const nodes = [

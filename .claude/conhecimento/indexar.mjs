@@ -77,6 +77,7 @@ import { readFileSync, readdirSync, writeFileSync, existsSync, statSync } from "
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join, relative } from "node:path";
+import { cabecalho } from "./cabecalho.mjs"; // um parser só, que aceita CRLF (24/09/2026)
 
 const RAIZ = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
 const SAIDA = join(RAIZ, ".claude/conhecimento/grafo.jsonl");
@@ -269,24 +270,6 @@ const FICHAS = [
   ...arquivos(".claude/memory", (p) => p.endsWith(".md") && !p.endsWith("MEMORY.md") && !p.endsWith("INSTRUCTIONS.md")),
   ...arquivos(".claude/conhecimento/fichas", (p) => p.endsWith(".md")),
 ];
-/** Cabeçalho YAML simples (só os campos que usamos) — sem dependência nova. */
-function cabecalho(texto) {
-  const m = /^---\n([\s\S]*?)\n---\n/.exec(texto);
-  if (!m) return null;
-  const campos = {};
-  let chaveLista = null;
-  for (const linha of m[1].split("\n")) {
-    const item = /^\s+-\s+(.+)$/.exec(linha);
-    if (item && chaveLista) { campos[chaveLista].push(item[1].trim()); continue; }
-    const par = /^([a-z_]+):\s*(.*)$/.exec(linha);
-    if (!par) continue;
-    chaveLista = null;
-    if (par[2] === "") { campos[par[1]] = []; chaveLista = par[1]; }
-    else if (par[2] === "[]") campos[par[1]] = [];
-    else campos[par[1]] = par[2].trim();
-  }
-  return campos;
-}
 /** O hash da região ancorada: 40 linhas a partir da primeira ocorrência do símbolo. */
 function hashDaAncora(ancora) {
   const [caminho, simbolo] = String(ancora).split("#");
@@ -300,7 +283,11 @@ function hashDaAncora(ancora) {
   return createHash("sha256").update(regiao).digest("hex").slice(0, 12);
 }
 for (const p of FICHAS) {
-  const texto = ler(p);
+  // CRLF normalizado AQUI, não só no cabeçalho: o recorte do corpo (`\n---\n`), o título e os
+  // subtítulos também assumem `\n`. Com o cabeçalho normalizado e o corpo não, uma ficha CRLF
+  // indexava o próprio cabeçalho como corpo (medido na 3ª revisão do PR #244: o `kw` ganhava
+  // `name … description … toca`, e a busca por esses termos favorecia toda ficha CRLF).
+  const texto = ler(p).replace(/\r\n/g, "\n");
   const cab = cabecalho(texto);
   const titulo = (/^#\s+(.+)$/m.exec(texto)?.[1] ?? p.split("/").pop().replace(/\.md$/, "")).trim();
   // O texto de busca da ficha são o título e os subtítulos — não o corpo. Quem

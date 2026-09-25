@@ -1833,6 +1833,46 @@ test('Classificar Nome: entidade sai do nome do arquivo, e a confiança não mud
   }
 });
 
+// E A COMPOSIÇÃO, não só as peças. O espelho-inline confere `parseTipo`,
+// `parsePeriodo` e `parseEntidade` uma a uma — e as três batiam — enquanto o nó
+// montava a classificação com uma cópia à mão de `classifyByFilename` que tinha
+// perdido a guarda `entidade = tipo ? parseEntidade(...) : null`. Medido em
+// 24/09/2026 executando o `jsCode` commitado: `ANEXO IV - planilha final
+// REV3.pdf` gravava a entidade "Iv Rev3" (a lib: null), exatamente a
+// entidade-lixo que o comentário da lib diz ter corrigido. O teste acima não via
+// porque todos os seus nomes TÊM tipo. Aqui entram os dois lados, e o nó tem de
+// concordar com a lib em TODOS os campos que grava.
+test('Classificar Nome concorda com classifyByFilename em todo campo, com e sem tipo no nome', async () => {
+  const nomes = [
+    'ANEXO IV - planilha final REV3.pdf',            // sem tipo: entidade-lixo "Iv Rev3"
+    '34_Relatorio_do_Auditor_Independente_2025.pdf', // sem tipo: "Relatorio Auditor Independente"
+    'Relatorio Grupo Alfa REV2.pdf',                 // sem tipo nem período
+    '01_BP_Vertentes_Metalurgica_2025x2024.pdf',
+    '06_BP_COMBINADO_Grupo_Vertentes_2025.pdf',
+    'DRE_1T25_assinado.pdf',
+  ];
+  for (const limiar of [undefined, 0.85]) {
+    for (const nome of nomes) {
+      const out = await run('Classificar Nome', { item: { json: { caso_id: 'c-1', nome_original: nome, limiar_classificacao: limiar } } });
+      const lib = classifyByFilename(nome, limiar);
+      const campos = {
+        tipo_taxonomia: lib.tipo_taxonomia,
+        periodo_tipo: lib.periodo ? lib.periodo.tipo : null,
+        periodo_ref: lib.periodo ? lib.periodo.referencia : null,
+        assinado: lib.assinado,
+        entidade: lib.entidade,
+        confianca: lib.confianca,
+        fonte: lib.fonte,
+        precisa_fallback_ia: lib.precisa_fallback_ia,
+        limiar_aplicado: lib.limiar_aplicado,
+      };
+      for (const [k, v] of Object.entries(campos)) {
+        assert.deepEqual(out.json[k], v, `nó × lib em ${k} para ${nome} (limiar ${limiar})`);
+      }
+    }
+  }
+});
+
 // --- O teto de gasto por execução, executando o nó REAL ----------------------
 // Pedido do dono depois do v31: no máximo US$ 3 por execução completa, com o teto
 // da OpenAI em US$ 5. As duas defesas são de camadas diferentes e nenhuma
