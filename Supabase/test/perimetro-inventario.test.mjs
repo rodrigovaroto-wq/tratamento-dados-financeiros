@@ -89,22 +89,22 @@ test('duas empresas do MESMO grupo com nome próximo não colapsam em normaliza�
 
 // --- O executor contra PRODUÇÃO: não escreve, e não vaza a senha ----------------------------------
 // Contra um Postgres DE VERDADE, não um psql de mentira: o que se afirma é o comportamento que o
-// banco impõe. No CI o job tem o serviço `postgres:16` de pé desde o início (PGHOST/PGUSER no env
-// do job), e ali estes testes são OBRIGATÓRIOS. Fora do CI, sem um Postgres alcançável, eles se
-// declaram NÃO CONFERIDOS pelo nome em vez de passar calados (regra 7). À mão:
+// banco impõe. QUEM TEM BANCO DECLARA: `TESTE_PSQL` definida torna estes testes OBRIGATÓRIOS — e
+// banco inalcançável, então, reprova. O `suites.yml` a define (o job tem o serviço postgres:16).
+// Sem ela, os dois se declaram NÃO CONFERIDOS pelo nome em vez de passar calados (regra 7).
+//
+// POR QUE NÃO `process.env.CI`, que foi a primeira versão (24/09/2026): o workflow manual
+// `perimetro-inventario.yml` roda este glob no Actions (CI=true) SEM serviço Postgres, e os dois
+// testes o deixavam vermelho antes de ele chegar a consultar produção — medido simulando o
+// runner: `CI=true PGHOST=127.0.0.1 PGPORT=1` → 39 passam, 2 reprovam. Achado da revisão.
+// À mão:
 //   TESTE_PSQL="sudo -u postgres psql -h /tmp -p 5432" node --test Supabase/test/perimetro-inventario.test.mjs
 import { rodarPsql, NaoConferido } from './perimetro-inventario.mjs';
-import { execSync } from 'node:child_process';
 
-const TESTE_PSQL = process.env.TESTE_PSQL ?? 'psql';
-let bancoAlcancavel = true;
-try {
-  execSync(`${TESTE_PSQL} -X -q -At -c 'select 1'`, { stdio: ['pipe', 'pipe', 'pipe'] });
-} catch {
-  bancoAlcancavel = false;
-}
-const semBanco = !bancoAlcancavel && !process.env.CI
-  ? 'NÃO CONFERIDO: nenhum Postgres alcançável por TESTE_PSQL (no CI isto reprova)' : false;
+const TESTE_PSQL = process.env.TESTE_PSQL ?? '';
+const semBanco = TESTE_PSQL
+  ? false
+  : 'NÃO CONFERIDO: TESTE_PSQL não definida — sem banco declarado, o executor não foi posto à prova';
 
 test('o executor lê (controle positivo: sem ele, "recusou escrever" podia ser "não conecta")', { skip: semBanco }, () => {
   assert.deepEqual(rodarPsql('select 41 + 1;', TESTE_PSQL), ['42']);

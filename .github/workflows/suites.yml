@@ -152,6 +152,13 @@ jobs:
         # O que dá para provar aqui é a única parte que decide alguma coisa: que "não consegui
         # perguntar" (código 2) nunca colapsa em "está tudo bem" (código 0). MEDIDO em 16/09 com
         # o colapso religado de propósito: 4 asserts reprovam.
+        #
+        # `TESTE_PSQL` declara que ESTE job tem banco (o serviço postgres:16, via PGHOST/PGUSER do
+        # job): com ela, os testes do executor do `perimetro-inventario.mjs` — não escreve, não vaza
+        # a senha — são obrigatórios aqui. O `perimetro-inventario.yml`, que roda o mesmo glob sem
+        # Postgres, não a define e os vê declarados NÃO CONFERIDOS, em vez de ficar vermelho.
+        env:
+          TESTE_PSQL: psql
         run: node --test 'Supabase/test/*.test.mjs'
 
       - name: Suíte dos hooks do agente
