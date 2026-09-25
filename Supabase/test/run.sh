@@ -111,6 +111,28 @@ if [ -n "$faltando" ]; then
 fi
 echo "   as $(ls Supabase/migrations/*.sql | wc -l) migrations estão na lista de aplicação"
 
+# TODO *.test.sql É CHAMADO POR ESTE ARQUIVO — a mesma guarda de cima, para os testes.
+#
+# Até 24/09/2026 um teste novo que alguém esquecesse de acrescentar abaixo passava com o CI verde
+# SEM NUNCA RODAR — estágio que não rodou com a aparência de estágio que rodou e não achou nada
+# (regra 7). Os 67 de hoje estão todos aqui; o que esta guarda impede é o 68º. O critério é o
+# arquivo aparecer num `-f` deste script (o teste de escala da 0164 conta: ele é chamado, só que
+# condicionado a ESCALA_0164=1, e o motivo está escrito junto).
+echo "== todo Supabase/test/*.test.sql é executado por este run.sh"
+este="${BASH_SOURCE[0]}"
+sem_chamada=""
+for f in Supabase/test/*.test.sql; do
+  grep -qF -- "-f $f" "$este" || sem_chamada="$sem_chamada $f"
+done
+if [ -n "$sem_chamada" ]; then
+  echo "FALHOU: teste que existe e que este run.sh nunca executa:"
+  for f in $sem_chamada; do echo "     - $f"; done
+  echo "   Acrescente a linha 'psql -v ON_ERROR_STOP=1 -d \"\$DB\" -f <arquivo>' no ponto certo da ordem."
+  echo "   Sem isso o teste fica no repositório com cara de portão e o CI fica verde sem rodá-lo."
+  exit 1
+fi
+echo "   os $(ls Supabase/test/*.test.sql | wc -l) testes .sql estão na lista de execução"
+
 # O ESTADO.md CITA A MIGRATION MAIS NOVA — e é assim que ele não envelhece.
 #
 # O cabeçalho do HANDOFF.md passou 17 PRs congelado em "migrations até 0034",
