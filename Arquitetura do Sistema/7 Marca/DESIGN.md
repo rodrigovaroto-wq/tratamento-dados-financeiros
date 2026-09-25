@@ -234,6 +234,22 @@ Um primário por tela. `btn-primario` (tinta), `btn-secundario` (folha com fio),
 `.chip` é pílula de `text-xs font-medium`, sempre `bg-<família>-100` com
 `text-<família>-800/900`. **Todo chip carrega a palavra do estado.**
 
+### Linha pendente de aceite
+
+O componente assinatura do produto. Linha extraída que ainda não foi aceita
+**nunca some e nunca vira fato**: âmbar + itálico + a palavra — princípio de
+`Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md`. A linha inteira
+em itálico e `alerta-900` (`#573d14`); o valor continua em JetBrains Mono,
+alinhado à direita e com `tabular-nums`; o chip "pendente de aceite"
+(`alerta-100` / `alerta-800`) volta a `font-style: normal`, para a palavra do
+estado não ficar em itálico com o resto. A linha já aceita é tipografia
+normal com o chip "aceita" (`ok-100` / `ok-800`).
+
+(Esta especificação morava só no `.impeccable/design.json`, removido em
+24/09/2026 com a skill impeccable; foi trazida para cá para não se perder. Em
+24/09 o portal ainda não a implementava — o equivalente existe só no Excel,
+em `portal/src/lib/export.ts`, na aba de linhas extraídas.)
+
 ### Cards / Containers
 
 `.carta` — `folha`, fio `tinta-200`, raio 8px, `--sombra-carta`. Carta dentro

@@ -32,8 +32,12 @@ citava depois disso: 0 ocorrências no CI, no grafo, nas fichas e no `CLAUDE.md`
 ## O que ficou, e onde está o que ele guardava
 
 - **A fonte do design do portal é `Arquitetura do Sistema/7 Marca/DESIGN.md`** (paleta papel /
-  tinta / terracota, tipografia, componentes). O `.impeccable/design.json` era o arquivo auxiliar
-  da ferramenta, derivado dele.
+  tinta / terracota, tipografia, componentes), e os tokens moram em `portal/src/app/globals.css`.
+  O `.impeccable/design.json` era o arquivo da ferramenta e repetia quase tudo — a revisão de
+  24/09 conferiu os 61 hex das rampas no `globals.css` —, com UMA exceção: a especificação do
+  componente "Linha pendente de aceite", que só existia lá e foi trazida para o `DESIGN.md`.
+  Ficaram só no histórico (`git show 821181d:.impeccable/design.json`) as HSL canônicas de
+  risco/alerta/ok/info/série, deriváveis dos hex, e os breakpoints, que são os do Tailwind.
 - As duas exceções de fonte do `config.json` (Fraunces e Inter Tight "são a marca de produção da
   Oria, medida em oriapartners.com") são identidade do cliente, e o `DESIGN.md` já a fixa.
 - `PRODUCT.md` ficou; só saiu o marcador `<!-- impeccable:product-schema 1 -->`.
