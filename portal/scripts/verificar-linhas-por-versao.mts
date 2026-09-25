@@ -139,21 +139,28 @@ function lote(porVersao: Record<string, number>): Linha[] {
    * leitura solta passar 15/0. E há `)` desbalanceado em comentários reais
    * ("1) nota"). Sobre este texto, parêntese é só parêntese de código.
    */
+  /** Onde termina o comentário ou o texto que começa em `k`; -1 se ali começa código. */
+  const fimDoTrecho = (src: string, k: number): number => {
+    const c = src[k], d = src[k + 1];
+    if (c === "/" && d === "/") { const f = src.indexOf("\n", k); return f < 0 ? src.length : f; }
+    if (c === "/" && d === "*") { const f = src.indexOf("*/", k + 2); return f < 0 ? src.length : f + 2; }
+    if (c !== '"' && c !== "'" && c !== "`") return -1;
+    let f = k + 1;
+    while (f < src.length && src[f] !== c) f += src[f] === "\\" ? 2 : 1;
+    return Math.min(f + 1, src.length);
+  };
   const soCodigo = (src: string): string => {
     let out = "";
     let k = 0;
-    const apagar = (fim: number) => { out += src.slice(k, fim).replace(/[^\n]/g, " "); k = fim; };
     while (k < src.length) {
-      const c = src[k], d = src[k + 1];
-      if (c === "/" && d === "/") { const f = src.indexOf("\n", k); apagar(f < 0 ? src.length : f); continue; }
-      if (c === "/" && d === "*") { const f = src.indexOf("*/", k + 2); apagar(f < 0 ? src.length : f + 2); continue; }
-      if (c === '"' || c === "'" || c === "`") {
-        let f = k + 1;
-        while (f < src.length && src[f] !== c) f += src[f] === "\\" ? 2 : 1;
-        out += c; k++; apagar(Math.min(f, src.length)); if (k < src.length) { out += c; k++; }
-        continue;
-      }
-      out += c; k++;
+      const fim = fimDoTrecho(src, k);
+      if (fim < 0) { out += src[k]; k++; continue; }
+      // O delimitador de texto fica (a posição de `from("…")` continua reconhecível); o
+      // conteúdo — e o comentário inteiro — vira espaço, com a quebra de linha preservada.
+      const ehTexto = src[k] !== "/";
+      const miolo = src.slice(ehTexto ? k + 1 : k, ehTexto ? fim - 1 : fim).replace(/[^\n]/g, " ");
+      out += ehTexto ? src[k] + miolo + (fim - 1 > k ? src[fim - 1] : "") : miolo;
+      k = fim;
     }
     return out;
   };
@@ -200,20 +207,31 @@ function lote(porVersao: Record<string, number>): Linha[] {
    * a 1000 linhas — por isso quem decide é esta condição E a cadeia da leitura
    * chegar a `.range`. Sem regex com retrocesso: o Sonar acusou a anterior (S8786).
    */
+  /** Pula espaços a partir de `k`. */
+  const pularEspaco = (c: string, k: number): number => {
+    while (/\s/.test(c[k] ?? "")) k++;
+    return k;
+  };
+  /** Pula o genérico `<…>` que começa em `k`, sem contar o `>` de `=>`. */
+  const pularGenerico = (c: string, k: number): number => {
+    if (c[k] !== "<") return k;
+    let nivel = 0;
+    for (; k < c.length; k++) {
+      if (c[k] === "<") nivel++;
+      else if (c[k] === ">" && c[k - 1] !== "=" && --nivel === 0) return k + 1;
+    }
+    return k;
+  };
+  /** Posição do `(` da chamada `paginar` que começa em `p`; -1 se ali não é uma chamada dele. */
+  const aberturaDoPaginar = (c: string, p: number): number => {
+    if (/[\w$]/.test(c[p - 1] ?? "") || /[\w$]/.test(c[p + 7] ?? "")) return -1; // outro identificador
+    const k = pularEspaco(c, pularGenerico(c, pularEspaco(c, p + 7)));
+    return c[k] === "(" ? k : -1;
+  };
   const dentroDeUmPaginar = (c: string, i: number): boolean => {
     for (let p = c.indexOf("paginar"); p >= 0 && p < i; p = c.indexOf("paginar", p + 1)) {
-      if (/[\w$]/.test(c[p - 1] ?? "") || /[\w$]/.test(c[p + 7] ?? "")) continue; // outro identificador
-      let k = p + 7;
-      while (/\s/.test(c[k] ?? "")) k++;
-      if (c[k] === "<") { // o genérico: `<` e `>` casados, sem contar o `>` de `=>`
-        let nivel = 0;
-        for (; k < c.length; k++) {
-          if (c[k] === "<") nivel++;
-          else if (c[k] === ">" && c[k - 1] !== "=" && --nivel === 0) { k++; break; }
-        }
-        while (/\s/.test(c[k] ?? "")) k++;
-      }
-      if (c[k] === "(" && fecha(c, k) > i) return true;
+      const abre = aberturaDoPaginar(c, p);
+      if (abre >= 0 && fecha(c, abre) > i) return true;
     }
     return false;
   };
