@@ -523,6 +523,24 @@ supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_vi
 #   select chave, objeto, detalhe from fn_instalacao_conferir()
 #    where tipo = 'gatilho' and not presente;
 
+# A 0190 NÃO DEPENDE DA 0189 (que segue pendente do dono nesta lista) — só
+# reemite fn_reconciliar_arvore, que já usa o vocabulário 'documento_ausente'
+# desde a 0186/0188. Corrige o ramo em que TODAS as seções de um documento
+# caem em pré-condição: antes gravava resultado='ok' (afirmando que a árvore
+# fechou quando nada foi de fato conferido); passa a gravar 'documento_ausente'
+# — mesmo motivo do ramo "sem árvore", sem abrir pendência nova. IDEMPOTENTE.
+# Testes: Supabase/test/secao_fecha.test.sql, bloco 8 (via run.sh).
+supabase db execute --file Supabase/migrations/0190_a_arvore_que_nao_conferiu_nada.sql
+# DEPOIS DE APLICAR, as 12 linhas já erradas (medidas em 25/09/2026) NÃO se
+# corrigem sozinhas — só a próxima rodada de cada caso grava com o ramo novo.
+# Para achar as antigas sem escrever nada:
+#   select id, caso_id, tipo, criado_em from reconciliacao
+#    where tipo = 'secao_fecha' and resultado = 'ok'
+#      and fonte_a->>'secoes_conferidas' = '0';
+# E que o requisito novo está presente:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where chave = 'reconciliar_arvore_nao_mente_ok';               -- presente = true
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

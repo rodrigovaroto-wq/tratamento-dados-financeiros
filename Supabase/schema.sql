@@ -7979,10 +7979,15 @@ declare
   v_n_ok        int := 0;
   v_n_div       int := 0;
   v_n_prec      int := 0;
+  v_n_achatada  int := 0;
+  v_n_rotulo    int := 0;
+  v_n_unidade   int := 0;
+  v_n_semparc   int := 0;
   v_pior_abs    numeric;
   v_pior_pct    numeric;
   v_pior_pai    text;
   v_partes      text[] := '{}';
+  v_causas      text[] := '{}';
   v_resultado   text;
   v_desc        text;
 begin
@@ -8013,6 +8018,52 @@ begin
       jsonb_build_object('tolerancia', 'arredondamento ~0,5*(n+1)'),
       'Este documento não tem seção com filhos — não há árvore a conferir. É o esperado em '
       || 'documento de lista (razão, aging, mapa de dívida), não um achado.');
+  end if;
+
+  -- 0190: NENHUMA seção fechou de verdade (nem `ok`, nem `divergente`) — só
+  -- pré-condição, em TODAS. Antes desta migration isto caía no ramo `else` de
+  -- baixo e saía `resultado := 'ok'` ("As 0 seções deste documento fecham…"),
+  -- afirmando que a árvore conferiu e fechou quando nenhuma soma real
+  -- aconteceu. Grava com o MESMO motivo do ramo "sem árvore" acima
+  -- (`documento_ausente` — CONTRATO na 0186:60-130): não abre pendência (o
+  -- achado, quando tem dono, já tem — rótulo duplicado é da 0105; hierarquia
+  -- achatada é decisão da própria 0143 de não acusar), mas a linha para de
+  -- MENTIR que fechou.
+  if v_n_ok + v_n_div = 0 then
+    select count(*) filter (where achado = 'hierarquia_achatada'),
+           count(*) filter (where achado = 'rotulo_duplicado'),
+           count(*) filter (where achado = 'unidade_mista'),
+           count(*) filter (where achado = 'sem_parcela')
+      into v_n_achatada, v_n_rotulo, v_n_unidade, v_n_semparc
+    from fn_conferir_arvore(v_versao)
+    where resultado = 'precondicao_nao_satisfeita';
+
+    if v_n_achatada > 0 then
+      v_causas := v_causas || format('%s por hierarquia achatada (a extração ainda não separa '
+                                     'o subgrupo do grupo — remédio é o prompt, não reconciliação)',
+                                     v_n_achatada);
+    end if;
+    if v_n_rotulo > 0 then
+      v_causas := v_causas || format('%s por rótulo duplicado (reconciliacao:duplicidade_de_'
+                                     'rotulo, 0105, já cobra)', v_n_rotulo);
+    end if;
+    if v_n_unidade > 0 then
+      v_causas := v_causas || format('%s por unidade mista', v_n_unidade);
+    end if;
+    if v_n_semparc > 0 then
+      v_causas := v_causas || format('%s sem parcela somável', v_n_semparc);
+    end if;
+
+    return fn_registrar_reconciliacao(v_caso_id, v_entidade_id, v_periodo_id,
+      'secao_fecha', 'A', p_documento_id,
+      jsonb_build_object('secoes_conferidas', 0, 'pior_secao', null),
+      jsonb_build_object('divergentes', 0, 'sem_conferir', v_n_prec),
+      'documento_ausente', null, null,
+      jsonb_build_object('tolerancia', 'arredondamento ~0,5*(n+1) na unidade do documento'),
+      format('Nenhuma das %s seção(ões) deste documento foi conferida (%s). Nenhuma soma real '
+             'aconteceu: uma linha perdida dentro de qualquer seção passaria sem aviso, porque '
+             'não há aqui nenhuma conferência que a pegasse.',
+             v_n_prec, array_to_string(v_causas, '; ')));
   end if;
 
   select a.divergencia_abs,
@@ -8050,8 +8101,13 @@ begin
                                  'vez costuma ser escala ou coluna, não linha perdida.)', v_n_div);
     end if;
   else
+    -- 0190: o texto dizia só "rótulo duplicado ou unidade mista" — falso desde
+    -- a 0143, que acrescentou hierarquia achatada como terceira causa de
+    -- pré-condição. Corrigido na mesma reemissão; comportamento deste ramo
+    -- (v_n_ok > 0, `resultado := 'ok'`) não muda.
     v_desc := format('As %s seções deste documento fecham com as próprias linhas. %s ficaram sem '
-                     'conferir por pré-condição (rótulo duplicado ou unidade mista).',
+                     'conferir por pré-condição (hierarquia achatada, rótulo duplicado, unidade '
+                     'mista ou sem parcela somável).',
                      v_n_ok, v_n_prec);
   end if;
 
@@ -8069,7 +8125,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_arvore(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_arvore(p_documento_id uuid) IS 'Registra, como reconciliação Classe A, se as seções do documento fecham com as próprias linhas. UMA pendência por documento (não uma por seção): erro de escala quebra todas as seções de uma vez, e trinta pendências para um defeito é o oposto do que fazer com o tempo de quem lê a fila.';
+COMMENT ON FUNCTION public.fn_reconciliar_arvore(p_documento_id uuid) IS 'Registra, como reconciliação Classe A, se as seções do documento fecham com as próprias linhas. UMA pendência por documento (não uma por seção): erro de escala quebra todas as seções de uma vez, e trinta pendências para um defeito é o oposto do que fazer com o tempo de quem lê a fila. 0190: quando TODAS as seções caem em pré-condição (nenhuma `ok`, nenhuma `divergente`), grava ''documento_ausente'' em vez de ''ok'' — a árvore não conferiu nada, e o resultado deixa de afirmar o contrário.';
 
 --
 -- Name: fn_reconciliar_ativo_passivo_pl(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -

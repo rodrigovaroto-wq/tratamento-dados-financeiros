@@ -374,7 +374,7 @@
 {"k":"n","id":"fn:fn_reabrir_caso","t":"fn","f":"Supabase/migrations/0114_mandato_fechado.sql","txt":"reabrir caso"}
 {"k":"n","id":"fn:fn_reavaliar_guardas_extracao","t":"fn","f":"Supabase/migrations/0043_reconferir_o_que_ja_esta_no_banco.sql","txt":"reavaliar guardas extracao"}
 {"k":"n","id":"fn:fn_recomputar_completude","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"recomputar completude"}
-{"k":"n","id":"fn:fn_reconciliar_arvore","t":"fn","f":"Supabase/migrations/0133_a_secao_que_nao_fecha.sql","txt":"reconciliar arvore"}
+{"k":"n","id":"fn:fn_reconciliar_arvore","t":"fn","f":"Supabase/migrations/0190_a_arvore_que_nao_conferiu_nada.sql","txt":"reconciliar arvore"}
 {"k":"n","id":"fn:fn_reconciliar_ativo_passivo_pl","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar ativo passivo pl"}
 {"k":"n","id":"fn:fn_reconciliar_caixa_bp_fluxo","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar caixa bp fluxo"}
 {"k":"n","id":"fn:fn_reconciliar_caso","t":"fn","f":"Supabase/migrations/0152_a_reconciliacao_do_lote.sql","txt":"reconciliar caso"}
@@ -574,6 +574,7 @@
 {"k":"n","id":"migration:0187","t":"migration","f":"Supabase/migrations/0187_o_tipo_que_chegava_sem_leitor_declarado.sql","txt":"o tipo que chegava sem leitor declarado"}
 {"k":"n","id":"migration:0188","t":"migration","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"o motivo que a checagem sabia e nao dizia"}
 {"k":"n","id":"migration:0189","t":"migration","f":"Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql","txt":"o gatilho que a sonda nao via"}
+{"k":"n","id":"migration:0190","t":"migration","f":"Supabase/migrations/0190_a_arvore_que_nao_conferiu_nada.sql","txt":"a arvore que nao conferiu nada"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -1290,6 +1291,7 @@
 {"k":"e","de":"arquivo:Supabase/test/sazonalidade_pronto.test.sql","rel":"CHAMA","pa":"fn:fn_sazonalidade_do_caso","f":"Supabase/test/sazonalidade_pronto.test.sql","l":8}
 {"k":"e","de":"arquivo:Supabase/test/secao_fecha.test.sql","rel":"CHAMA","pa":"fn:fn_conferir_arvore","f":"Supabase/test/secao_fecha.test.sql","l":54}
 {"k":"e","de":"arquivo:Supabase/test/secao_fecha.test.sql","rel":"CHAMA","pa":"fn:fn_normalizar_texto","f":"Supabase/test/secao_fecha.test.sql","l":74}
+{"k":"e","de":"arquivo:Supabase/test/secao_fecha.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_arvore","f":"Supabase/test/secao_fecha.test.sql","l":478}
 {"k":"e","de":"arquivo:Supabase/test/secao_fecha.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_por_documento","f":"Supabase/test/secao_fecha.test.sql","l":28}
 {"k":"e","de":"arquivo:Supabase/test/seed_macro.test.sql","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"Supabase/test/seed_macro.test.sql","l":56}
 {"k":"e","de":"arquivo:Supabase/test/seed_macro.test.sql","rel":"CHAMA","pa":"fn:fn_indice_macro_anual","f":"Supabase/test/seed_macro.test.sql","l":63}
@@ -1865,6 +1867,8 @@
 {"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_reescrever_recado_linha_exigida","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":1934}
 {"k":"e","de":"migration:0188","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","l":343}
 {"k":"e","de":"migration:0189","rel":"CRIA","pa":"fn:fn_instalacao_conferir","f":"Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_via.sql","l":82}
+{"k":"e","de":"migration:0190","rel":"CRIA","pa":"fn:fn_reconciliar_arvore","f":"Supabase/migrations/0190_a_arvore_que_nao_conferiu_nada.sql","l":109}
+{"k":"e","de":"migration:0190","rel":"CRIA","pa":"fn:fn_reconciliar_arvore","f":"Supabase/migrations/0190_a_arvore_que_nao_conferiu_nada.sql","l":90}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

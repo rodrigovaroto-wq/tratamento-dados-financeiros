@@ -1,5 +1,44 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+## SESSÃO 102 (25/09/2026) — `0190_a_arvore_que_nao_conferiu_nada.sql`: a árvore para de afirmar "ok" quando não conferiu nada
+
+> **Sem PR ainda. Nada aplicado em produção.**
+>
+> **O defeito.** `fn_reconciliar_arvore` (corpo vigente na `0133`) testava só dois ramos:
+> `v_n_ok+v_n_div+v_n_prec=0` (sem árvore) e, senão, `resultado := case when v_n_div>0 then
+> 'divergente' else 'ok' end`. Faltava o meio: `v_n_ok=0 and v_n_div=0 and v_n_prec>0` — TODAS as
+> seções em pré-condição, NENHUMA conferida — caía no `else` e saía `resultado='ok'`,
+> `precondicoes_ok=true`. A `0143` (hierarquia achatada) abriu esse buraco: um balanço inteiramente
+> achatado passou a cair inteiro em pré-condição de uma vez. **Medido em produção (25/09/2026,
+> somente leitura): 12 linhas de `reconciliacao` com `tipo='secao_fecha'`, `resultado='ok'` e
+> `fonte_a->>'secoes_conferidas'='0'`, em 4 casos; 48 documentos atuais com 0 conferidas e >0
+> pré-condição.**
+>
+> **A correção.** No ramo `v_n_ok+v_n_div=0`, grava `p_resultado='documento_ausente'` — o mesmo
+> motivo do ramo "sem árvore" (CONTRATO da `0186`). Efeito: `precondicoes_ok=false`,
+> `resultado='precondicao_nao_satisfeita'`, `motivo_precondicao='documento_ausente'`. **A fila NÃO
+> muda**: `documento_ausente` já não abre pendência (mesma linha da `0186`/`0188`), então isto só
+> corrige a AFIRMAÇÃO, não o comportamento de quem já não acusava rótulo duplicado ou hierarquia
+> achatada como achado próprio. Reemitida a função inteira a partir do corpo da `0133` (nunca
+> `replace`). Catálogo: requisito corpo `reconciliar_arvore_nao_mente_ok`, ordem 830 (a `0189` usa
+> 820–829). `Supabase/README.md` não depende da `0189` (segue pendente do dono).
+>
+> **Teste `Supabase/test/secao_fecha.test.sql`, bloco 8 — 12 asserts novos, 4 reprovaram com a
+> correção desligada** (guarda `if false and v_n_ok + v_n_div = 0`, medido fora do arquivo de
+> teste para não perder no primeiro `raise exception`): as 4 que checam `precondicoes_ok=false`/
+> `resultado`/`motivo_precondicao` para o documento "hierarquia achatada" e a que checa o mesmo
+> para "rótulo duplicado". As outras 8 (as duas pré-condições medidas por `fn_conferir_arvore`,
+> fonte_a/fonte_b, a fila inalterada nos três documentos, o `ok` parcial) continuam verdes porque
+> não dependem do ramo novo. Religada a correção, `Supabase/test/run.sh` completo: verde, 1.600
+> linhas `NOTICE:  ok`, `Supabase/schema.sql` sem diff.
+>
+> **O que falta** — aplicar em produção (a 0182/0183/0189 seguem pendentes do dono antes desta) e,
+> à parte, um backfill das 12 linhas já erradas (a consulta que as acha está no `Supabase/README.md`,
+> bloco da `0190`) — não incluído aqui por exigir a mesma medição de alcance que a `0179`/`0183`
+> pularam.
+
+---
+
 ## SESSÃO 101 (23–24/09/2026) — `0189`: a sonda passa a ver GATILHO, não só a função que ele chama
 
 > **PR [#242](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/242). Nada aplicado em produção.**
