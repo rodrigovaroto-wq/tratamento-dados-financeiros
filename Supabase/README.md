@@ -523,6 +523,119 @@ supabase db execute --file Supabase/migrations/0189_o_gatilho_que_a_sonda_nao_vi
 #   select chave, objeto, detalhe from fn_instalacao_conferir()
 #    where tipo = 'gatilho' and not presente;
 
+# A 0190 NÃO DEPENDE DA 0189 (que segue pendente do dono nesta lista) — só
+# reemite fn_reconciliar_arvore, que já usa o vocabulário 'documento_ausente'
+# desde a 0186/0188. Corrige o ramo em que TODAS as seções de um documento
+# caem em pré-condição: antes gravava resultado='ok' (afirmando que a árvore
+# fechou quando nada foi de fato conferido); passa a gravar 'documento_ausente'
+# — mesmo motivo do ramo "sem árvore", sem abrir pendência nova. IDEMPOTENTE.
+# Testes: Supabase/test/secao_fecha.test.sql, bloco 8 (via run.sh).
+supabase db execute --file Supabase/migrations/0190_a_arvore_que_nao_conferiu_nada.sql
+# DEPOIS DE APLICAR, as 12 linhas já erradas (medidas em 25/09/2026) NÃO se
+# corrigem sozinhas — só a próxima rodada de cada caso grava com o ramo novo.
+# Para achar as antigas sem escrever nada:
+#   select id, caso_id, tipo, criado_em from reconciliacao
+#    where tipo = 'secao_fecha' and resultado = 'ok'
+#      and fonte_a->>'secoes_conferidas' = '0';
+# E que o requisito novo está presente:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where chave = 'reconciliar_arvore_nao_mente_ok';               -- presente = true
+
+# A 0191 REEMITE fn_reconciliar_despfin_dre_vs_divida: só compara o ano da DRE
+# contra o Mapa de Dívida quando o PERÍODO DO DOCUMENTO do mapa cobre esse ano
+# (fn_anos_periodo do período do mapa) — o Mapa é um retrato de UMA data
+# (MEDIDO EM PRODUÇÃO, 25/09/2026: todo MAPA_DIVIDA hoje tem período de um ano
+# só), e antes desta migration a checagem comparava CADA ano da DRE contra a
+# soma de juros do documento inteiro, sem recorte — inclusive anos que o mapa
+# não cobre. Ano fora do período do mapa: sem_periodo_par (CONTRATO da 0186),
+# não ok nem zona_cinzenta. Mapa sem período, ou período que não ancora ano
+# nenhum: comportamento antigo, sem filtro. IDEMPOTENTE — não roda
+# reconciliação nem recompute em caso nenhum. Testes: Supabase/test/despfin_-
+# ano_par_do_mapa.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0191_o_mapa_de_um_ano_contra_a_dre_de_dois.sql
+# DEPOIS DE APLICAR, confira o catálogo:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where migration = '0191' and not presente;                 -- ZERO linhas
+# E, depois da próxima rodada de um caso com DRE multi-ano e Mapa de Dívida de
+# um ano só, o ano fora do período do mapa parando de comparar:
+#   select motivo_precondicao, count(*) from reconciliacao
+#    where tipo = 'despfin_dre_vs_divida' and motivo_precondicao = 'sem_periodo_par'
+#      and criado_em > '<data do apply>' group by 1;
+
+# 0192: dentro da MESMA rodada (fn_reconciliar_caso, uma transação), um achado
+# que CONCLUIU divergente/divergencia/zona_cinzenta prevalece sobre um ok ou
+# uma pré-condição de OUTRO período compatível — antes, a ORDEM em que a
+# rodada visitava as chaves decidia se a divergência terminava aberta ou
+# resolvida (medido em produção 25/09/2026: 4 pendências divergencia_-
+# reconciliacao criadas e resolvidas no MESMO instante). fn_reconciliar_caso
+# ganha `order by` — determinismo de qual período a pendência carrega.
+# IDEMPOTENTE (reemissão de função + catálogo).
+# Testes: Supabase/test/divergencia_prevalece_na_rodada.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0192_o_ok_que_matava_a_divergencia_irma.sql
+# DEPOIS DE APLICAR, as pendências já nascidas-e-mortas na mesma rodada (4
+# medidas em 25/09/2026) NÃO se corrigem sozinhas — só a próxima rodada de
+# cada caso resolve/mantém com a guarda nova. Para achar as antigas:
+#   select id, caso_id, motivo, criada_em, resolvida_em from pendencia
+#    where motivo like 'reconciliacao:%' and tipo = 'divergencia_reconciliacao'
+#      and criada_em = resolvida_em;
+# E que o requisito novo está presente:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where chave = 'ok_nao_mata_divergencia_irma';                  -- presente = true
+
+# A 0193 REEMITE fn_reconciliar_caixa_bp_fluxo e fn_reconciliar_receita_-
+# dre_vs_faturamento: a mesma correção que a 0188 aplicou na despfin — a
+# tolerância absoluta passa a estar em moeda BASE, não multiplicada pelo
+# fator de escala do documento (numa DRE/Balanço em 'milhar', o piso virava
+# 1000× maior que o default). MEDIDO EM PRODUÇÃO (25/09/2026, somente
+# leitura): efeito ZERO hoje — 0 das 33 caixa_bp_fluxo e 0 das 30 receita_-
+# dre_vs_faturamento com resultado 'ok' mudariam de resultado com a
+# tolerância na base. Correção LATENTE (mesmo vício estrutural da despfin,
+# ainda sem caso real que o exercite). IDEMPOTENTE — não roda reconciliação
+# nem recompute em caso nenhum; as assinaturas não mudam.
+# Testes: Supabase/test/tolerancia_na_base.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql
+# DEPOIS DE APLICAR, confira o catálogo:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where migration = '0193' and not presente;                 -- ZERO linhas
+# E, se algum dia esta correção DEIXAR de ser latente (uma checagem em milhar
+# muda de 'ok' para 'divergente'/'zona_cinzenta' na próxima rodada de um
+# caso), a diferença aparece nas linhas novas de reconciliacao — não há nada
+# para reprocessar à mão, e nada muda sozinho nas linhas já gravadas.
+
+# A 0194 REEMITE fn_reconciliar_mutuos: a planilha de mútuos de PRODUÇÃO é um
+# RETRATO de uma data (conceito na coluna — 0145), não uma demonstração
+# comparativa. MEDIDO EM PRODUÇÃO (25/09/2026, somente leitura): os 12 casos
+# com planilha MUTUOS nunca concluem — resultado documento_ausente, inclusive
+# nos 7 que TÊM conta de mútuo no balanço, com um texto de descrição FALSO
+# ("nenhum balanço traz conta de mútuo"). Causa: fn_coluna_periodo_do_ano
+# devolve a sentinela para um retrato (nenhuma coluna é "ano"), e o filtro do
+# lado da planilha, escrito para NULL, zerava a soma. Agora, quando o PERÍODO
+# DO DOCUMENTO cobre o ano, a coluna do saldo é achada pelo localizador que a
+# 0145 já cadastrou para este conceito (MUTUOS/saldo_de_mutuo, termo
+# 'saldo'). Ano fora do retrato: sem_periodo_par; retrato sem coluna de
+# saldo, ou planilha sem linha para o lado do balanço: linha_nao_localizada;
+# escala incomparável: unidade_divergente — os três ABREM pendência (0186),
+# diferente de documento_ausente, que continua reservado a "nenhum balanço
+# tem conta de mútuo" (comportamento desenhado da 0117/0123, preservado).
+# IDEMPOTENTE — não roda reconciliação em caso nenhum; as fixtures dos dois
+# books gravam periodo_coluna como o ANO (não o cabeçalho), então o ramo novo
+# nunca dispara sobre elas — nenhum assert existente muda.
+# Testes: Supabase/test/mutuos_retrato_de_uma_data.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0194_a_planilha_de_mutuos_que_nunca_foi_lida.sql
+# DEPOIS DE APLICAR, confira o catálogo:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where migration = '0194' and not presente;                 -- ZERO linhas
+# E, na próxima rodada de cada um dos 12 casos com planilha MUTUOS, o efeito
+# previsto (regra de projeto: escrita ≠ aplicada, só a sonda/o dado real
+# responde): os 7 casos com conta de mútuo no balanço deixam de responder
+# documento_ausente — no "teste - Canastra"/"teste Canastra" a divergência
+# plantada de 240 mil passa a abrir reconciliacao:mutuos_planilha_vs_balanco.
+# Para achar as linhas antigas (gravadas ANTES desta migration, que não se
+# corrigem sozinhas):
+#   select id, caso_id, criado_em from reconciliacao
+#    where tipo = 'mutuos_planilha_vs_balanco' and resultado = 'precondicao_nao_satisfeita'
+#      and motivo_precondicao = 'documento_ausente';
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

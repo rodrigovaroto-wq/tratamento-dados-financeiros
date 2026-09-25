@@ -7979,10 +7979,15 @@ declare
   v_n_ok        int := 0;
   v_n_div       int := 0;
   v_n_prec      int := 0;
+  v_n_achatada  int := 0;
+  v_n_rotulo    int := 0;
+  v_n_unidade   int := 0;
+  v_n_semparc   int := 0;
   v_pior_abs    numeric;
   v_pior_pct    numeric;
   v_pior_pai    text;
   v_partes      text[] := '{}';
+  v_causas      text[] := '{}';
   v_resultado   text;
   v_desc        text;
 begin
@@ -8013,6 +8018,52 @@ begin
       jsonb_build_object('tolerancia', 'arredondamento ~0,5*(n+1)'),
       'Este documento não tem seção com filhos — não há árvore a conferir. É o esperado em '
       || 'documento de lista (razão, aging, mapa de dívida), não um achado.');
+  end if;
+
+  -- 0190: NENHUMA seção fechou de verdade (nem `ok`, nem `divergente`) — só
+  -- pré-condição, em TODAS. Antes desta migration isto caía no ramo `else` de
+  -- baixo e saía `resultado := 'ok'` ("As 0 seções deste documento fecham…"),
+  -- afirmando que a árvore conferiu e fechou quando nenhuma soma real
+  -- aconteceu. Grava com o MESMO motivo do ramo "sem árvore" acima
+  -- (`documento_ausente` — CONTRATO na 0186:60-130): não abre pendência (o
+  -- achado, quando tem dono, já tem — rótulo duplicado é da 0105; hierarquia
+  -- achatada é decisão da própria 0143 de não acusar), mas a linha para de
+  -- MENTIR que fechou.
+  if v_n_ok + v_n_div = 0 then
+    select count(*) filter (where achado = 'hierarquia_achatada'),
+           count(*) filter (where achado = 'rotulo_duplicado'),
+           count(*) filter (where achado = 'unidade_mista'),
+           count(*) filter (where achado = 'sem_parcela')
+      into v_n_achatada, v_n_rotulo, v_n_unidade, v_n_semparc
+    from fn_conferir_arvore(v_versao)
+    where resultado = 'precondicao_nao_satisfeita';
+
+    if v_n_achatada > 0 then
+      v_causas := v_causas || format('%s por hierarquia achatada (a extração ainda não separa '
+                                     'o subgrupo do grupo — remédio é o prompt, não reconciliação)',
+                                     v_n_achatada);
+    end if;
+    if v_n_rotulo > 0 then
+      v_causas := v_causas || format('%s por rótulo duplicado (reconciliacao:duplicidade_de_'
+                                     'rotulo, 0105, já cobra)', v_n_rotulo);
+    end if;
+    if v_n_unidade > 0 then
+      v_causas := v_causas || format('%s por unidade mista', v_n_unidade);
+    end if;
+    if v_n_semparc > 0 then
+      v_causas := v_causas || format('%s sem parcela somável', v_n_semparc);
+    end if;
+
+    return fn_registrar_reconciliacao(v_caso_id, v_entidade_id, v_periodo_id,
+      'secao_fecha', 'A', p_documento_id,
+      jsonb_build_object('secoes_conferidas', 0, 'pior_secao', null),
+      jsonb_build_object('divergentes', 0, 'sem_conferir', v_n_prec),
+      'documento_ausente', null, null,
+      jsonb_build_object('tolerancia', 'arredondamento ~0,5*(n+1) na unidade do documento'),
+      format('Nenhuma das %s seção(ões) deste documento foi conferida (%s). Nenhuma soma real '
+             'aconteceu: uma linha perdida dentro de qualquer seção passaria sem aviso, porque '
+             'não há aqui nenhuma conferência que a pegasse.',
+             v_n_prec, array_to_string(v_causas, '; ')));
   end if;
 
   select a.divergencia_abs,
@@ -8050,8 +8101,13 @@ begin
                                  'vez costuma ser escala ou coluna, não linha perdida.)', v_n_div);
     end if;
   else
+    -- 0190: o texto dizia só "rótulo duplicado ou unidade mista" — falso desde
+    -- a 0143, que acrescentou hierarquia achatada como terceira causa de
+    -- pré-condição. Corrigido na mesma reemissão; comportamento deste ramo
+    -- (v_n_ok > 0, `resultado := 'ok'`) não muda.
     v_desc := format('As %s seções deste documento fecham com as próprias linhas. %s ficaram sem '
-                     'conferir por pré-condição (rótulo duplicado ou unidade mista).',
+                     'conferir por pré-condição (hierarquia achatada, rótulo duplicado, unidade '
+                     'mista ou sem parcela somável).',
                      v_n_ok, v_n_prec);
   end if;
 
@@ -8069,7 +8125,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_arvore(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_arvore(p_documento_id uuid) IS 'Registra, como reconciliação Classe A, se as seções do documento fecham com as próprias linhas. UMA pendência por documento (não uma por seção): erro de escala quebra todas as seções de uma vez, e trinta pendências para um defeito é o oposto do que fazer com o tempo de quem lê a fila.';
+COMMENT ON FUNCTION public.fn_reconciliar_arvore(p_documento_id uuid) IS 'Registra, como reconciliação Classe A, se as seções do documento fecham com as próprias linhas. UMA pendência por documento (não uma por seção): erro de escala quebra todas as seções de uma vez, e trinta pendências para um defeito é o oposto do que fazer com o tempo de quem lê a fila. 0190: quando TODAS as seções caem em pré-condição (nenhuma `ok`, nenhuma `divergente`), grava ''documento_ausente'' em vez de ''ok'' — a árvore não conferiu nada, e o resultado deixa de afirmar o contrário.';
 
 --
 -- Name: fn_reconciliar_ativo_passivo_pl(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -8314,7 +8370,7 @@ COMMENT ON FUNCTION public.fn_reconciliar_ativo_passivo_pl(p_caso_id uuid, p_ent
 
 CREATE FUNCTION public.fn_reconciliar_caixa_bp_fluxo(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric DEFAULT 100, p_tolerancia_pct numeric DEFAULT 0.005) RETURNS jsonb
     LANGUAGE plpgsql
-    AS $$
+    AS $_$
 declare
   v_doc_bp    uuid;
   v_doc_fx    uuid;
@@ -8465,8 +8521,18 @@ begin
     v_b := fn_valor_em_base(v_saldo.valor_num, v_saldo.unidade);
     v_n := v_n + 1;
     v_div_abs := abs(v_a - v_b);
-    v_tol := greatest(p_tolerancia_abs * coalesce(fn_fator_escala(v_caixa.unidade), 1),
-                      abs(v_a) * p_tolerancia_pct);
+    -- 0193: A TOLERÂNCIA ABSOLUTA ESTÁ NA BASE, como v_a e v_b. Da 0031 até
+    -- aqui ela era `p_tolerancia_abs * fator_da_escala`: numa entidade com
+    -- Balanço/DFC em 'milhar', os R$ 100 do default viravam R$ 100 MIL, e
+    -- qualquer divergência de caixa abaixo disso saía "confere". MEDIDO EM
+    -- PRODUÇÃO (25/09/2026, somente leitura, recomputando fonte_a/fonte_b):
+    -- das 33 caixa_bp_fluxo com resultado 'ok' (as 33 em 'milhar'), 0
+    -- mudariam de resultado com a tolerância na base — diferença zero em
+    -- todas. Correção LATENTE: mesmo vício estrutural da despfin (0188), sem
+    -- efeito ainda medido nesta checagem. MEDIDO (regra 2): com o `× fator`
+    -- de volta, o assert do bloco 1 de
+    -- Supabase/test/tolerancia_na_base.test.sql reprova.
+    v_tol := greatest(p_tolerancia_abs, abs(v_a) * p_tolerancia_pct);
     if v_div_abs > v_tol then
       v_resultado := 'divergente';
       v_partes := v_partes || format('%s: Caixa no Balanço %s ("%s") vs Saldo final na DFC %s ("%s") — diferença de %s',
@@ -8505,7 +8571,7 @@ begin
     format('Caixa do Balanço vs Saldo final do Fluxo de Caixa em %s ano(s): %s.',
            v_n, array_to_string(v_partes, '; ')));
 end;
-$$;
+$_$;
 
 --
 -- Name: fn_reconciliar_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -8515,6 +8581,9 @@ CREATE FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 -- 0152: cada checagem sobre a SUA chave.
+-- 0192: `order by` em cada laço — determinismo de qual período a pendência
+-- carrega (a guarda de fn_registrar_reconciliacao já não depende da ordem
+-- para decidir aberto/resolvido; isto é só reprodutibilidade).
 declare
   v_k          record;
   v_per        uuid;
@@ -8535,7 +8604,8 @@ begin
 
   -- ---- (entidade, período), com laço de período -----------------------------
   for v_k in select distinct d.entidade_id, d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore)
+             order by d.entidade_id, d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_ativo_passivo_pl(p_caso_id, v_k.entidade_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8544,7 +8614,8 @@ begin
   end loop;
 
   for v_k in select distinct d.entidade_id, d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_fluxo) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_fluxo)
+             order by d.entidade_id, d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_caixa_bp_fluxo(p_caso_id, v_k.entidade_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8553,7 +8624,8 @@ begin
   end loop;
 
   for v_k in select distinct d.entidade_id, d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_receita) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_receita)
+             order by d.entidade_id, d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_receita_dre_vs_faturamento(p_caso_id, v_k.entidade_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8562,7 +8634,8 @@ begin
   end loop;
 
   for v_k in select distinct d.entidade_id, d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_despfin) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_despfin)
+             order by d.entidade_id, d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_despfin_dre_vs_divida(p_caso_id, v_k.entidade_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8572,7 +8645,8 @@ begin
 
   -- ---- só (período) — mútuos e intragrupo são do GRUPO, não da empresa ------
   for v_k in select distinct d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_mutuos) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_mutuos)
+             order by d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_mutuos(p_caso_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8581,7 +8655,8 @@ begin
   end loop;
 
   for v_k in select distinct d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_intra) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_intra)
+             order by d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_intragrupo(p_caso_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8591,14 +8666,16 @@ begin
 
   -- ---- só (entidade) — sem período nenhum ----------------------------------
   for v_k in select distinct d.entidade_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore)
+             order by d.entidade_id loop
     v_checagens := v_checagens
       || jsonb_build_array(fn_reconciliar_duplicidade(p_caso_id, v_k.entidade_id));
     v_chamadas := v_chamadas + 1;
   end loop;
 
   for v_k in select distinct d.entidade_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_conflito) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_conflito)
+             order by d.entidade_id loop
     v_checagens := v_checagens
       || jsonb_build_array(fn_reconciliar_versoes_do_periodo(p_caso_id, v_k.entidade_id));
     v_chamadas := v_chamadas + 1;
@@ -8615,7 +8692,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) IS 'As checagens do caso, cada uma UMA VEZ por chave PRÓPRIA (0152): a de conflito e a de duplicidade por entidade, mútuos e intragrupo por período, as quatro de Classe A/B por (entidade, período). Medido no book-araucaria: 247 invocações contra as ~8.500 da versão por documento, e a checagem cara (1,8 s) roda 16 vezes em vez de 123. Uma chave só para as oito daria 162 — 15% de redução, que é não corrigir nada.';
+COMMENT ON FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) IS 'Roda cada uma das oito checagens de reconciliação sobre a SUA chave (0152). 0192: `order by` em cada laço `select distinct` — determinismo de qual período a pendência carrega quando mais de um é compatível; o aberto/resolvido em si já não depende da ordem (guarda em fn_registrar_reconciliacao).';
 
 --
 -- Name: fn_reconciliar_chaves_do_documento(uuid, uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -8748,6 +8825,14 @@ declare
   v_motivo_prec text;
   v_alt         record;
   v_recado      text;
+  -- 0191: os anos que o PERÍODO DO DOCUMENTO do Mapa de Dívida ancora. Lido
+  -- uma vez, fora do laço — o mapa não muda de período ano a ano. Vazio =
+  -- "não há como afirmar o ano" (sem período, ou período que não ancora ano
+  -- nenhum): a guarda nova não filtra nada, comportamento de antes.
+  v_periodo_id_div uuid;
+  v_tipo_div        text;
+  v_ref_div         text;
+  v_anos_mapa       int[];
 begin
   v_doc_dre := fn_documento_por_tipo(p_caso_id, p_entidade_id, p_periodo_id, 'DRE');
   v_doc_div := fn_documento_por_tipo(p_caso_id, p_entidade_id, p_periodo_id, 'MAPA_DIVIDA');
@@ -8767,9 +8852,33 @@ begin
   v_col_ent  := fn_coluna_entidade(v_ver_dre, p_entidade_id);
   v_unid_div := fn_unidade_predominante(v_ver_div);
 
+  -- 0191: o Mapa de Dívida é um retrato de UMA data — MEDIDO EM PRODUÇÃO
+  -- (25/09/2026): todo MAPA_DIVIDA hoje tem período de um ano só. Sem este
+  -- corte, o laço abaixo compara CADA ano da DRE contra a soma de juros do
+  -- documento inteiro (não recortada por ano), inclusive anos que o mapa não
+  -- cobre — ver o cabeçalho desta migration.
+  select periodo_id into v_periodo_id_div from documento where id = v_doc_div;
+  if v_periodo_id_div is not null then
+    select tipo, referencia into v_tipo_div, v_ref_div from periodo where id = v_periodo_id_div;
+    v_anos_mapa := fn_anos_periodo(v_tipo_div, v_ref_div);
+  end if;
+
   foreach v_ano in array fn_anos_alvo(p_periodo_id) loop
     v_col_per := case when v_ano is null then null
                       else fn_coluna_periodo_do_ano(v_ver_dre, v_ano) end;
+
+    -- 0191: o ano deste laço não é coberto pelo período do Mapa de Dívida —
+    -- não compara. `v_anos_mapa` vazio (mapa sem período, ou período que não
+    -- ancora ano nenhum) mantém o comportamento antigo: sem como afirmar que o
+    -- ano não é coberto, a guarda não filtra.
+    if v_ano is not null and cardinality(coalesce(v_anos_mapa, '{}'::int[])) > 0
+       and not (v_ano = any(v_anos_mapa)) then
+      v_motivos_ano := v_motivos_ano || 'sem_periodo_par'::text;
+      v_faltas := v_faltas || format(
+        '%s: o Mapa de Dívida é de %s — não há juros deste exercício para comparar',
+        v_ano, coalesce(v_ref_div, 'outro período'));
+      continue;
+    end if;
 
     select * into v_despfin from fn_valor_conceito_col(v_ver_dre,
       array['despesa', 'financeira'], array['receita'], v_col_ent, v_col_per);
@@ -8913,6 +9022,12 @@ begin
            v_n, array_to_string(v_partes, '; ')));
 end;
 $_$;
+
+--
+-- Name: FUNCTION fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Reconcilia a Despesa Financeira da DRE contra a soma dos juros do Mapa de Dívida, ano a ano. 0191: só compara o ano quando o período do DOCUMENTO do Mapa de Dívida o cobre (fn_anos_periodo do período do mapa) — o Mapa é um retrato de UMA data, e comparar um ano que ele não cobre contra a soma do documento inteiro é comparação sem sentido. Ano fora: sem_periodo_par, não ok nem zona_cinzenta. Mapa sem período (ou período sem ano ancorado): comportamento antigo, sem filtro.';
 
 --
 -- Name: fn_reconciliar_duplicidade(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -9157,6 +9272,22 @@ declare
   v_lados record;
   v_lado_alvo text;
   v_rotulo_lado text;
+  -- 0194: a planilha é um RETRATO de uma data (0145: o conceito mora na
+  -- coluna). Estes três respondem "de qual ano é este retrato" e "onde mora a
+  -- coluna do saldo", lidos UMA VEZ fora do laço — o documento não muda de
+  -- período ano a ano.
+  v_periodo_id_mut uuid;
+  v_tipo_mut        text;
+  v_ref_mut         text;
+  v_anos_mut        int[];
+  v_col_saldo       text;
+  -- 0194 (mesmo padrão da 0188/0191/0193): o motivo de cada ano/lado que não
+  -- concluiu, e o que fica faltando dito em texto — para o `v_n = 0` do fim
+  -- distinguir "nenhum balanço tem conta de mútuo" (silêncio de sempre) de
+  -- "documento presente, checagem não concluiu" (achado, abre pendência).
+  v_motivos_ano text[] := '{}';
+  v_faltas      text[] := '{}';
+  v_motivo_prec text;
 begin
   -- A PLANILHA É DO GRUPO E O SALDO É DE CADA EMPRESA — por isso esta checagem
   -- é por CASO, e não por (caso, entidade) como as outras.
@@ -9191,6 +9322,30 @@ begin
 
   v_ver_mut  := fn_versao_atual(v_doc_mut);
   v_unid_mut := fn_unidade_predominante(v_ver_mut);
+
+  -- 0194: o PERÍODO DO DOCUMENTO da planilha — não a coluna. É o mesmo
+  -- caminho que a 0191 já usa para o Mapa de Dívida (outro retrato de uma
+  -- data): `documento.periodo_id` → `periodo.tipo, referencia` →
+  -- `fn_anos_periodo`. Vazio = "sem como afirmar de qual ano é o retrato"
+  -- (documento sem período, ou período que não ancora ano nenhum).
+  select periodo_id into v_periodo_id_mut from documento where id = v_doc_mut;
+  if v_periodo_id_mut is not null then
+    select tipo, referencia into v_tipo_mut, v_ref_mut from periodo where id = v_periodo_id_mut;
+    v_anos_mut := fn_anos_periodo(v_tipo_mut, v_ref_mut);
+  end if;
+
+  -- 0194: A COLUNA DO SALDO, achada pelo MESMO localizador que a 0145 já
+  -- cadastrou para este conceito (`taxonomia_linha_localizador`,
+  -- MUTUOS/saldo_de_mutuo, termo 'saldo') — reuso do termo, não um `like`
+  -- novo. Lida uma vez: o retrato tem uma coluna de saldo só, não uma por ano.
+  select ce.periodo_coluna into v_col_saldo
+  from campo_extraido ce
+  where ce.documento_versao_id = v_ver_mut
+    and ce.periodo_coluna is not null
+    and fn_normalizar_texto(ce.periodo_coluna) like '%saldo%'
+  group by ce.periodo_coluna
+  order by count(*) desc, ce.periodo_coluna
+  limit 1;
 
   -- OS DEGRAUS SÃO RESOLVIDOS UMA VEZ, PARA O DOCUMENTO TODO — e é essencial que
   -- seja assim, não linha a linha. A pergunta do degrau é "este documento
@@ -9281,12 +9436,22 @@ begin
     from linhas;
 
     if coalesce(v_lados.n_lados, 0) = 0 then
+      -- SEM MOTIVO: é o caso comum e legítimo (0117/0123, comportamento
+      -- desenhado e preservado) — não achar linha de mútuo NO BALANÇO não é
+      -- achado. É o ÚNICO `continue` que não alimenta `v_motivos_ano`.
       continue;
     end if;
 
     -- Escala ausente de um dos lados é o mesmo critério conservador da 0009:
     -- não há o que converter, e afirmar "confere" seria pior que calar.
     if coalesce(v_lados.tem_sem_escala, false) <> (v_unid_mut is null) then
+      -- 0194: o MESMO vício de texto dos outros `continue` — escala ausente
+      -- de um lado terminava no MESMO `documento_ausente` falso. É achado (a
+      -- escala não é comparável), não ausência de dado.
+      v_motivos_ano := v_motivos_ano || 'unidade_divergente'::text;
+      v_faltas := v_faltas || format(
+        '%s: escala não comparável entre o balanço e a planilha de mútuos (um lado declara, o outro não)',
+        v_ano);
       continue;
     end if;
 
@@ -9324,6 +9489,53 @@ begin
       v_rotulo_lado := v_lado_alvo;
     end if;
 
+    -- 0194: A PLANILHA-RETRATO. Chegamos aqui só quando o BALANÇO tem conta de
+    -- mútuo para este ano (n_lados>0, escala comparável) — então o que falta
+    -- resolver agora é só o lado da PLANILHA, e é aí que mora o defeito desta
+    -- migration.
+    --
+    -- `fn_coluna_periodo_do_ano` devolve a sentinela quando o documento TEM
+    -- colunas de período e nenhuma é deste ano — a pergunta certa para um
+    -- documento COMPARATIVO. A planilha de mútuos de produção não é
+    -- comparativa: é um RETRATO de uma data (0145 — o documento é matricial,
+    -- a chave é o PAR de empresas e o conceito mora na coluna:
+    -- "Mutuante"/"Mutuária"/"Saldo devedor"/"TOTAL"). Nenhum desses
+    -- cabeçalhos é ano nenhum, então a sentinela sempre disparava — e antes
+    -- desta migration o filtro do LADO B (escrito para NULL) zerava a soma, o
+    -- laço caía no `continue` mudo e a função devolvia `documento_ausente`
+    -- com um texto falso (ver o cabeçalho). A pergunta certa para um retrato:
+    -- o PERÍODO DO DOCUMENTO cobre `v_ano`? Se sim, a coluna do saldo é a que
+    -- `v_col_saldo` já achou; se não cobre, não há o que comparar neste ano.
+    if v_col_mut = E'\x01'
+       and v_ano is not null
+       and cardinality(coalesce(v_anos_mut, '{}'::int[])) > 0 then
+      if v_ano = any(v_anos_mut) then
+        v_col_mut := v_col_saldo;
+        if v_col_mut is null then
+          -- O documento cobre o ano, mas nenhuma coluna diz "saldo": achado
+          -- acionável (o documento pode ter mudado de formato), não silêncio.
+          v_motivos_ano := v_motivos_ano || 'linha_nao_localizada'::text;
+          v_faltas := v_faltas || format(
+            '%s: a planilha de mútuos é retrato deste exercício, mas nenhuma coluna diz '
+            '"saldo" (o mesmo termo do localizador da 0145)', v_ano);
+          continue;
+        end if;
+      else
+        -- O documento é retrato de OUTRO(S) ano(s) — não há o que comparar
+        -- neste `v_ano`, e é o CONTRATO da 0186 que nomeia isso, não o
+        -- genérico.
+        v_motivos_ano := v_motivos_ano || 'sem_periodo_par'::text;
+        v_faltas := v_faltas || format(
+          '%s: a planilha de mútuos é retrato de %s — não há esse exercício para comparar',
+          v_ano, coalesce(v_ref_mut, 'outra data'));
+        continue;
+      end if;
+    end if;
+    -- `v_anos_mut` vazio (documento sem período, ou período que não ancora
+    -- ano nenhum): sem como afirmar retrato de QUAL ano, então `v_col_mut`
+    -- segue sentinela — comportamento de ANTES desta migration (mesma
+    -- exceção que a 0191 já abre para o Mapa de Dívida).
+
     -- ---- LADO B: a planilha ----------------------------------------------
     select coalesce(sum(fn_valor_em_base(ce.valor_num, ce.unidade)), 0) as soma_base,
            coalesce(sum(ce.valor_num), 0) as soma_bruta,
@@ -9334,21 +9546,16 @@ begin
       and ce.valor_num is not null
       and fn_papel_linha(ce.chave) <> 'subtotal'
       -- MÚTUO CONTRA MÚTUO — nos degraus 1 e 2. A planilha de intragrupo lista
-      -- mais coisa do que mútuo (conta corrente rotativa, aluguel entre
-      -- coligadas, rateio de despesa), e o balanço registra cada uma num lugar
-      -- diferente ("Outros créditos", "Contas a pagar"). Comparar a planilha
-      -- INTEIRA contra as contas de mútuo do balanço acusa como divergência
-      -- aquilo que é só natureza diferente: no book Vertentes isso somava a
-      -- conta corrente de 1.400 de um lado só e inventava 1.400 de diferença.
+      -- mais coisa que mútuo (conta corrente rotativa, aluguel entre
+      -- coligadas, rateio de despesa), e o balanço registra cada natureza num
+      -- lugar diferente. Comparar a planilha INTEIRA contra as contas de
+      -- mútuo do balanço acusaria como divergência aquilo que é só natureza
+      -- diferente.
       --
       -- OS TRÊS DEGRAUS, NA ORDEM. O `case` é o que impede o degrau 2 de valer
       -- quando o degrau 1 existe — sem isso, seção larga ("MÚTUOS E CONTAS
       -- INTRAGRUPO") passa a incluir a conta corrente que o rótulo já tinha
       -- separado, que é o defeito de novo.
-      --
-      -- Fica anotado o que ISTO deixa de fora: a conferência das linhas
-      -- intragrupo que NÃO são mútuo continua sem checagem. É trabalho próprio
-      -- — exige casar cada linha com a conta certa de cada balanço.
       and (case
              when v_pl_rotulo then fn_texto_nomeia_mutuo(ce.chave)
              when v_pl_secao  then fn_texto_nomeia_mutuo(ce.secao)
@@ -9356,7 +9563,7 @@ begin
            end)
       -- A MESMA RÉGUA DOS DOIS LADOS. Se o balanço exclui o mútuo com sócio e a
       -- planilha não, a diferença que sobra é da régua e não do dado — é o defeito
-      -- que esta migration está consertando, cometido de novo em espelho.
+      -- que a 0123 consertou, cometido de novo em espelho.
       and not fn_mutuo_com_socio(ce.chave, ce.secao)
       -- Quando o balanço tem um lado só, a linha da planilha que DECLARA lado
       -- tem de ser do mesmo; a que não declara entra (ela é as duas pontas).
@@ -9366,7 +9573,17 @@ begin
            or coalesce(fn_lado_do_mutuo(ce.chave, ce.secao_canonica), v_lado_alvo) = v_lado_alvo)
       and (v_col_mut is null
            or fn_normalizar_texto(ce.periodo_coluna) = fn_normalizar_texto(v_col_mut));
-    if coalesce(v_pl.n, 0) = 0 then continue; end if;
+    if coalesce(v_pl.n, 0) = 0 then
+      -- 0194: a coluna FOI resolvida (ou é o caso "sem como afirmar", ver
+      -- acima) e mesmo assim nenhuma linha da planilha casou com o lado do
+      -- balanço — achado, não ausência.
+      v_motivos_ano := v_motivos_ano || fn_motivo_do_lado(false, null, v_col_mut);
+      v_faltas := v_faltas || format('%s: %s', v_ano,
+        case when v_col_mut = E'\x01'
+             then 'a planilha de mútuos não tem coluna deste exercício'
+             else 'a planilha de mútuos não tem linha para o lado do balanço neste exercício' end);
+      continue;
+    end if;
 
     v_b := abs(coalesce(v_pl.soma_base, 0));
     v_a := abs(coalesce(v_a, 0));
@@ -9404,20 +9621,37 @@ begin
   end loop;
 
   if v_n = 0 then
-    -- SEM PENDÊNCIA, e é decisão de projeto: `documento_ausente` é o único
-    -- resultado que `fn_registrar_reconciliacao` não transforma em pendência.
-    -- Não achar linha de mútuo NO BALANÇO é o caso comum e correto — a
-    -- demonstração combinada elimina o intragrupo, e o balanço individual pode
-    -- agregar o saldo em "outras partes relacionadas". Abrir pendência aqui
-    -- encheria a fila de todo mandato com um aviso que não pede ação nenhuma,
-    -- e uma fila assim é uma fila que ninguém lê.
+    if cardinality(v_motivos_ano) = 0 then
+      -- SEM PENDÊNCIA, e é decisão de projeto: `documento_ausente` é o único
+      -- resultado que `fn_registrar_reconciliacao` não transforma em pendência.
+      -- Não achar linha de mútuo NO BALANÇO é o caso comum e correto — a
+      -- demonstração combinada elimina o intragrupo, e o balanço individual pode
+      -- agregar o saldo em "outras partes relacionadas". Abrir pendência aqui
+      -- encheria a fila de todo mandato com um aviso que não pede ação nenhuma,
+      -- e uma fila assim é uma fila que ninguém lê. TODOS os anos pularam por
+      -- essa via (0194: `v_motivos_ano` vazio é a prova).
+      return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
+        'mutuos_planilha_vs_balanco', 'B', v_doc_mut, null, null,
+        'documento_ausente', null, null,
+        jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct),
+        'Planilha de mútuos presente, mas nenhum balanço do mandato traz conta de mútuo com lado '
+        || 'reconhecível (combinado elimina intragrupo; individual às vezes agrega em "partes '
+        || 'relacionadas"). Sem par, não há o que conferir.');
+    end if;
+
+    -- 0194: o balanço TEM conta de mútuo em algum ano, mas a checagem não
+    -- concluiu por outro motivo — documento presente e algo não localizado é
+    -- ACHADO ACIONÁVEL (0186), não ausência. Abre pendência
+    -- (fn_registrar_reconciliacao: todo motivo de precondição além de
+    -- documento_ausente abre).
+    v_motivo_prec := fn_motivo_precondicao_agregado(v_motivos_ano);
     return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
       'mutuos_planilha_vs_balanco', 'B', v_doc_mut, null, null,
-      'documento_ausente', null, null,
+      v_motivo_prec, null, null,
       jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct),
-      'Planilha de mútuos presente, mas nenhum balanço do mandato traz conta de mútuo com lado '
-      || 'reconhecível (combinado elimina intragrupo; individual às vezes agrega em "partes '
-      || 'relacionadas"). Sem par, não há o que conferir.');
+      fn_motivo_precondicao_prefixo(v_motivo_prec)
+      || 'Planilha de mútuos e balanço com conta de mútuo presentes, mas a checagem não concluiu '
+      || 'em nenhum exercício. ' || array_to_string(v_faltas, '; ') || '.');
   end if;
 
   return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
@@ -9436,7 +9670,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS '0123: a natureza "mútuo" é lida na linha OU na seção, e um documento MUTUOS que não a nomeia em lugar nenhum conta inteiro. Confere os dois lados entre si antes de comparar a planilha; lados que discordam são o achado, e aí a planilha não é atribuída a um deles. Mútuo com sócio fica fora: não tem espelho no mandato.';
+COMMENT ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS '0194: a planilha de mútuos é um RETRATO de uma data (0145 — o conceito mora na coluna, não é comparativa): quando a coluna de período sai sentinela e o PERÍODO DO DOCUMENTO cobre o ano, a coluna do saldo é achada pelo localizador da 0145 (MUTUOS/saldo_de_mutuo, termo ''saldo''), em vez de zerar a comparação e devolver documento_ausente falso. Ano fora do retrato: sem_periodo_par; retrato sem coluna de saldo, ou planilha sem linha para o lado do balanço: linha_nao_localizada; escala incomparável: unidade_divergente — os três abrem pendência (0186), diferente de documento_ausente. 0123: a natureza "mútuo" é lida na linha OU na seção. Confere os dois lados entre si antes de comparar a planilha; lados que discordam são o achado, e aí a planilha não é atribuída a um deles. Mútuo com sócio fica fora: não tem espelho no mandato.';
 
 --
 -- Name: fn_reconciliar_por_documento(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -9503,7 +9737,7 @@ COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid, p_e
 
 CREATE FUNCTION public.fn_reconciliar_receita_dre_vs_faturamento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric DEFAULT 50000, p_tolerancia_pct numeric DEFAULT 0.05) RETURNS jsonb
     LANGUAGE plpgsql
-    AS $$
+    AS $_$
 declare
   v_doc_dre  uuid;
   v_doc_fat  uuid;
@@ -9606,8 +9840,18 @@ begin
     v_b := fn_valor_em_base(v_fat.soma, v_unid_fat);
     v_n := v_n + 1;
     v_div := abs(v_a - v_b);
-    v_tol := greatest(p_tolerancia_abs * coalesce(fn_fator_escala(v_unid_rec), 1),
-                      abs(v_a) * p_tolerancia_pct);
+    -- 0193: A TOLERÂNCIA ABSOLUTA ESTÁ NA BASE, como v_a e v_b. Da 0023 até
+    -- aqui ela era `p_tolerancia_abs * fator_da_escala`: numa DRE em
+    -- 'milhar', os R$ 50.000 do default viravam R$ 50 MILHÕES, e uma
+    -- diferença de até 30% da receita sairia "confere" (ver o cabeçalho
+    -- desta migration). MEDIDO EM PRODUÇÃO (25/09/2026, somente leitura,
+    -- recomputando fonte_a/fonte_b): das 30 receita_dre_vs_faturamento com
+    -- resultado 'ok' (10 em 'milhar'), 0 mudariam de resultado com a
+    -- tolerância na base — a pior diferença entre elas chega a 4,75%, abaixo
+    -- do piso percentual de 5%. Correção LATENTE. MEDIDO (regra 2): com o
+    -- `× fator` de volta, o assert do bloco 2 de
+    -- Supabase/test/tolerancia_na_base.test.sql reprova.
+    v_tol := greatest(p_tolerancia_abs, abs(v_a) * p_tolerancia_pct);
     if v_div > v_tol then
       v_resultado := 'zona_cinzenta';
       v_partes := v_partes || format('%s: Receita Bruta %s vs %s meses de faturamento %s — diferença de %s '
@@ -9647,7 +9891,7 @@ begin
     format('Receita Bruta da DRE vs faturamento mensal em %s ano(s): %s.',
            v_n, array_to_string(v_partes, '; ')));
 end;
-$$;
+$_$;
 
 --
 -- Name: fn_reconciliar_versoes_do_periodo(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -11134,6 +11378,12 @@ declare
   v_abre_pendencia   boolean;
   v_estagio_dial     text;
   v_influencia       boolean;
+  -- 0192: o período que a pendência JÁ CARREGA (pode ser diferente de
+  -- p_periodo_id — a busca acima acha por compatibilidade, não igualdade), e
+  -- se, NA MESMA TRANSAÇÃO, outra checagem do mesmo caso/tipo/entidade já
+  -- CONCLUIU divergente para um período compatível com ele.
+  v_pendencia_periodo_id    uuid;
+  v_divergencia_concorrente boolean := false;
 begin
   -- 0186 (achado 1 da revisão): p_resultado FORA do vocabulário conhecido
   -- REPROVA ALTO — não vira 'a checagem concluiu' por acidente de digitação.
@@ -11174,7 +11424,7 @@ begin
   )
   returning id into v_reconciliacao_id;
 
-  select id into v_pendencia_id from pendencia
+  select id, periodo_id into v_pendencia_id, v_pendencia_periodo_id from pendencia
   where caso_id = p_caso_id and motivo = v_motivo
     and coalesce(entidade_id, '00000000-0000-0000-0000-000000000000'::uuid)
       = coalesce(p_entidade_id, '00000000-0000-0000-0000-000000000000'::uuid)
@@ -11186,6 +11436,52 @@ begin
     and estado <> 'resolvida'
   order by criada_em
   limit 1;
+
+  -- 0192: O OK (OU A PRÉ-CONDIÇÃO) QUE MATAVA A DIVERGÊNCIA IRMÃ. Antes de
+  -- decidir se resolve ou sobrescreve a descrição da pendência achada acima,
+  -- confere se OUTRA linha desta MESMA transação (`criado_em = now()` —
+  -- `fn_reconciliar_caso`, 0152, roda a rodada inteira numa chamada só) do
+  -- mesmo caso/tipo/entidade já CONCLUIU divergente (`divergente`,
+  -- `divergencia` ou `zona_cinzenta`) para um período compatível com o da
+  -- pendência. Sem isto: duas checagens da mesma rodada, mesmo tipo/entidade,
+  -- períodos compatíveis (Balanço "multi 24,25" × "anual 12M25", anos
+  -- {2024,2025} ∩ {2025} ≠ ∅) caem na MESMA pendência por período COMPATÍVEL
+  -- (linha acima, desde a 0023) — e SÓ A ORDEM em que `fn_reconciliar_caso`
+  -- visita as chaves decide se o `ok` de um período RESOLVE a divergência do
+  -- outro. Medido em produção (25/09/2026): teste v33/v35, `caixa_bp_fluxo`,
+  -- divergência de 2024 (4.340.000) criada e resolvida no MESMO instante pelo
+  -- `ok` de 2025. Só roda a query quando há pendência a proteger.
+  if v_pendencia_id is not null then
+    select exists (
+      select 1 from (
+        -- O ÚLTIMO achado desta rodada, por período OUTRO que o desta chamada
+        -- (`distinct on` + `cmin` — o contador de COMANDO dentro da própria
+        -- transação, que cresce a cada INSERT desta função, mesmo com
+        -- `criado_em` empatado — não há coluna serial em `reconciliacao` para
+        -- ordenar por "chegou depois" dentro do mesmo instante). SÓ O ÚLTIMO
+        -- por período, não qualquer um: uma checagem pode rodar a MESMA chave
+        -- (mesmo p_periodo_id) MAIS DE UMA VEZ na mesma transação — um teste
+        -- que reconcilia, corrige o dado, reconcilia de novo, tudo antes do
+        -- commit (`secao_fecha.test.sql`, "recolocada a linha, a pendência
+        -- auto-resolve"; `reconciliacao.test.sql`, "saldo corrigido") — e aí a
+        -- tentativa ANTERIOR (já divergente) da MESMA checagem, de um período
+        -- DIFERENTE do atual mas que TAMBÉM já foi corrigida nesta rodada, não
+        -- pode contar como irmã viva. Só o estado MAIS RECENTE de cada período
+        -- decide.
+        select distinct on (r.periodo_id) r.periodo_id, r.resultado
+        from reconciliacao r
+        where r.caso_id = p_caso_id and r.tipo = p_tipo
+          and coalesce(r.entidade_id, '00000000-0000-0000-0000-000000000000'::uuid)
+            = coalesce(p_entidade_id, '00000000-0000-0000-0000-000000000000'::uuid)
+          and r.criado_em = now()
+          and r.periodo_id is distinct from p_periodo_id
+        order by r.periodo_id, r.cmin::text::int desc
+      ) ultimo_por_periodo
+      where ultimo_por_periodo.resultado in ('divergente', 'divergencia', 'zona_cinzenta')
+        and (ultimo_por_periodo.periodo_id is not distinct from v_pendencia_periodo_id
+             or fn_periodos_compativeis(ultimo_por_periodo.periodo_id, v_pendencia_periodo_id))
+    ) into v_divergencia_concorrente;
+  end if;
 
   if v_abre_pendencia then
     if v_pendencia_id is null then
@@ -11199,6 +11495,12 @@ begin
         'importante', true, p_descricao, p_documento_id, p_entidade_id, p_periodo_id, v_motivo
       )
       returning id into v_pendencia_id;
+    elsif v_res_log = 'precondicao_nao_satisfeita' and v_divergencia_concorrente then
+      -- 0192: este achado é PRÉ-CONDIÇÃO, e uma divergência IRMÃ da mesma
+      -- rodada já está gravada em período compatível — não troca a descrição
+      -- da divergência pela de "não especificado"/checklist. A pendência
+      -- continua com o texto e o `tipo` da divergência.
+      null;
     else
       update pendencia set descricao = p_descricao where id = v_pendencia_id;
     end if;
@@ -11225,12 +11527,19 @@ begin
                                            'sintoma nao sumiu, o estagio foi silenciado.'));
 
   elsif v_pendencia_id is not null then
-    -- Sumiu o sintoma (reextração corrigiu, ou a pendência era falsa e a regra
-    -- nova não a emite mais): fecha. Não escreve número nenhum em base viva.
-    update pendencia set estado = 'resolvida', resolvida_em = now(),
-           resolvida_por = 'sistema:reconciliacao'
-    where id = v_pendencia_id;
-    v_pendencia_id := null;
+    if v_divergencia_concorrente then
+      -- 0192: este achado CONCLUIU (ok/documento_ausente), mas uma divergência
+      -- IRMÃ da mesma rodada, em período compatível, ainda está de pé — não
+      -- resolve. O `ok` de um período não apaga a divergência de outro.
+      null;
+    else
+      -- Sumiu o sintoma (reextração corrigiu, ou a pendência era falsa e a regra
+      -- nova não a emite mais): fecha. Não escreve número nenhum em base viva.
+      update pendencia set estado = 'resolvida', resolvida_em = now(),
+             resolvida_por = 'sistema:reconciliacao'
+      where id = v_pendencia_id;
+      v_pendencia_id := null;
+    end if;
   end if;
 
   insert into evento_auditoria (ator, acao, entidade_ref, depois)
@@ -11245,6 +11554,12 @@ begin
   );
 end;
 $$;
+
+--
+-- Name: FUNCTION fn_registrar_reconciliacao(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text, p_classe text, p_documento_id uuid, p_fonte_a jsonb, p_fonte_b jsonb, p_resultado text, p_divergencia_abs numeric, p_divergencia_pct numeric, p_materialidade jsonb, p_descricao text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_reconciliacao(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text, p_classe text, p_documento_id uuid, p_fonte_a jsonb, p_fonte_b jsonb, p_resultado text, p_divergencia_abs numeric, p_divergencia_pct numeric, p_materialidade jsonb, p_descricao text) IS 'Registro unificado de reconciliação (0023), motivo fino por pré-condição (0186/0188). 0192: dentro da MESMA transação (mesma rodada de fn_reconciliar_caso), um achado que CONCLUIU divergente/divergencia/zona_cinzenta prevalece — não resolve e não perde a descrição para um achado de pré-condição/ok de OUTRO período compatível chegado na mesma rodada.';
 
 --
 -- Name: fn_registrar_reconciliacao_b(uuid, uuid, uuid, text, uuid, jsonb, jsonb, text, numeric, numeric, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
@@ -17015,6 +17330,12 @@ GRANT ALL ON FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) TO authenticate
 GRANT ALL ON FUNCTION public.fn_reconciliar_chaves_do_documento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) TO authenticated;
+
+--
 -- Name: FUNCTION fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -
 --
 
@@ -17074,6 +17395,12 @@ GRANT ALL ON FUNCTION public.fn_registrar_fatos(p_documento_versao_id uuid, p_fa
 --
 
 GRANT ALL ON FUNCTION public.fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_registrar_reconciliacao(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text, p_classe text, p_documento_id uuid, p_fonte_a jsonb, p_fonte_b jsonb, p_resultado text, p_divergencia_abs numeric, p_divergencia_pct numeric, p_materialidade jsonb, p_descricao text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_reconciliacao(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text, p_classe text, p_documento_id uuid, p_fonte_a jsonb, p_fonte_b jsonb, p_resultado text, p_divergencia_abs numeric, p_divergencia_pct numeric, p_materialidade jsonb, p_descricao text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text); Type: ACL; Schema: public; Owner: -
