@@ -255,6 +255,23 @@ psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fixture_book_vertentes.sql
 echo "== fixture (book CANASTRA, extração fiel dos documentos DIFÍCEIS)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fixture_book_canastra.sql
 
+# O ACEITE FINANCEIRO DA F0 (`cobertura-do-lote.sql`) RODA AQUI — e antes de 24/09/2026 não rodava
+# em lugar nenhum. É consulta manual contra produção (CLAUDE.md, bloco "contra PRODUÇÃO"), mas nada
+# a executava nem contra o schema do banco de teste: uma coluna renomeada numa migration só seria
+# descoberta no dia do aceite, com o dono diante do SQL Editor. Aqui ela roda sobre o caso da
+# fixture do Vertentes com `default_transaction_read_only=on` — o que prova também a frase
+# "somente leitura" do cabeçalho dela: qualquer escrita aborta a sessão — e o resumo tem de dar os
+# 14 documentos da fixture, todos com linha.
+echo "== o aceite da F0 (cobertura-do-lote.sql) roda no schema atual, somente leitura"
+resumo_lote="$(PGOPTIONS='-c default_transaction_read_only=on' psql -X -q -At -F'|' -v ON_ERROR_STOP=1 -d "$DB" \
+  -v caso_id="'11111111-1111-1111-1111-111111111111'" -f Supabase/test/cobertura-do-lote.sql)"
+if ! grep -qx '14|14|0|0|0|100.0' <<< "$resumo_lote"; then
+  echo "FALHOU: o resumo do cobertura-do-lote.sql sobre a fixture do Vertentes não é 14 documentos, 14 com linha:"
+  echo "$resumo_lote" | sed 's/^/     /'
+  exit 1
+fi
+echo "   14 documentos, 14 com linha, 0 sem linha, 0 nunca extraídos — a consulta do aceite está viva"
+
 # O TESTE DA 0188 VEM ANTES DE QUALQUER OUTRA RECONCILIAÇÃO, E A ORDEM É
 # OBRIGATÓRIA: os blocos 1 e 2 comparam o que as checagens produzem sobre as
 # fixtures (perturbadas dentro de uma transação que volta) contra o retrato
