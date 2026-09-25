@@ -15,18 +15,24 @@ import type { createClient } from "./server";
  *
  * O `.order("id")` não é enfeite: sem ordem estável, duas janelas de `range`
  * podem devolver a mesma linha duas vezes e pular outra.
+ *
+ * `incompleto` é a contagem se declarando parcial (regra 1): verdadeiro quando o
+ * teto de segurança de `paginar` cortou a leitura OU uma página falhou no meio —
+ * `paginar` devolve o que leu até o erro, e jogar o erro fora mostraria a soma
+ * parcial como total e contaria como "sem nenhuma linha" documento que tem linha.
+ * Achado da revisão do PR #244; `verificar-linhas-por-versao.mts` prova.
  */
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
 export async function contarLinhasPorVersao(
   supabase: Supabase,
   versoes: string[],
-): Promise<{ porVersao: Map<string, number>; truncado: boolean }> {
+): Promise<{ porVersao: Map<string, number>; incompleto: boolean }> {
   const porVersao = new Map<string, number>();
-  if (versoes.length === 0) return { porVersao, truncado: false };
-  const { data, truncado } = await paginar<{ documento_versao_id: string }>((de, ate) =>
+  if (versoes.length === 0) return { porVersao, incompleto: false };
+  const { data, truncado, error } = await paginar<{ documento_versao_id: string }>((de, ate) =>
     supabase.from("campo_extraido").select("documento_versao_id")
       .in("documento_versao_id", versoes).order("id", { ascending: true }).range(de, ate));
   for (const l of data) porVersao.set(l.documento_versao_id, (porVersao.get(l.documento_versao_id) ?? 0) + 1);
-  return { porVersao, truncado };
+  return { porVersao, incompleto: truncado || error !== null };
 }

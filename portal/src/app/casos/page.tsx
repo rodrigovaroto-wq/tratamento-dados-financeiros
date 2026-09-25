@@ -265,7 +265,7 @@ export default async function PainelPage() {
     .filter(Boolean);
   // Paginada: uma consulta só era cortada em 1000 linhas pelo PostgREST, em
   // silêncio (ver lib/supabase/linhas-por-versao.ts).
-  const { porVersao: linhasPorVersao, truncado: linhasTruncadas } = await contarLinhasPorVersao(supabase, versoesRecentes);
+  const { porVersao: linhasPorVersao, incompleto: linhasIncompletas } = await contarLinhasPorVersao(supabase, versoesRecentes);
   const linhasDoDocumento = (d: DocumentoNoPainel) =>
     (d.documento_versao ?? []).reduce((s, v) => s + (linhasPorVersao.get(v.id) ?? 0), 0);
 
@@ -466,11 +466,14 @@ export default async function PainelPage() {
       </Surgir>
 
       {/* O corte do PostgREST é silencioso, então quando o teto bate a tela diz.
-          Em operação normal este bloco nunca aparece (o teto é 50 mil linhas). */}
-      {(casosRes.truncado || documentosRes.truncado || pendenciasRes.truncado || linhasTruncadas) && (
+          Em operação normal este bloco nunca aparece: o teto de `paginar` é 500
+          mil registros por lista (o texto dizia 50 mil desde que o teto subiu). E
+          uma página que falha no meio da contagem por documento acende o mesmo
+          aviso — contagem parcial não pode aparecer como contagem. */}
+      {(casosRes.truncado || documentosRes.truncado || pendenciasRes.truncado || linhasIncompletas) && (
         <p className="carta border-alerta-200 bg-alerta-50 px-4 py-3 text-xs text-alerta-900">
-          Os números acima leem no máximo 50 mil registros por lista, e esse limite foi atingido.
-          Eles descrevem parte da carteira, não a carteira inteira.
+          Parte das leituras acima não terminou: ou uma lista passou do teto de 500 mil registros,
+          ou uma página falhou no meio. Os números descrevem parte da carteira, não a carteira inteira.
         </p>
       )}
 

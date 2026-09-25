@@ -205,7 +205,7 @@ export default async function CasoDashboardPage({
   const versoes = documentosRes.data
     .flatMap((d) => (d.documento_versao ?? []).map((v) => v.id))
     .filter(Boolean);
-  const { porVersao: linhasPorVersao } = await contarLinhasPorVersao(supabase, versoes);
+  const { porVersao: linhasPorVersao, incompleto: linhasIncompletas } = await contarLinhasPorVersao(supabase, versoes);
 
   if (casoRes.error || !casoRes.data) {
     notFound();
@@ -422,9 +422,13 @@ export default async function CasoDashboardPage({
         <Indicador
           valor={linhasTotais.toLocaleString("pt-BR")}
           rotulo="linhas financeiras extraídas"
-          detalhe={semLinha > 0
-            ? `${semLinha} ${semLinha === 1 ? "documento sem nenhuma linha" : "documentos sem nenhuma linha"}`
-            : null}
+          detalhe={linhasIncompletas
+            // Contagem parcial não é contagem: sem isto a soma parcial aparecia
+            // como total e "sem nenhuma linha" contava documento que tem linha.
+            ? "contagem incompleta — a leitura das linhas não terminou"
+            : semLinha > 0
+              ? `${semLinha} ${semLinha === 1 ? "documento sem nenhuma linha" : "documentos sem nenhuma linha"}`
+              : null}
           tom="alerta"
         />
         <Indicador

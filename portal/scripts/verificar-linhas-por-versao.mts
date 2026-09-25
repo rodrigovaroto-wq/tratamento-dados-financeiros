@@ -35,7 +35,7 @@ function checar(cond: boolean, msg: string) {
 type Linha = { id: number; documento_versao_id: string };
 
 /** Um PostgREST de mentira que só sabe uma coisa: cortar em `teto` linhas. */
-function servidor(linhas: Linha[], teto: number) {
+function servidor(linhas: Linha[], teto: number, falhaNaConsulta = 0) {
   let consultas = 0;
   const cliente = {
     from: () => ({
@@ -46,6 +46,7 @@ function servidor(linhas: Linha[], teto: number) {
           // aceita, como o contrato de `paginar` exige.
           const range = (de: number, ate: number) => {
             consultas++;
+            if (consultas === falhaNaConsulta) return Promise.resolve({ data: null, error: { message: "canceling statement due to statement timeout" } });
             const fim = Math.min(ate + 1, de + teto);
             return Promise.resolve({ data: filtradas.slice(de, fim), error: null });
           };
@@ -68,13 +69,13 @@ function lote(porVersao: Record<string, number>): Linha[] {
 {
   const esperado = { "v-razao": 2500, "v-bp": 180, "v-dre": 1 };
   const { cliente, consultas } = servidor(lote(esperado), 1000);
-  const { porVersao, truncado } = await contarLinhasPorVersao(cliente as never, Object.keys(esperado));
+  const { porVersao, incompleto } = await contarLinhasPorVersao(cliente as never, Object.keys(esperado));
   for (const [v, n] of Object.entries(esperado)) {
     checar(porVersao.get(v) === n, `${v}: contou ${porVersao.get(v)} linhas, o documento tem ${n} — o teto de 1000 cortou em silêncio`);
   }
   const soma = [...porVersao.values()].reduce((a, b) => a + b, 0);
   checar(soma === 2681, `a soma das versões deu ${soma}, esperado 2681`);
-  checar(truncado === false, "a leitura se declarou truncada sem ter batido no teto de segurança");
+  checar(incompleto === false, "a leitura se declarou incompleta sem ter falhado nem batido no teto de segurança");
   checar(consultas() > 1, `uma consulta só (${consultas()}) não passa de 1000 linhas — a leitura não está paginando`);
 }
 
@@ -87,6 +88,19 @@ function lote(porVersao: Record<string, number>): Linha[] {
     `com o servidor cortando em 500, contou ${porVersao.get("v-razao")} de 1700 — a leitura parou na primeira página curta`);
 }
 
+// --- 2b. uma página que FALHA no meio não vira contagem ------------------------
+// Achado da revisão do PR #244: `paginar` devolve o que leu até o erro, e a versão
+// anterior desta função jogava o erro fora — o detalhe do caso mostrava a soma
+// parcial e contava como "sem nenhuma linha" documentos que tinham linhas. A
+// contagem parcial tem de se declarar (regra 1), e é o que `incompleto` faz.
+{
+  const esperado = { "v-razao": 2500 };
+  const { cliente } = servidor(lote(esperado), 1000, 2);
+  const { porVersao, incompleto } = await contarLinhasPorVersao(cliente as never, ["v-razao"]);
+  checar(incompleto === true,
+    `a segunda página falhou e a contagem (${porVersao.get("v-razao")} de 2500) NÃO se declarou incompleta`);
+}
+
 // --- e o caso vazio não consulta nada nem inventa zero -------------------------
 {
   const { cliente, consultas } = servidor([], 1000);
@@ -96,8 +110,13 @@ function lote(porVersao: Record<string, number>): Linha[] {
 
 // --- 3. nenhuma outra leitura de LINHAS de campo_extraido fora do paginar ------
 // Cada `.from("campo_extraido")` em portal/src precisa estar dentro de um
-// `paginar(` ou ser um `count` com `head: true`. Olha-se o trecho que cerca a
-// chamada (a consulta inteira cabe em ~12 linhas neste código).
+// `paginar(` ou ser um `count` com `head: true` NO PRÓPRIO `.select(` dessa
+// consulta. A primeira versão (24/09/2026) aceitava `head: true` em qualquer lugar
+// das 12 linhas seguintes — e no painel a consulta de `documento`, oito linhas
+// abaixo, tem um: tirar o `head: true` da contagem total de linhas (a volta exata
+// do "1.000 linhas extraídas") passava verde, medido pela revisão do PR #244.
+// Agora o que se lê são os argumentos balanceados do `.select(` que segue o
+// `.from(` — o `head` de outra consulta não conta.
 {
   const SRC = new URL("../src/", import.meta.url).pathname;
   const arquivos: string[] = [];
@@ -109,17 +128,30 @@ function lote(porVersao: Record<string, number>): Linha[] {
     }
   };
   andar(SRC);
+  /** Os argumentos de `.select(...)`, com parênteses balanceados, ou null. */
+  const argsDoSelect = (texto: string, desde: number): string | null => {
+    const i = texto.indexOf(".select(", desde);
+    if (i < 0) return null;
+    let nivel = 0;
+    for (let k = i + ".select".length; k < texto.length; k++) {
+      if (texto[k] === "(") nivel++;
+      else if (texto[k] === ")" && --nivel === 0) return texto.slice(i + ".select(".length, k);
+    }
+    return null;
+  };
   let leituras = 0;
   for (const arq of arquivos) {
-    const linhas = readFileSync(arq, "utf8").split("\n");
-    linhas.forEach((l, i) => {
-      if (!l.includes('from("campo_extraido")')) return;
+    const texto = readFileSync(arq, "utf8");
+    const alvo = 'from("campo_extraido")';
+    for (let i = texto.indexOf(alvo); i >= 0; i = texto.indexOf(alvo, i + 1)) {
       leituras++;
-      const antes = linhas.slice(Math.max(0, i - 4), i + 1).join("\n");
-      const depois = linhas.slice(i, i + 12).join("\n");
-      const protegida = /paginar\s*[<(]/.test(antes) || /head:\s*true/.test(depois);
-      checar(protegida, `${arq.replace(SRC, "portal/src/")}:${i + 1} lê linhas de campo_extraido sem paginar — o teto de 1000 corta em silêncio`);
-    });
+      const linha = texto.slice(0, i).split("\n").length;
+      const antes = texto.slice(Math.max(0, i - 400), i);
+      const dentroDoPaginar = /paginar\s*[<(][^;]*$/.test(antes);
+      const soContagem = /head:\s*true/.test(argsDoSelect(texto, i) ?? "");
+      checar(dentroDoPaginar || soContagem,
+        `${arq.replace(SRC, "portal/src/")}:${linha} lê linhas de campo_extraido sem paginar — o teto de 1000 corta em silêncio`);
+    }
   }
   // controle positivo: o varredor ACHOU as leituras que se sabe existirem
   checar(leituras >= 4, `o varredor achou só ${leituras} leitura(s) de campo_extraido — ele não está olhando onde devia`);
