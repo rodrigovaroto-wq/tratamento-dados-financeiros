@@ -18,5 +18,7 @@ ordem não gera erro — gera classificação errada. Confira a assinatura em `p
 antes de chamar qualquer um dos dois, mesmo que você "lembre" da ordem.
 
 (Até 24/09/2026 esta memória apontava `N8N/lib/classifier.mjs`, onde nenhuma das duas funções
-existe — elas moram em `statement-templates.ts`, linhas 915 e 979 nessa data. Com o `toca` no
-arquivo errado, o portão do conhecimento nunca a marcaria SUSPEITA quando as assinaturas mudassem.)
+existe — elas moram em `statement-templates.ts`, linhas 915 e 979 nessa data. O `toca` corrigido faz
+o `buscar.mjs` trazer esta memória para quem abre esse arquivo. Ele NÃO faz o portão perceber uma
+mudança de assinatura: SUSPEITA só existe para ficha com `ancora`, e esta não tem — se a ordem dos
+argumentos mudar, esta memória continua verde e passa a mentir. Confira a assinatura.)
