@@ -31,9 +31,10 @@ test('o nó não conferível entra no .sql gerado, com o motivo', () => {
 
 test('com um nó não conferido, o veredito NÃO é "PODE RODAR" — é CONFERENCIA INCOMPLETA e o nomeia', { skip: semBanco }, () => {
   const saida = rodar(gerarSql({ nosPostgres: [conferivel], naoConferidos: [emExpressao] }));
-  // SEM o travessão de propósito: o portão do CI procura "PODE RODAR" solto, e a primeira versão
-  // do veredito incompleto terminava em "isto nao e PODE RODAR" — o grep casava e o passo ficava
-  // verde sobre chamada não conferida (achado da terceira revisão do PR #244).
+  // SEM o travessão de propósito, mais estrito que o CI (que exige "PODE RODAR —"): a primeira
+  // versão do veredito incompleto terminava em "isto nao e PODE RODAR", e o grep do CI, que então
+  // procurava "PODE RODAR" solto, casava e deixava o passo verde sobre chamada não conferida
+  // (achado da terceira revisão do PR #244). A expressão não pode aparecer em lugar nenhum.
   assert.ok(!/PODE RODAR/.test(saida), `o veredito contém "PODE RODAR" sobre chamada não conferida:\n${saida}`);
   assert.match(saida, /CONFERENCIA INCOMPLETA/);
   assert.match(saida, /Nó em expressão/);
