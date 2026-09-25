@@ -157,9 +157,13 @@ function lote(porVersao: Record<string, number>): Linha[] {
       if (fim < 0) { out += src[k]; k++; continue; }
       // O delimitador de texto fica (a posição de `from("…")` continua reconhecível); o
       // conteúdo — e o comentário inteiro — vira espaço, com a quebra de linha preservada.
-      const ehTexto = src[k] !== "/";
-      const miolo = src.slice(ehTexto ? k + 1 : k, ehTexto ? fim - 1 : fim).replace(/[^\n]/g, " ");
-      out += ehTexto ? src[k] + miolo + (fim - 1 > k ? src[fim - 1] : "") : miolo;
+      const apagado = (de: number, ate: number) => src.slice(de, ate).replace(/[^\n]/g, " ");
+      if (src[k] === "/") {
+        out += apagado(k, fim);
+      } else {
+        const fechou = fim - 1 > k; // texto sem aspa de fechamento vai até o fim do arquivo
+        out += src[k] + apagado(k + 1, fechou ? fim - 1 : fim) + (fechou ? src[fim - 1] : "");
+      }
       k = fim;
     }
     return out;
