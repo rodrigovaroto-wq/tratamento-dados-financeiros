@@ -46,10 +46,16 @@ try {
   }
 
   // Derivado versionado sujo: o que roda é o commitado, não a fonte que o gera.
-  const sujos = git("status", "--porcelain", "--", "N8N/workflow.e1-ingestao.json",
-    "N8N/workflow.macro.json", "N8N/workflow.erros.json", "Supabase/schema.sql",
+  //
+  // A MESMA LISTA QUE O CI PRENDE com `git diff --exit-code`. Até 24/09/2026 ela era escrita
+  // arquivo a arquivo e tinha ficado para trás: faltavam `workflow.diagnostico-ia.json` e o
+  // `grafo.jsonl` (e o `conferir_chamadas.sql`, que nasceu gerado nesse dia). O padrão dos
+  // workflows cobre o quinto que vier; `test/sessao-inicio.test.mjs` lê o `suites.yml` e reprova
+  // se algum derivado preso lá não aparecer aqui.
+  const sujos = git("status", "--porcelain", "--", "N8N/workflow.*.json", "Supabase/schema.sql",
     "Supabase/test/fixture_book_vertentes.sql", "Supabase/test/fixture_book_canastra.sql",
-    "portal/scripts/fixtures/book-vertentes.json");
+    "portal/scripts/fixtures/book-vertentes.json", ".claude/conhecimento/grafo.jsonl",
+    "Supabase/conferir/conferir_chamadas.sql");
   if (sujos) {
     linhas.push(`⚠️  Derivado versionado modificado e não commitado:\n${sujos}`);
   }
