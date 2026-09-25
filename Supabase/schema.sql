@@ -8804,6 +8804,14 @@ declare
   v_motivo_prec text;
   v_alt         record;
   v_recado      text;
+  -- 0191: os anos que o PERÍODO DO DOCUMENTO do Mapa de Dívida ancora. Lido
+  -- uma vez, fora do laço — o mapa não muda de período ano a ano. Vazio =
+  -- "não há como afirmar o ano" (sem período, ou período que não ancora ano
+  -- nenhum): a guarda nova não filtra nada, comportamento de antes.
+  v_periodo_id_div uuid;
+  v_tipo_div        text;
+  v_ref_div         text;
+  v_anos_mapa       int[];
 begin
   v_doc_dre := fn_documento_por_tipo(p_caso_id, p_entidade_id, p_periodo_id, 'DRE');
   v_doc_div := fn_documento_por_tipo(p_caso_id, p_entidade_id, p_periodo_id, 'MAPA_DIVIDA');
@@ -8823,9 +8831,33 @@ begin
   v_col_ent  := fn_coluna_entidade(v_ver_dre, p_entidade_id);
   v_unid_div := fn_unidade_predominante(v_ver_div);
 
+  -- 0191: o Mapa de Dívida é um retrato de UMA data — MEDIDO EM PRODUÇÃO
+  -- (25/09/2026): todo MAPA_DIVIDA hoje tem período de um ano só. Sem este
+  -- corte, o laço abaixo compara CADA ano da DRE contra a soma de juros do
+  -- documento inteiro (não recortada por ano), inclusive anos que o mapa não
+  -- cobre — ver o cabeçalho desta migration.
+  select periodo_id into v_periodo_id_div from documento where id = v_doc_div;
+  if v_periodo_id_div is not null then
+    select tipo, referencia into v_tipo_div, v_ref_div from periodo where id = v_periodo_id_div;
+    v_anos_mapa := fn_anos_periodo(v_tipo_div, v_ref_div);
+  end if;
+
   foreach v_ano in array fn_anos_alvo(p_periodo_id) loop
     v_col_per := case when v_ano is null then null
                       else fn_coluna_periodo_do_ano(v_ver_dre, v_ano) end;
+
+    -- 0191: o ano deste laço não é coberto pelo período do Mapa de Dívida —
+    -- não compara. `v_anos_mapa` vazio (mapa sem período, ou período que não
+    -- ancora ano nenhum) mantém o comportamento antigo: sem como afirmar que o
+    -- ano não é coberto, a guarda não filtra.
+    if v_ano is not null and cardinality(coalesce(v_anos_mapa, '{}'::int[])) > 0
+       and not (v_ano = any(v_anos_mapa)) then
+      v_motivos_ano := v_motivos_ano || 'sem_periodo_par'::text;
+      v_faltas := v_faltas || format(
+        '%s: o Mapa de Dívida é de %s — não há juros deste exercício para comparar',
+        v_ano, coalesce(v_ref_div, 'outro período'));
+      continue;
+    end if;
 
     select * into v_despfin from fn_valor_conceito_col(v_ver_dre,
       array['despesa', 'financeira'], array['receita'], v_col_ent, v_col_per);
@@ -8969,6 +9001,12 @@ begin
            v_n, array_to_string(v_partes, '; ')));
 end;
 $_$;
+
+--
+-- Name: FUNCTION fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Reconcilia a Despesa Financeira da DRE contra a soma dos juros do Mapa de Dívida, ano a ano. 0191: só compara o ano quando o período do DOCUMENTO do Mapa de Dívida o cobre (fn_anos_periodo do período do mapa) — o Mapa é um retrato de UMA data, e comparar um ano que ele não cobre contra a soma do documento inteiro é comparação sem sentido. Ano fora: sem_periodo_par, não ok nem zona_cinzenta. Mapa sem período (ou período sem ano ancorado): comportamento antigo, sem filtro.';
 
 --
 -- Name: fn_reconciliar_duplicidade(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -17069,6 +17107,12 @@ GRANT ALL ON FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) TO authenticate
 --
 
 GRANT ALL ON FUNCTION public.fn_reconciliar_chaves_do_documento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) TO authenticated;
 
 --
 -- Name: FUNCTION fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -

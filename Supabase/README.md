@@ -541,6 +541,27 @@ supabase db execute --file Supabase/migrations/0190_a_arvore_que_nao_conferiu_na
 #   select chave, presente, detalhe from fn_instalacao_conferir()
 #    where chave = 'reconciliar_arvore_nao_mente_ok';               -- presente = true
 
+# A 0191 REEMITE fn_reconciliar_despfin_dre_vs_divida: só compara o ano da DRE
+# contra o Mapa de Dívida quando o PERÍODO DO DOCUMENTO do mapa cobre esse ano
+# (fn_anos_periodo do período do mapa) — o Mapa é um retrato de UMA data
+# (MEDIDO EM PRODUÇÃO, 25/09/2026: todo MAPA_DIVIDA hoje tem período de um ano
+# só), e antes desta migration a checagem comparava CADA ano da DRE contra a
+# soma de juros do documento inteiro, sem recorte — inclusive anos que o mapa
+# não cobre. Ano fora do período do mapa: sem_periodo_par (CONTRATO da 0186),
+# não ok nem zona_cinzenta. Mapa sem período, ou período que não ancora ano
+# nenhum: comportamento antigo, sem filtro. IDEMPOTENTE — não roda
+# reconciliação nem recompute em caso nenhum. Testes: Supabase/test/despfin_-
+# ano_par_do_mapa.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0191_o_mapa_de_um_ano_contra_a_dre_de_dois.sql
+# DEPOIS DE APLICAR, confira o catálogo:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where migration = '0191' and not presente;                 -- ZERO linhas
+# E, depois da próxima rodada de um caso com DRE multi-ano e Mapa de Dívida de
+# um ano só, o ano fora do período do mapa parando de comparar:
+#   select motivo_precondicao, count(*) from reconciliacao
+#    where tipo = 'despfin_dre_vs_divida' and motivo_precondicao = 'sem_periodo_par'
+#      and criado_em > '<data do apply>' group by 1;
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

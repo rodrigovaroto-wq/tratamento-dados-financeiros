@@ -1,8 +1,22 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-## SESSÃO 102 (25/09/2026) — `0190_a_arvore_que_nao_conferiu_nada.sql`: a árvore para de afirmar "ok" quando não conferiu nada
+## SESSÃO 102 (25/09/2026) — dívidas da reconciliação: `0190` (árvore), `0191` (despfin por ano do mapa), …
 
-> **Sem PR ainda. Nada aplicado em produção.**
+> **PR [#245](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/245). Nada aplicado em produção.**
+> A F2.3 foi ADIADA por decisão do dono (25/09): medido em produção, nenhum caso tem o outro lado
+> da comparação (o FAT_INTRAGRUPO do AMO não traz contraparte; nenhum COMBINADO tem receita em
+> "Eliminações").
+>
+> **`0191_o_mapa_de_um_ano_contra_a_dre_de_dois.sql`** — `fn_reconciliar_despfin_dre_vs_divida`
+> comparava CADA ano da DRE com os juros do Mapa de Dívida INTEIRO; o mapa é retrato de UMA data
+> (produção: todo MAPA_DIVIDA é `data-base`/`anual` de um ano). DRE `multi "24,25"` × mapa de
+> 31/12/2025 comparava 2024 com os juros de 2025 (fixture: R$ 3,5 mi de `zona_cinzenta` falsa,
+> apagada na mesma rodada pelo `ok` de 2025 — o defeito da fatia seguinte). Agora ano que o mapa
+> não cobre é `sem_periodo_par`. `despfin_ano_par_do_mapa.test.sql`: 9 asserts, 5 reprovam
+> desligado (medido pelo agente); nenhum assert existente mudou. **Vem ANTES da guarda
+> "divergência prevalece na rodada"**, que sem ela faria a pendência falsa sobreviver.
+>
+> **`0190`** (abaixo):
 >
 > **O defeito.** `fn_reconciliar_arvore` (corpo vigente na `0133`) testava só dois ramos:
 > `v_n_ok+v_n_div+v_n_prec=0` (sem árvore) e, senão, `resultado := case when v_n_div>0 then

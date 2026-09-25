@@ -322,6 +322,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/motivo_especifico.test.sql 2>&
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== o mapa de um ano contra a DRE de dois (0191): só compara o ano que o mapa cobre"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/despfin_ano_par_do_mapa.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes de reconciliação"
 # A ÁRVORE DA SEÇÃO VEM ANTES DA RECONCILIAÇÃO, E A ORDEM É OBRIGATÓRIA.
 # O bloco 6 do reconciliacao.test.sql renomeia TODA chave da versão ...0001 para
