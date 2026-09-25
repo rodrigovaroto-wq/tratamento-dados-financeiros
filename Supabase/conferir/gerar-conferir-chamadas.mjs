@@ -50,7 +50,7 @@ ${alvos}
        then '*** NAO RODE *** ' || count(*) filter (where resolve = false) || ' de ' || count(*) filter (where resolve is not null) || ' NAO resolvem'
        when count(*) filter (where resolve is null) > 0
        then '*** CONFERENCIA INCOMPLETA *** as ' || count(*) filter (where resolve) || ' chamadas conferidas resolvem, mas '
-            || count(*) filter (where resolve is null) || ' NAO FORAM CONFERIDAS (listadas abaixo) — isto nao e PODE RODAR'
+            || count(*) filter (where resolve is null) || ' NAO FORAM CONFERIDAS (listadas abaixo) — nao rode ate conferi-las'
        else 'PODE RODAR — as ' || count(*) || ' chamadas do n8n resolvem neste banco'
   end as veredito
 from _conferir;
