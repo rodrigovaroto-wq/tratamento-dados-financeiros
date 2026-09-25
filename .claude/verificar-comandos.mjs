@@ -24,6 +24,7 @@
 // Saída: exit 0 = todos resolvem; exit 1 = lista os que não resolvem.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { cabecalho } from './conhecimento/cabecalho.mjs';
 
 const RAIZ = new URL('.', import.meta.url).pathname;
 
@@ -48,8 +49,7 @@ function md(dir) {
 // isso mude o despacho.
 const agentes = new Set();
 for (const f of md(join(RAIZ, 'agents'))) {
-  const m = readFileSync(f, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  const nome = m?.[1].match(/^name:\s*(.+)$/m)?.[1].trim();
+  const nome = cabecalho(readFileSync(f, 'utf8'))?.name;
   if (nome) agentes.add(nome);
 }
 // Embutidos do Claude Code. Não são deste repositório e não podem ser conferidos

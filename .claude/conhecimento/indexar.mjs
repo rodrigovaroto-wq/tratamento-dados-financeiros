@@ -77,6 +77,7 @@ import { readFileSync, readdirSync, writeFileSync, existsSync, statSync } from "
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join, relative } from "node:path";
+import { cabecalho } from "./cabecalho.mjs"; // um parser só, que aceita CRLF (24/09/2026)
 
 const RAIZ = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
 const SAIDA = join(RAIZ, ".claude/conhecimento/grafo.jsonl");
@@ -269,24 +270,6 @@ const FICHAS = [
   ...arquivos(".claude/memory", (p) => p.endsWith(".md") && !p.endsWith("MEMORY.md") && !p.endsWith("INSTRUCTIONS.md")),
   ...arquivos(".claude/conhecimento/fichas", (p) => p.endsWith(".md")),
 ];
-/** Cabeçalho YAML simples (só os campos que usamos) — sem dependência nova. */
-function cabecalho(texto) {
-  const m = /^---\n([\s\S]*?)\n---\n/.exec(texto);
-  if (!m) return null;
-  const campos = {};
-  let chaveLista = null;
-  for (const linha of m[1].split("\n")) {
-    const item = /^\s+-\s+(.+)$/.exec(linha);
-    if (item && chaveLista) { campos[chaveLista].push(item[1].trim()); continue; }
-    const par = /^([a-z_]+):\s*(.*)$/.exec(linha);
-    if (!par) continue;
-    chaveLista = null;
-    if (par[2] === "") { campos[par[1]] = []; chaveLista = par[1]; }
-    else if (par[2] === "[]") campos[par[1]] = [];
-    else campos[par[1]] = par[2].trim();
-  }
-  return campos;
-}
 /** O hash da região ancorada: 40 linhas a partir da primeira ocorrência do símbolo. */
 function hashDaAncora(ancora) {
   const [caminho, simbolo] = String(ancora).split("#");
