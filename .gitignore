@@ -52,3 +52,10 @@ publicar.json
 # disciplina medida em `.claude/memory/auto-mode-recusa-migration-producao.md`, em que o dono
 # aprova cada apply à mão. Quem quiser a liberação na própria máquina, cria o arquivo localmente.
 .claude/settings.local.json
+
+# CÓPIAS ISOLADAS DOS AGENTES DO CLAUDE CODE (`isolation: "worktree"`). São worktrees git
+# temporários que o harness cria em `.claude/worktrees/` enquanto um agente despachado roda, e
+# remove quando ele termina. Sem esta linha, um `git add -A` feito durante a execução colocaria
+# cada worktree no commit como repositório embutido — apareceram como não rastreados na revisão
+# do PR #244 (24/09/2026).
+.claude/worktrees/
