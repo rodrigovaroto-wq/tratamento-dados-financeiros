@@ -562,6 +562,26 @@ supabase db execute --file Supabase/migrations/0191_o_mapa_de_um_ano_contra_a_dr
 #    where tipo = 'despfin_dre_vs_divida' and motivo_precondicao = 'sem_periodo_par'
 #      and criado_em > '<data do apply>' group by 1;
 
+# 0192: dentro da MESMA rodada (fn_reconciliar_caso, uma transação), um achado
+# que CONCLUIU divergente/divergencia/zona_cinzenta prevalece sobre um ok ou
+# uma pré-condição de OUTRO período compatível — antes, a ORDEM em que a
+# rodada visitava as chaves decidia se a divergência terminava aberta ou
+# resolvida (medido em produção 25/09/2026: 4 pendências divergencia_-
+# reconciliacao criadas e resolvidas no MESMO instante). fn_reconciliar_caso
+# ganha `order by` — determinismo de qual período a pendência carrega.
+# IDEMPOTENTE (reemissão de função + catálogo).
+# Testes: Supabase/test/divergencia_prevalece_na_rodada.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0192_o_ok_que_matava_a_divergencia_irma.sql
+# DEPOIS DE APLICAR, as pendências já nascidas-e-mortas na mesma rodada (4
+# medidas em 25/09/2026) NÃO se corrigem sozinhas — só a próxima rodada de
+# cada caso resolve/mantém com a guarda nova. Para achar as antigas:
+#   select id, caso_id, motivo, criada_em, resolvida_em from pendencia
+#    where motivo like 'reconciliacao:%' and tipo = 'divergencia_reconciliacao'
+#      and criada_em = resolvida_em;
+# E que o requisito novo está presente:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where chave = 'ok_nao_mata_divergencia_irma';                  -- presente = true
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

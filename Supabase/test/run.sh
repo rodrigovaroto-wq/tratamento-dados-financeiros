@@ -358,6 +358,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/eixo_documento_e_coluna.test.s
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== o ok que matava a divergência irmã (0192): a ordem da mesma rodada deixa de decidir o desfecho"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/divergencia_prevalece_na_rodada.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== ingestão sobre o book CANASTRA (o difícil: 15 armadilhas, 3 exercícios, 6 empresas)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/canastra.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

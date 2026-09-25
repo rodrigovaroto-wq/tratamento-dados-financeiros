@@ -16,6 +16,18 @@
 > desligado (medido pelo agente); nenhum assert existente mudou. **Vem ANTES da guarda
 > "divergência prevalece na rodada"**, que sem ela faria a pendência falsa sobreviver.
 >
+> **`0192_o_ok_que_matava_a_divergencia_irma.sql`** — `fn_registrar_reconciliacao` acha a
+> pendência por período COMPATÍVEL; na mesma rodada, o `ok` de um período RESOLVIA a divergência
+> de outro, e a ordem (`select distinct` sem `order by` no `fn_reconciliar_caso`) decidia o
+> desfecho. Produção: Teste v33/v35, caixa com R$ 4,34 mi de divergência em 2024, pendência criada e
+> resolvida no MESMO instante pelo `ok` de 2025; teste AMOBELEZA, mesmo arranjo na ordem inversa,
+> ficou aberta. 41 pendências nascidas e mortas no mesmo instante (37 pré-condição do retry
+> desenhado da 0152, que NÃO muda; 4 divergências). Agora a divergência mais recente da rodada, em
+> período compatível, prevalece sobre `ok` e sobre pré-condição; `order by` nos laços.
+> `divergencia_prevalece_na_rodada.test.sql`: 15 asserts, 3 reprovam desligado (contados sem parar
+> no primeiro raise). Os asserts do `reconciliacao.test.sql` NÃO mudaram — a versão do agente os
+> alterava para exigir a pendência falsa de despfin/2024, e foi isso que fez a `0191` nascer antes.
+>
 > **`0190`** (abaixo):
 >
 > **O defeito.** `fn_reconciliar_arvore` (corpo vigente na `0133`) testava só dois ramos:

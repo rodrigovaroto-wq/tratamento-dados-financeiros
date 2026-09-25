@@ -8571,6 +8571,9 @@ CREATE FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 -- 0152: cada checagem sobre a SUA chave.
+-- 0192: `order by` em cada laço — determinismo de qual período a pendência
+-- carrega (a guarda de fn_registrar_reconciliacao já não depende da ordem
+-- para decidir aberto/resolvido; isto é só reprodutibilidade).
 declare
   v_k          record;
   v_per        uuid;
@@ -8591,7 +8594,8 @@ begin
 
   -- ---- (entidade, período), com laço de período -----------------------------
   for v_k in select distinct d.entidade_id, d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore)
+             order by d.entidade_id, d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_ativo_passivo_pl(p_caso_id, v_k.entidade_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8600,7 +8604,8 @@ begin
   end loop;
 
   for v_k in select distinct d.entidade_id, d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_fluxo) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_fluxo)
+             order by d.entidade_id, d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_caixa_bp_fluxo(p_caso_id, v_k.entidade_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8609,7 +8614,8 @@ begin
   end loop;
 
   for v_k in select distinct d.entidade_id, d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_receita) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_receita)
+             order by d.entidade_id, d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_receita_dre_vs_faturamento(p_caso_id, v_k.entidade_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8618,7 +8624,8 @@ begin
   end loop;
 
   for v_k in select distinct d.entidade_id, d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_despfin) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_despfin)
+             order by d.entidade_id, d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_despfin_dre_vs_divida(p_caso_id, v_k.entidade_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8628,7 +8635,8 @@ begin
 
   -- ---- só (período) — mútuos e intragrupo são do GRUPO, não da empresa ------
   for v_k in select distinct d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_mutuos) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_mutuos)
+             order by d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_mutuos(p_caso_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8637,7 +8645,8 @@ begin
   end loop;
 
   for v_k in select distinct d.periodo_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_intra) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_intra)
+             order by d.periodo_id loop
     foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
       v_res := fn_reconciliar_intragrupo(p_caso_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
@@ -8647,14 +8656,16 @@ begin
 
   -- ---- só (entidade) — sem período nenhum ----------------------------------
   for v_k in select distinct d.entidade_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore)
+             order by d.entidade_id loop
     v_checagens := v_checagens
       || jsonb_build_array(fn_reconciliar_duplicidade(p_caso_id, v_k.entidade_id));
     v_chamadas := v_chamadas + 1;
   end loop;
 
   for v_k in select distinct d.entidade_id from documento d
-             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_conflito) loop
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_conflito)
+             order by d.entidade_id loop
     v_checagens := v_checagens
       || jsonb_build_array(fn_reconciliar_versoes_do_periodo(p_caso_id, v_k.entidade_id));
     v_chamadas := v_chamadas + 1;
@@ -8671,7 +8682,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) IS 'As checagens do caso, cada uma UMA VEZ por chave PRÓPRIA (0152): a de conflito e a de duplicidade por entidade, mútuos e intragrupo por período, as quatro de Classe A/B por (entidade, período). Medido no book-araucaria: 247 invocações contra as ~8.500 da versão por documento, e a checagem cara (1,8 s) roda 16 vezes em vez de 123. Uma chave só para as oito daria 162 — 15% de redução, que é não corrigir nada.';
+COMMENT ON FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) IS 'Roda cada uma das oito checagens de reconciliação sobre a SUA chave (0152). 0192: `order by` em cada laço `select distinct` — determinismo de qual período a pendência carrega quando mais de um é compatível; o aberto/resolvido em si já não depende da ordem (guarda em fn_registrar_reconciliacao).';
 
 --
 -- Name: fn_reconciliar_chaves_do_documento(uuid, uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11228,6 +11239,12 @@ declare
   v_abre_pendencia   boolean;
   v_estagio_dial     text;
   v_influencia       boolean;
+  -- 0192: o período que a pendência JÁ CARREGA (pode ser diferente de
+  -- p_periodo_id — a busca acima acha por compatibilidade, não igualdade), e
+  -- se, NA MESMA TRANSAÇÃO, outra checagem do mesmo caso/tipo/entidade já
+  -- CONCLUIU divergente para um período compatível com ele.
+  v_pendencia_periodo_id    uuid;
+  v_divergencia_concorrente boolean := false;
 begin
   -- 0186 (achado 1 da revisão): p_resultado FORA do vocabulário conhecido
   -- REPROVA ALTO — não vira 'a checagem concluiu' por acidente de digitação.
@@ -11268,7 +11285,7 @@ begin
   )
   returning id into v_reconciliacao_id;
 
-  select id into v_pendencia_id from pendencia
+  select id, periodo_id into v_pendencia_id, v_pendencia_periodo_id from pendencia
   where caso_id = p_caso_id and motivo = v_motivo
     and coalesce(entidade_id, '00000000-0000-0000-0000-000000000000'::uuid)
       = coalesce(p_entidade_id, '00000000-0000-0000-0000-000000000000'::uuid)
@@ -11280,6 +11297,52 @@ begin
     and estado <> 'resolvida'
   order by criada_em
   limit 1;
+
+  -- 0192: O OK (OU A PRÉ-CONDIÇÃO) QUE MATAVA A DIVERGÊNCIA IRMÃ. Antes de
+  -- decidir se resolve ou sobrescreve a descrição da pendência achada acima,
+  -- confere se OUTRA linha desta MESMA transação (`criado_em = now()` —
+  -- `fn_reconciliar_caso`, 0152, roda a rodada inteira numa chamada só) do
+  -- mesmo caso/tipo/entidade já CONCLUIU divergente (`divergente`,
+  -- `divergencia` ou `zona_cinzenta`) para um período compatível com o da
+  -- pendência. Sem isto: duas checagens da mesma rodada, mesmo tipo/entidade,
+  -- períodos compatíveis (Balanço "multi 24,25" × "anual 12M25", anos
+  -- {2024,2025} ∩ {2025} ≠ ∅) caem na MESMA pendência por período COMPATÍVEL
+  -- (linha acima, desde a 0023) — e SÓ A ORDEM em que `fn_reconciliar_caso`
+  -- visita as chaves decide se o `ok` de um período RESOLVE a divergência do
+  -- outro. Medido em produção (25/09/2026): teste v33/v35, `caixa_bp_fluxo`,
+  -- divergência de 2024 (4.340.000) criada e resolvida no MESMO instante pelo
+  -- `ok` de 2025. Só roda a query quando há pendência a proteger.
+  if v_pendencia_id is not null then
+    select exists (
+      select 1 from (
+        -- O ÚLTIMO achado desta rodada, por período OUTRO que o desta chamada
+        -- (`distinct on` + `cmin` — o contador de COMANDO dentro da própria
+        -- transação, que cresce a cada INSERT desta função, mesmo com
+        -- `criado_em` empatado — não há coluna serial em `reconciliacao` para
+        -- ordenar por "chegou depois" dentro do mesmo instante). SÓ O ÚLTIMO
+        -- por período, não qualquer um: uma checagem pode rodar a MESMA chave
+        -- (mesmo p_periodo_id) MAIS DE UMA VEZ na mesma transação — um teste
+        -- que reconcilia, corrige o dado, reconcilia de novo, tudo antes do
+        -- commit (`secao_fecha.test.sql`, "recolocada a linha, a pendência
+        -- auto-resolve"; `reconciliacao.test.sql`, "saldo corrigido") — e aí a
+        -- tentativa ANTERIOR (já divergente) da MESMA checagem, de um período
+        -- DIFERENTE do atual mas que TAMBÉM já foi corrigida nesta rodada, não
+        -- pode contar como irmã viva. Só o estado MAIS RECENTE de cada período
+        -- decide.
+        select distinct on (r.periodo_id) r.periodo_id, r.resultado
+        from reconciliacao r
+        where r.caso_id = p_caso_id and r.tipo = p_tipo
+          and coalesce(r.entidade_id, '00000000-0000-0000-0000-000000000000'::uuid)
+            = coalesce(p_entidade_id, '00000000-0000-0000-0000-000000000000'::uuid)
+          and r.criado_em = now()
+          and r.periodo_id is distinct from p_periodo_id
+        order by r.periodo_id, r.cmin::text::int desc
+      ) ultimo_por_periodo
+      where ultimo_por_periodo.resultado in ('divergente', 'divergencia', 'zona_cinzenta')
+        and (ultimo_por_periodo.periodo_id is not distinct from v_pendencia_periodo_id
+             or fn_periodos_compativeis(ultimo_por_periodo.periodo_id, v_pendencia_periodo_id))
+    ) into v_divergencia_concorrente;
+  end if;
 
   if v_abre_pendencia then
     if v_pendencia_id is null then
@@ -11293,6 +11356,12 @@ begin
         'importante', true, p_descricao, p_documento_id, p_entidade_id, p_periodo_id, v_motivo
       )
       returning id into v_pendencia_id;
+    elsif v_res_log = 'precondicao_nao_satisfeita' and v_divergencia_concorrente then
+      -- 0192: este achado é PRÉ-CONDIÇÃO, e uma divergência IRMÃ da mesma
+      -- rodada já está gravada em período compatível — não troca a descrição
+      -- da divergência pela de "não especificado"/checklist. A pendência
+      -- continua com o texto e o `tipo` da divergência.
+      null;
     else
       update pendencia set descricao = p_descricao where id = v_pendencia_id;
     end if;
@@ -11319,12 +11388,19 @@ begin
                                            'sintoma nao sumiu, o estagio foi silenciado.'));
 
   elsif v_pendencia_id is not null then
-    -- Sumiu o sintoma (reextração corrigiu, ou a pendência era falsa e a regra
-    -- nova não a emite mais): fecha. Não escreve número nenhum em base viva.
-    update pendencia set estado = 'resolvida', resolvida_em = now(),
-           resolvida_por = 'sistema:reconciliacao'
-    where id = v_pendencia_id;
-    v_pendencia_id := null;
+    if v_divergencia_concorrente then
+      -- 0192: este achado CONCLUIU (ok/documento_ausente), mas uma divergência
+      -- IRMÃ da mesma rodada, em período compatível, ainda está de pé — não
+      -- resolve. O `ok` de um período não apaga a divergência de outro.
+      null;
+    else
+      -- Sumiu o sintoma (reextração corrigiu, ou a pendência era falsa e a regra
+      -- nova não a emite mais): fecha. Não escreve número nenhum em base viva.
+      update pendencia set estado = 'resolvida', resolvida_em = now(),
+             resolvida_por = 'sistema:reconciliacao'
+      where id = v_pendencia_id;
+      v_pendencia_id := null;
+    end if;
   end if;
 
   insert into evento_auditoria (ator, acao, entidade_ref, depois)
@@ -11339,6 +11415,12 @@ begin
   );
 end;
 $$;
+
+--
+-- Name: FUNCTION fn_registrar_reconciliacao(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text, p_classe text, p_documento_id uuid, p_fonte_a jsonb, p_fonte_b jsonb, p_resultado text, p_divergencia_abs numeric, p_divergencia_pct numeric, p_materialidade jsonb, p_descricao text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_reconciliacao(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text, p_classe text, p_documento_id uuid, p_fonte_a jsonb, p_fonte_b jsonb, p_resultado text, p_divergencia_abs numeric, p_divergencia_pct numeric, p_materialidade jsonb, p_descricao text) IS 'Registro unificado de reconciliação (0023), motivo fino por pré-condição (0186/0188). 0192: dentro da MESMA transação (mesma rodada de fn_reconciliar_caso), um achado que CONCLUIU divergente/divergencia/zona_cinzenta prevalece — não resolve e não perde a descrição para um achado de pré-condição/ok de OUTRO período compatível chegado na mesma rodada.';
 
 --
 -- Name: fn_registrar_reconciliacao_b(uuid, uuid, uuid, text, uuid, jsonb, jsonb, text, numeric, numeric, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
@@ -17174,6 +17256,12 @@ GRANT ALL ON FUNCTION public.fn_registrar_fatos(p_documento_versao_id uuid, p_fa
 --
 
 GRANT ALL ON FUNCTION public.fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_registrar_reconciliacao(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text, p_classe text, p_documento_id uuid, p_fonte_a jsonb, p_fonte_b jsonb, p_resultado text, p_divergencia_abs numeric, p_divergencia_pct numeric, p_materialidade jsonb, p_descricao text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_reconciliacao(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text, p_classe text, p_documento_id uuid, p_fonte_a jsonb, p_fonte_b jsonb, p_resultado text, p_divergencia_abs numeric, p_divergencia_pct numeric, p_materialidade jsonb, p_descricao text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text); Type: ACL; Schema: public; Owner: -
