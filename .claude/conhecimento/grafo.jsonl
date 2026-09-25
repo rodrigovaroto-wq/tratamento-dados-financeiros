@@ -823,8 +823,8 @@
 {"k":"e","de":"arquivo:N8N/test/classifier.test.mjs","rel":"CHAMA","pa":"fn:fn_dial_permite_auto","f":"N8N/test/classifier.test.mjs","l":469}
 {"k":"e","de":"arquivo:N8N/test/classifier.test.mjs","rel":"CHAMA","pa":"fn:fn_periodo_canonico","f":"N8N/test/classifier.test.mjs","l":38}
 {"k":"e","de":"arquivo:N8N/test/classifier.test.mjs","rel":"CHAMA","pa":"fn:fn_registrar_diagnostico","f":"N8N/test/classifier.test.mjs","l":235}
-{"k":"e","de":"arquivo:N8N/test/cobertura.test.mjs","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"N8N/test/cobertura.test.mjs","l":157}
-{"k":"e","de":"arquivo:N8N/test/cobertura.test.mjs","rel":"CHAMA","pa":"fn:fn_registrar_fatos","f":"N8N/test/cobertura.test.mjs","l":524}
+{"k":"e","de":"arquivo:N8N/test/cobertura.test.mjs","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"N8N/test/cobertura.test.mjs","l":158}
+{"k":"e","de":"arquivo:N8N/test/cobertura.test.mjs","rel":"CHAMA","pa":"fn:fn_registrar_fatos","f":"N8N/test/cobertura.test.mjs","l":525}
 {"k":"e","de":"arquivo:N8N/test/workflow-macro-sim.test.mjs","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/test/workflow-macro-sim.test.mjs","l":119}
 {"k":"e","de":"arquivo:N8N/test/workflow-macro-sim.test.mjs","rel":"CHAMA","pa":"fn:fn_registrar_expectativa_macro","f":"N8N/test/workflow-macro-sim.test.mjs","l":118}
 {"k":"e","de":"arquivo:N8N/test/workflow-macro-sim.test.mjs","rel":"CHAMA","pa":"fn:fn_registrar_indice_macro","f":"N8N/test/workflow-macro-sim.test.mjs","l":117}
