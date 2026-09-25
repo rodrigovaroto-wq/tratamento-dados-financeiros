@@ -5,7 +5,7 @@ metadata:
   type: feedback
 tipo: armadilha
 toca:
-  - N8N/lib/classifier.mjs
+  - portal/src/lib/statement-templates.ts
 ---
 
 ```js
@@ -14,5 +14,9 @@ classificarDemonstracao(secao, chave, secaoCanonica, estrutura)   // estrutura P
 ```
 
 Os quatro argumentos são os mesmos e nenhum tipo distingue a troca, então um argumento fora de
-ordem não gera erro — gera classificação errada. Confira a assinatura em `N8N/lib/classifier.mjs`
+ordem não gera erro — gera classificação errada. Confira a assinatura em `portal/src/lib/statement-templates.ts`
 antes de chamar qualquer um dos dois, mesmo que você "lembre" da ordem.
+
+(Até 24/09/2026 esta memória apontava `N8N/lib/classifier.mjs`, onde nenhuma das duas funções
+existe — elas moram em `statement-templates.ts`, linhas 915 e 979 nessa data. Com o `toca` no
+arquivo errado, o portão do conhecimento nunca a marcaria SUSPEITA quando as assinaturas mudassem.)
