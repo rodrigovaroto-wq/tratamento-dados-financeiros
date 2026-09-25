@@ -33,6 +33,10 @@
 > `fn_reconciliar_receita_dre_vs_faturamento`, corrigido igual (na base). Efeito ZERO medido em
 > produção (25/09/2026, somente leitura) — correção latente, não aplicada.
 >
+> **`0194_a_planilha_de_mutuos_que_nunca_foi_lida.sql`** — `fn_reconciliar_mutuos` nunca concluía
+> em produção (planilha MUTUOS é retrato de uma data, não comparativa; 12/12 casos ficavam em
+> `documento_ausente`, 7 com conta de mútuo no balanço). Escrita, não aplicada.
+>
 > **`0190`** (abaixo):
 >
 > **O defeito.** `fn_reconciliar_arvore` (corpo vigente na `0133`) testava só dois ramos:

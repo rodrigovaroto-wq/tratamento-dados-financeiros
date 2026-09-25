@@ -602,6 +602,40 @@ supabase db execute --file Supabase/migrations/0193_a_tolerancia_que_crescia_com
 # caso), a diferença aparece nas linhas novas de reconciliacao — não há nada
 # para reprocessar à mão, e nada muda sozinho nas linhas já gravadas.
 
+# A 0194 REEMITE fn_reconciliar_mutuos: a planilha de mútuos de PRODUÇÃO é um
+# RETRATO de uma data (conceito na coluna — 0145), não uma demonstração
+# comparativa. MEDIDO EM PRODUÇÃO (25/09/2026, somente leitura): os 12 casos
+# com planilha MUTUOS nunca concluem — resultado documento_ausente, inclusive
+# nos 7 que TÊM conta de mútuo no balanço, com um texto de descrição FALSO
+# ("nenhum balanço traz conta de mútuo"). Causa: fn_coluna_periodo_do_ano
+# devolve a sentinela para um retrato (nenhuma coluna é "ano"), e o filtro do
+# lado da planilha, escrito para NULL, zerava a soma. Agora, quando o PERÍODO
+# DO DOCUMENTO cobre o ano, a coluna do saldo é achada pelo localizador que a
+# 0145 já cadastrou para este conceito (MUTUOS/saldo_de_mutuo, termo
+# 'saldo'). Ano fora do retrato: sem_periodo_par; retrato sem coluna de
+# saldo, ou planilha sem linha para o lado do balanço: linha_nao_localizada;
+# escala incomparável: unidade_divergente — os três ABREM pendência (0186),
+# diferente de documento_ausente, que continua reservado a "nenhum balanço
+# tem conta de mútuo" (comportamento desenhado da 0117/0123, preservado).
+# IDEMPOTENTE — não roda reconciliação em caso nenhum; as fixtures dos dois
+# books gravam periodo_coluna como o ANO (não o cabeçalho), então o ramo novo
+# nunca dispara sobre elas — nenhum assert existente muda.
+# Testes: Supabase/test/mutuos_retrato_de_uma_data.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0194_a_planilha_de_mutuos_que_nunca_foi_lida.sql
+# DEPOIS DE APLICAR, confira o catálogo:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where migration = '0194' and not presente;                 -- ZERO linhas
+# E, na próxima rodada de cada um dos 12 casos com planilha MUTUOS, o efeito
+# previsto (regra de projeto: escrita ≠ aplicada, só a sonda/o dado real
+# responde): os 7 casos com conta de mútuo no balanço deixam de responder
+# documento_ausente — no "teste - Canastra"/"teste Canastra" a divergência
+# plantada de 240 mil passa a abrir reconciliacao:mutuos_planilha_vs_balanco.
+# Para achar as linhas antigas (gravadas ANTES desta migration, que não se
+# corrigem sozinhas):
+#   select id, caso_id, criado_em from reconciliacao
+#    where tipo = 'mutuos_planilha_vs_balanco' and resultado = 'precondicao_nao_satisfeita'
+#      and motivo_precondicao = 'documento_ausente';
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

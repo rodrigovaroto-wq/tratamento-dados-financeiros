@@ -110,6 +110,7 @@
 {"k":"n","id":"arquivo:Supabase/test/modelagem_versao_vigente_escala.test.sql","t":"arquivo","f":"Supabase/test/modelagem_versao_vigente_escala.test.sql","txt":"modelagem_versao_vigente_escala.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/moeda.test.sql","t":"arquivo","f":"Supabase/test/moeda.test.sql","txt":"moeda.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/motivo_especifico.test.sql","t":"arquivo","f":"Supabase/test/motivo_especifico.test.sql","txt":"motivo_especifico.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/mutuos_retrato_de_uma_data.test.sql","t":"arquivo","f":"Supabase/test/mutuos_retrato_de_uma_data.test.sql","txt":"mutuos_retrato_de_uma_data.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/operacao.test.sql","t":"arquivo","f":"Supabase/test/operacao.test.sql","txt":"operacao.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/papel_da_linha.test.sql","t":"arquivo","f":"Supabase/test/papel_da_linha.test.sql","txt":"papel_da_linha.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/papel_por_secao.test.sql","t":"arquivo","f":"Supabase/test/papel_por_secao.test.sql","txt":"papel_por_secao.test.sql"}
@@ -385,7 +386,7 @@
 {"k":"n","id":"fn:fn_reconciliar_despfin_dre_vs_divida","t":"fn","f":"Supabase/migrations/0191_o_mapa_de_um_ano_contra_a_dre_de_dois.sql","txt":"reconciliar despfin dre vs divida"}
 {"k":"n","id":"fn:fn_reconciliar_duplicidade","t":"fn","f":"Supabase/migrations/0144_duplicidade_e_entre_documentos.sql","txt":"reconciliar duplicidade"}
 {"k":"n","id":"fn:fn_reconciliar_intragrupo","t":"fn","f":"Supabase/migrations/0124_intragrupo_que_nao_e_mutuo.sql","txt":"reconciliar intragrupo"}
-{"k":"n","id":"fn:fn_reconciliar_mutuos","t":"fn","f":"Supabase/migrations/0123_mutuos_a_natureza_fora_da_linha.sql","txt":"reconciliar mutuos"}
+{"k":"n","id":"fn:fn_reconciliar_mutuos","t":"fn","f":"Supabase/migrations/0194_a_planilha_de_mutuos_que_nunca_foi_lida.sql","txt":"reconciliar mutuos"}
 {"k":"n","id":"fn:fn_reconciliar_por_documento","t":"fn","f":"Supabase/migrations/0152_a_reconciliacao_do_lote.sql","txt":"reconciliar por documento"}
 {"k":"n","id":"fn:fn_reconciliar_receita_dre_vs_faturamento","t":"fn","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","txt":"reconciliar receita dre vs faturamento"}
 {"k":"n","id":"fn:fn_reconciliar_versoes_do_periodo","t":"fn","f":"Supabase/migrations/0159_o_rotulo_que_a_propria_estrutura_desmente.sql","txt":"reconciliar versoes do periodo"}
@@ -581,6 +582,7 @@
 {"k":"n","id":"migration:0191","t":"migration","f":"Supabase/migrations/0191_o_mapa_de_um_ano_contra_a_dre_de_dois.sql","txt":"o mapa de um ano contra a dre de dois"}
 {"k":"n","id":"migration:0192","t":"migration","f":"Supabase/migrations/0192_o_ok_que_matava_a_divergencia_irma.sql","txt":"o ok que matava a divergencia irma"}
 {"k":"n","id":"migration:0193","t":"migration","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","txt":"a tolerancia que crescia com a escala"}
+{"k":"n","id":"migration:0194","t":"migration","f":"Supabase/migrations/0194_a_planilha_de_mutuos_que_nunca_foi_lida.sql","txt":"a planilha de mutuos que nunca foi lida"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -1203,6 +1205,12 @@
 {"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/motivo_especifico.test.sql","l":461}
 {"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/motivo_especifico.test.sql","l":457}
 {"k":"e","de":"arquivo:Supabase/test/motivo_especifico.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/motivo_especifico.test.sql","l":456}
+{"k":"e","de":"arquivo:Supabase/test/mutuos_retrato_de_uma_data.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_mutuos","f":"Supabase/test/mutuos_retrato_de_uma_data.test.sql","l":103}
+{"k":"e","de":"arquivo:Supabase/test/mutuos_retrato_de_uma_data.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/mutuos_retrato_de_uma_data.test.sql","l":74}
+{"k":"e","de":"arquivo:Supabase/test/mutuos_retrato_de_uma_data.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/mutuos_retrato_de_uma_data.test.sql","l":70}
+{"k":"e","de":"arquivo:Supabase/test/mutuos_retrato_de_uma_data.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/test/mutuos_retrato_de_uma_data.test.sql","l":261}
+{"k":"e","de":"arquivo:Supabase/test/mutuos_retrato_de_uma_data.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/mutuos_retrato_de_uma_data.test.sql","l":67}
+{"k":"e","de":"arquivo:Supabase/test/mutuos_retrato_de_uma_data.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_periodo","f":"Supabase/test/mutuos_retrato_de_uma_data.test.sql","l":169}
 {"k":"e","de":"arquivo:Supabase/test/operacao.test.sql","rel":"CHAMA","pa":"fn:fn_operacao_lotes","f":"Supabase/test/operacao.test.sql","l":35}
 {"k":"e","de":"arquivo:Supabase/test/operacao.test.sql","rel":"CHAMA","pa":"fn:fn_operacao_resumo","f":"Supabase/test/operacao.test.sql","l":90}
 {"k":"e","de":"arquivo:Supabase/test/papel_da_linha.test.sql","rel":"CHAMA","pa":"fn:fn_aplicar_premissa_em_lote","f":"Supabase/test/papel_da_linha.test.sql","l":233}
@@ -1905,6 +1913,8 @@
 {"k":"e","de":"migration:0192","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0192_o_ok_que_matava_a_divergencia_irma.sql","l":106}
 {"k":"e","de":"migration:0193","rel":"CRIA","pa":"fn:fn_reconciliar_caixa_bp_fluxo","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","l":69}
 {"k":"e","de":"migration:0193","rel":"CRIA","pa":"fn:fn_reconciliar_receita_dre_vs_faturamento","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","l":281}
+{"k":"e","de":"migration:0194","rel":"CRIA","pa":"fn:fn_reconciliar_mutuos","f":"Supabase/migrations/0194_a_planilha_de_mutuos_que_nunca_foi_lida.sql","l":135}
+{"k":"e","de":"migration:0194","rel":"CRIA","pa":"fn:fn_reconciliar_mutuos","f":"Supabase/migrations/0194_a_planilha_de_mutuos_que_nunca_foi_lida.sql","l":17}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

@@ -9272,6 +9272,22 @@ declare
   v_lados record;
   v_lado_alvo text;
   v_rotulo_lado text;
+  -- 0194: a planilha é um RETRATO de uma data (0145: o conceito mora na
+  -- coluna). Estes três respondem "de qual ano é este retrato" e "onde mora a
+  -- coluna do saldo", lidos UMA VEZ fora do laço — o documento não muda de
+  -- período ano a ano.
+  v_periodo_id_mut uuid;
+  v_tipo_mut        text;
+  v_ref_mut         text;
+  v_anos_mut        int[];
+  v_col_saldo       text;
+  -- 0194 (mesmo padrão da 0188/0191/0193): o motivo de cada ano/lado que não
+  -- concluiu, e o que fica faltando dito em texto — para o `v_n = 0` do fim
+  -- distinguir "nenhum balanço tem conta de mútuo" (silêncio de sempre) de
+  -- "documento presente, checagem não concluiu" (achado, abre pendência).
+  v_motivos_ano text[] := '{}';
+  v_faltas      text[] := '{}';
+  v_motivo_prec text;
 begin
   -- A PLANILHA É DO GRUPO E O SALDO É DE CADA EMPRESA — por isso esta checagem
   -- é por CASO, e não por (caso, entidade) como as outras.
@@ -9306,6 +9322,30 @@ begin
 
   v_ver_mut  := fn_versao_atual(v_doc_mut);
   v_unid_mut := fn_unidade_predominante(v_ver_mut);
+
+  -- 0194: o PERÍODO DO DOCUMENTO da planilha — não a coluna. É o mesmo
+  -- caminho que a 0191 já usa para o Mapa de Dívida (outro retrato de uma
+  -- data): `documento.periodo_id` → `periodo.tipo, referencia` →
+  -- `fn_anos_periodo`. Vazio = "sem como afirmar de qual ano é o retrato"
+  -- (documento sem período, ou período que não ancora ano nenhum).
+  select periodo_id into v_periodo_id_mut from documento where id = v_doc_mut;
+  if v_periodo_id_mut is not null then
+    select tipo, referencia into v_tipo_mut, v_ref_mut from periodo where id = v_periodo_id_mut;
+    v_anos_mut := fn_anos_periodo(v_tipo_mut, v_ref_mut);
+  end if;
+
+  -- 0194: A COLUNA DO SALDO, achada pelo MESMO localizador que a 0145 já
+  -- cadastrou para este conceito (`taxonomia_linha_localizador`,
+  -- MUTUOS/saldo_de_mutuo, termo 'saldo') — reuso do termo, não um `like`
+  -- novo. Lida uma vez: o retrato tem uma coluna de saldo só, não uma por ano.
+  select ce.periodo_coluna into v_col_saldo
+  from campo_extraido ce
+  where ce.documento_versao_id = v_ver_mut
+    and ce.periodo_coluna is not null
+    and fn_normalizar_texto(ce.periodo_coluna) like '%saldo%'
+  group by ce.periodo_coluna
+  order by count(*) desc, ce.periodo_coluna
+  limit 1;
 
   -- OS DEGRAUS SÃO RESOLVIDOS UMA VEZ, PARA O DOCUMENTO TODO — e é essencial que
   -- seja assim, não linha a linha. A pergunta do degrau é "este documento
@@ -9396,12 +9436,22 @@ begin
     from linhas;
 
     if coalesce(v_lados.n_lados, 0) = 0 then
+      -- SEM MOTIVO: é o caso comum e legítimo (0117/0123, comportamento
+      -- desenhado e preservado) — não achar linha de mútuo NO BALANÇO não é
+      -- achado. É o ÚNICO `continue` que não alimenta `v_motivos_ano`.
       continue;
     end if;
 
     -- Escala ausente de um dos lados é o mesmo critério conservador da 0009:
     -- não há o que converter, e afirmar "confere" seria pior que calar.
     if coalesce(v_lados.tem_sem_escala, false) <> (v_unid_mut is null) then
+      -- 0194: o MESMO vício de texto dos outros `continue` — escala ausente
+      -- de um lado terminava no MESMO `documento_ausente` falso. É achado (a
+      -- escala não é comparável), não ausência de dado.
+      v_motivos_ano := v_motivos_ano || 'unidade_divergente'::text;
+      v_faltas := v_faltas || format(
+        '%s: escala não comparável entre o balanço e a planilha de mútuos (um lado declara, o outro não)',
+        v_ano);
       continue;
     end if;
 
@@ -9439,6 +9489,53 @@ begin
       v_rotulo_lado := v_lado_alvo;
     end if;
 
+    -- 0194: A PLANILHA-RETRATO. Chegamos aqui só quando o BALANÇO tem conta de
+    -- mútuo para este ano (n_lados>0, escala comparável) — então o que falta
+    -- resolver agora é só o lado da PLANILHA, e é aí que mora o defeito desta
+    -- migration.
+    --
+    -- `fn_coluna_periodo_do_ano` devolve a sentinela quando o documento TEM
+    -- colunas de período e nenhuma é deste ano — a pergunta certa para um
+    -- documento COMPARATIVO. A planilha de mútuos de produção não é
+    -- comparativa: é um RETRATO de uma data (0145 — o documento é matricial,
+    -- a chave é o PAR de empresas e o conceito mora na coluna:
+    -- "Mutuante"/"Mutuária"/"Saldo devedor"/"TOTAL"). Nenhum desses
+    -- cabeçalhos é ano nenhum, então a sentinela sempre disparava — e antes
+    -- desta migration o filtro do LADO B (escrito para NULL) zerava a soma, o
+    -- laço caía no `continue` mudo e a função devolvia `documento_ausente`
+    -- com um texto falso (ver o cabeçalho). A pergunta certa para um retrato:
+    -- o PERÍODO DO DOCUMENTO cobre `v_ano`? Se sim, a coluna do saldo é a que
+    -- `v_col_saldo` já achou; se não cobre, não há o que comparar neste ano.
+    if v_col_mut = E'\x01'
+       and v_ano is not null
+       and cardinality(coalesce(v_anos_mut, '{}'::int[])) > 0 then
+      if v_ano = any(v_anos_mut) then
+        v_col_mut := v_col_saldo;
+        if v_col_mut is null then
+          -- O documento cobre o ano, mas nenhuma coluna diz "saldo": achado
+          -- acionável (o documento pode ter mudado de formato), não silêncio.
+          v_motivos_ano := v_motivos_ano || 'linha_nao_localizada'::text;
+          v_faltas := v_faltas || format(
+            '%s: a planilha de mútuos é retrato deste exercício, mas nenhuma coluna diz '
+            '"saldo" (o mesmo termo do localizador da 0145)', v_ano);
+          continue;
+        end if;
+      else
+        -- O documento é retrato de OUTRO(S) ano(s) — não há o que comparar
+        -- neste `v_ano`, e é o CONTRATO da 0186 que nomeia isso, não o
+        -- genérico.
+        v_motivos_ano := v_motivos_ano || 'sem_periodo_par'::text;
+        v_faltas := v_faltas || format(
+          '%s: a planilha de mútuos é retrato de %s — não há esse exercício para comparar',
+          v_ano, coalesce(v_ref_mut, 'outra data'));
+        continue;
+      end if;
+    end if;
+    -- `v_anos_mut` vazio (documento sem período, ou período que não ancora
+    -- ano nenhum): sem como afirmar retrato de QUAL ano, então `v_col_mut`
+    -- segue sentinela — comportamento de ANTES desta migration (mesma
+    -- exceção que a 0191 já abre para o Mapa de Dívida).
+
     -- ---- LADO B: a planilha ----------------------------------------------
     select coalesce(sum(fn_valor_em_base(ce.valor_num, ce.unidade)), 0) as soma_base,
            coalesce(sum(ce.valor_num), 0) as soma_bruta,
@@ -9449,21 +9546,16 @@ begin
       and ce.valor_num is not null
       and fn_papel_linha(ce.chave) <> 'subtotal'
       -- MÚTUO CONTRA MÚTUO — nos degraus 1 e 2. A planilha de intragrupo lista
-      -- mais coisa do que mútuo (conta corrente rotativa, aluguel entre
-      -- coligadas, rateio de despesa), e o balanço registra cada uma num lugar
-      -- diferente ("Outros créditos", "Contas a pagar"). Comparar a planilha
-      -- INTEIRA contra as contas de mútuo do balanço acusa como divergência
-      -- aquilo que é só natureza diferente: no book Vertentes isso somava a
-      -- conta corrente de 1.400 de um lado só e inventava 1.400 de diferença.
+      -- mais coisa que mútuo (conta corrente rotativa, aluguel entre
+      -- coligadas, rateio de despesa), e o balanço registra cada natureza num
+      -- lugar diferente. Comparar a planilha INTEIRA contra as contas de
+      -- mútuo do balanço acusaria como divergência aquilo que é só natureza
+      -- diferente.
       --
       -- OS TRÊS DEGRAUS, NA ORDEM. O `case` é o que impede o degrau 2 de valer
       -- quando o degrau 1 existe — sem isso, seção larga ("MÚTUOS E CONTAS
       -- INTRAGRUPO") passa a incluir a conta corrente que o rótulo já tinha
       -- separado, que é o defeito de novo.
-      --
-      -- Fica anotado o que ISTO deixa de fora: a conferência das linhas
-      -- intragrupo que NÃO são mútuo continua sem checagem. É trabalho próprio
-      -- — exige casar cada linha com a conta certa de cada balanço.
       and (case
              when v_pl_rotulo then fn_texto_nomeia_mutuo(ce.chave)
              when v_pl_secao  then fn_texto_nomeia_mutuo(ce.secao)
@@ -9471,7 +9563,7 @@ begin
            end)
       -- A MESMA RÉGUA DOS DOIS LADOS. Se o balanço exclui o mútuo com sócio e a
       -- planilha não, a diferença que sobra é da régua e não do dado — é o defeito
-      -- que esta migration está consertando, cometido de novo em espelho.
+      -- que a 0123 consertou, cometido de novo em espelho.
       and not fn_mutuo_com_socio(ce.chave, ce.secao)
       -- Quando o balanço tem um lado só, a linha da planilha que DECLARA lado
       -- tem de ser do mesmo; a que não declara entra (ela é as duas pontas).
@@ -9481,7 +9573,17 @@ begin
            or coalesce(fn_lado_do_mutuo(ce.chave, ce.secao_canonica), v_lado_alvo) = v_lado_alvo)
       and (v_col_mut is null
            or fn_normalizar_texto(ce.periodo_coluna) = fn_normalizar_texto(v_col_mut));
-    if coalesce(v_pl.n, 0) = 0 then continue; end if;
+    if coalesce(v_pl.n, 0) = 0 then
+      -- 0194: a coluna FOI resolvida (ou é o caso "sem como afirmar", ver
+      -- acima) e mesmo assim nenhuma linha da planilha casou com o lado do
+      -- balanço — achado, não ausência.
+      v_motivos_ano := v_motivos_ano || fn_motivo_do_lado(false, null, v_col_mut);
+      v_faltas := v_faltas || format('%s: %s', v_ano,
+        case when v_col_mut = E'\x01'
+             then 'a planilha de mútuos não tem coluna deste exercício'
+             else 'a planilha de mútuos não tem linha para o lado do balanço neste exercício' end);
+      continue;
+    end if;
 
     v_b := abs(coalesce(v_pl.soma_base, 0));
     v_a := abs(coalesce(v_a, 0));
@@ -9519,20 +9621,37 @@ begin
   end loop;
 
   if v_n = 0 then
-    -- SEM PENDÊNCIA, e é decisão de projeto: `documento_ausente` é o único
-    -- resultado que `fn_registrar_reconciliacao` não transforma em pendência.
-    -- Não achar linha de mútuo NO BALANÇO é o caso comum e correto — a
-    -- demonstração combinada elimina o intragrupo, e o balanço individual pode
-    -- agregar o saldo em "outras partes relacionadas". Abrir pendência aqui
-    -- encheria a fila de todo mandato com um aviso que não pede ação nenhuma,
-    -- e uma fila assim é uma fila que ninguém lê.
+    if cardinality(v_motivos_ano) = 0 then
+      -- SEM PENDÊNCIA, e é decisão de projeto: `documento_ausente` é o único
+      -- resultado que `fn_registrar_reconciliacao` não transforma em pendência.
+      -- Não achar linha de mútuo NO BALANÇO é o caso comum e correto — a
+      -- demonstração combinada elimina o intragrupo, e o balanço individual pode
+      -- agregar o saldo em "outras partes relacionadas". Abrir pendência aqui
+      -- encheria a fila de todo mandato com um aviso que não pede ação nenhuma,
+      -- e uma fila assim é uma fila que ninguém lê. TODOS os anos pularam por
+      -- essa via (0194: `v_motivos_ano` vazio é a prova).
+      return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
+        'mutuos_planilha_vs_balanco', 'B', v_doc_mut, null, null,
+        'documento_ausente', null, null,
+        jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct),
+        'Planilha de mútuos presente, mas nenhum balanço do mandato traz conta de mútuo com lado '
+        || 'reconhecível (combinado elimina intragrupo; individual às vezes agrega em "partes '
+        || 'relacionadas"). Sem par, não há o que conferir.');
+    end if;
+
+    -- 0194: o balanço TEM conta de mútuo em algum ano, mas a checagem não
+    -- concluiu por outro motivo — documento presente e algo não localizado é
+    -- ACHADO ACIONÁVEL (0186), não ausência. Abre pendência
+    -- (fn_registrar_reconciliacao: todo motivo de precondição além de
+    -- documento_ausente abre).
+    v_motivo_prec := fn_motivo_precondicao_agregado(v_motivos_ano);
     return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
       'mutuos_planilha_vs_balanco', 'B', v_doc_mut, null, null,
-      'documento_ausente', null, null,
+      v_motivo_prec, null, null,
       jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct),
-      'Planilha de mútuos presente, mas nenhum balanço do mandato traz conta de mútuo com lado '
-      || 'reconhecível (combinado elimina intragrupo; individual às vezes agrega em "partes '
-      || 'relacionadas"). Sem par, não há o que conferir.');
+      fn_motivo_precondicao_prefixo(v_motivo_prec)
+      || 'Planilha de mútuos e balanço com conta de mútuo presentes, mas a checagem não concluiu '
+      || 'em nenhum exercício. ' || array_to_string(v_faltas, '; ') || '.');
   end if;
 
   return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
@@ -9551,7 +9670,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS '0123: a natureza "mútuo" é lida na linha OU na seção, e um documento MUTUOS que não a nomeia em lugar nenhum conta inteiro. Confere os dois lados entre si antes de comparar a planilha; lados que discordam são o achado, e aí a planilha não é atribuída a um deles. Mútuo com sócio fica fora: não tem espelho no mandato.';
+COMMENT ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS '0194: a planilha de mútuos é um RETRATO de uma data (0145 — o conceito mora na coluna, não é comparativa): quando a coluna de período sai sentinela e o PERÍODO DO DOCUMENTO cobre o ano, a coluna do saldo é achada pelo localizador da 0145 (MUTUOS/saldo_de_mutuo, termo ''saldo''), em vez de zerar a comparação e devolver documento_ausente falso. Ano fora do retrato: sem_periodo_par; retrato sem coluna de saldo, ou planilha sem linha para o lado do balanço: linha_nao_localizada; escala incomparável: unidade_divergente — os três abrem pendência (0186), diferente de documento_ausente. 0123: a natureza "mútuo" é lida na linha OU na seção. Confere os dois lados entre si antes de comparar a planilha; lados que discordam são o achado, e aí a planilha não é atribuída a um deles. Mútuo com sócio fica fora: não tem espelho no mandato.';
 
 --
 -- Name: fn_reconciliar_por_documento(uuid, text); Type: FUNCTION; Schema: public; Owner: -

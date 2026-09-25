@@ -368,6 +368,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/tolerancia_na_base.test.sql 2>
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== a planilha de mútuos que nunca foi lida (0194): retrato de uma data, conceito na coluna"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/mutuos_retrato_de_uma_data.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== ingestão sobre o book CANASTRA (o difícil: 15 armadilhas, 3 exercícios, 6 empresas)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/canastra.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
