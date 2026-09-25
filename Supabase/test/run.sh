@@ -122,7 +122,9 @@ echo "== todo Supabase/test/*.test.sql é executado por este run.sh"
 este="${BASH_SOURCE[0]}"
 sem_chamada=""
 for f in Supabase/test/*.test.sql; do
-  grep -qF -- "-f $f" "$este" || sem_chamada="$sem_chamada $f"
+  # Linha COMENTADA não conta: `# DESLIGADO: psql … -f <teste>` é exatamente o estágio desligado
+  # com cara de limpo que esta guarda existe para barrar (achado da 3ª revisão do PR #244).
+  grep -F -- "-f $f" "$este" | grep -qv '^[[:space:]]*#' || sem_chamada="$sem_chamada $f"
 done
 if [ -n "$sem_chamada" ]; then
   echo "FALHOU: teste que existe e que este run.sh nunca executa:"
