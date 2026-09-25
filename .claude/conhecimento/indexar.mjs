@@ -283,7 +283,11 @@ function hashDaAncora(ancora) {
   return createHash("sha256").update(regiao).digest("hex").slice(0, 12);
 }
 for (const p of FICHAS) {
-  const texto = ler(p);
+  // CRLF normalizado AQUI, não só no cabeçalho: o recorte do corpo (`\n---\n`), o título e os
+  // subtítulos também assumem `\n`. Com o cabeçalho normalizado e o corpo não, uma ficha CRLF
+  // indexava o próprio cabeçalho como corpo (medido na 3ª revisão do PR #244: o `kw` ganhava
+  // `name … description … toca`, e a busca por esses termos favorecia toda ficha CRLF).
+  const texto = ler(p).replace(/\r\n/g, "\n");
   const cab = cabecalho(texto);
   const titulo = (/^#\s+(.+)$/m.exec(texto)?.[1] ?? p.split("/").pop().replace(/\.md$/, "")).trim();
   // O texto de busca da ficha são o título e os subtítulos — não o corpo. Quem
