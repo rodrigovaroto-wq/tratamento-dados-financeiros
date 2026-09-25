@@ -8370,7 +8370,7 @@ COMMENT ON FUNCTION public.fn_reconciliar_ativo_passivo_pl(p_caso_id uuid, p_ent
 
 CREATE FUNCTION public.fn_reconciliar_caixa_bp_fluxo(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric DEFAULT 100, p_tolerancia_pct numeric DEFAULT 0.005) RETURNS jsonb
     LANGUAGE plpgsql
-    AS $$
+    AS $_$
 declare
   v_doc_bp    uuid;
   v_doc_fx    uuid;
@@ -8521,8 +8521,18 @@ begin
     v_b := fn_valor_em_base(v_saldo.valor_num, v_saldo.unidade);
     v_n := v_n + 1;
     v_div_abs := abs(v_a - v_b);
-    v_tol := greatest(p_tolerancia_abs * coalesce(fn_fator_escala(v_caixa.unidade), 1),
-                      abs(v_a) * p_tolerancia_pct);
+    -- 0193: A TOLERÂNCIA ABSOLUTA ESTÁ NA BASE, como v_a e v_b. Da 0031 até
+    -- aqui ela era `p_tolerancia_abs * fator_da_escala`: numa entidade com
+    -- Balanço/DFC em 'milhar', os R$ 100 do default viravam R$ 100 MIL, e
+    -- qualquer divergência de caixa abaixo disso saía "confere". MEDIDO EM
+    -- PRODUÇÃO (25/09/2026, somente leitura, recomputando fonte_a/fonte_b):
+    -- das 33 caixa_bp_fluxo com resultado 'ok' (as 33 em 'milhar'), 0
+    -- mudariam de resultado com a tolerância na base — diferença zero em
+    -- todas. Correção LATENTE: mesmo vício estrutural da despfin (0188), sem
+    -- efeito ainda medido nesta checagem. MEDIDO (regra 2): com o `× fator`
+    -- de volta, o assert do bloco 1 de
+    -- Supabase/test/tolerancia_na_base.test.sql reprova.
+    v_tol := greatest(p_tolerancia_abs, abs(v_a) * p_tolerancia_pct);
     if v_div_abs > v_tol then
       v_resultado := 'divergente';
       v_partes := v_partes || format('%s: Caixa no Balanço %s ("%s") vs Saldo final na DFC %s ("%s") — diferença de %s',
@@ -8561,7 +8571,7 @@ begin
     format('Caixa do Balanço vs Saldo final do Fluxo de Caixa em %s ano(s): %s.',
            v_n, array_to_string(v_partes, '; ')));
 end;
-$$;
+$_$;
 
 --
 -- Name: fn_reconciliar_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -9608,7 +9618,7 @@ COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid, p_e
 
 CREATE FUNCTION public.fn_reconciliar_receita_dre_vs_faturamento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric DEFAULT 50000, p_tolerancia_pct numeric DEFAULT 0.05) RETURNS jsonb
     LANGUAGE plpgsql
-    AS $$
+    AS $_$
 declare
   v_doc_dre  uuid;
   v_doc_fat  uuid;
@@ -9711,8 +9721,18 @@ begin
     v_b := fn_valor_em_base(v_fat.soma, v_unid_fat);
     v_n := v_n + 1;
     v_div := abs(v_a - v_b);
-    v_tol := greatest(p_tolerancia_abs * coalesce(fn_fator_escala(v_unid_rec), 1),
-                      abs(v_a) * p_tolerancia_pct);
+    -- 0193: A TOLERÂNCIA ABSOLUTA ESTÁ NA BASE, como v_a e v_b. Da 0023 até
+    -- aqui ela era `p_tolerancia_abs * fator_da_escala`: numa DRE em
+    -- 'milhar', os R$ 50.000 do default viravam R$ 50 MILHÕES, e uma
+    -- diferença de até 30% da receita sairia "confere" (ver o cabeçalho
+    -- desta migration). MEDIDO EM PRODUÇÃO (25/09/2026, somente leitura,
+    -- recomputando fonte_a/fonte_b): das 30 receita_dre_vs_faturamento com
+    -- resultado 'ok' (10 em 'milhar'), 0 mudariam de resultado com a
+    -- tolerância na base — a pior diferença entre elas chega a 4,75%, abaixo
+    -- do piso percentual de 5%. Correção LATENTE. MEDIDO (regra 2): com o
+    -- `× fator` de volta, o assert do bloco 2 de
+    -- Supabase/test/tolerancia_na_base.test.sql reprova.
+    v_tol := greatest(p_tolerancia_abs, abs(v_a) * p_tolerancia_pct);
     if v_div > v_tol then
       v_resultado := 'zona_cinzenta';
       v_partes := v_partes || format('%s: Receita Bruta %s vs %s meses de faturamento %s — diferença de %s '
@@ -9752,7 +9772,7 @@ begin
     format('Receita Bruta da DRE vs faturamento mensal em %s ano(s): %s.',
            v_n, array_to_string(v_partes, '; ')));
 end;
-$$;
+$_$;
 
 --
 -- Name: fn_reconciliar_versoes_do_periodo(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -

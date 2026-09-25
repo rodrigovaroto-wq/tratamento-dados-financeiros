@@ -363,6 +363,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/divergencia_prevalece_na_rodad
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== a tolerância que crescia com a escala (0193): absoluta na base em caixa_bp_fluxo e receita_dre_vs_faturamento"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/tolerancia_na_base.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== ingestão sobre o book CANASTRA (o difícil: 15 armadilhas, 3 exercícios, 6 empresas)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/canastra.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

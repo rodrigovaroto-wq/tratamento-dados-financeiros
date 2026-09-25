@@ -133,6 +133,7 @@
 {"k":"n","id":"arquivo:Supabase/test/sonda-producao.mjs","t":"arquivo","f":"Supabase/test/sonda-producao.mjs","txt":"sonda-producao.mjs"}
 {"k":"n","id":"arquivo:Supabase/test/sonda-producao.test.mjs","t":"arquivo","f":"Supabase/test/sonda-producao.test.mjs","txt":"sonda-producao.test.mjs"}
 {"k":"n","id":"arquivo:Supabase/test/sonda_ve_gatilho.test.sql","t":"arquivo","f":"Supabase/test/sonda_ve_gatilho.test.sql","txt":"sonda_ve_gatilho.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/tolerancia_na_base.test.sql","t":"arquivo","f":"Supabase/test/tolerancia_na_base.test.sql","txt":"tolerancia_na_base.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/transcricao_humana.test.sql","t":"arquivo","f":"Supabase/test/transcricao_humana.test.sql","txt":"transcricao_humana.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/veredito_producao.test.sql","t":"arquivo","f":"Supabase/test/veredito_producao.test.sql","txt":"veredito_producao.test.sql"}
 {"k":"n","id":"arquivo:Verificação/run.mts","t":"arquivo","f":"Verificação/run.mts","txt":"run.mts"}
@@ -378,7 +379,7 @@
 {"k":"n","id":"fn:fn_recomputar_completude","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"recomputar completude"}
 {"k":"n","id":"fn:fn_reconciliar_arvore","t":"fn","f":"Supabase/migrations/0190_a_arvore_que_nao_conferiu_nada.sql","txt":"reconciliar arvore"}
 {"k":"n","id":"fn:fn_reconciliar_ativo_passivo_pl","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar ativo passivo pl"}
-{"k":"n","id":"fn:fn_reconciliar_caixa_bp_fluxo","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar caixa bp fluxo"}
+{"k":"n","id":"fn:fn_reconciliar_caixa_bp_fluxo","t":"fn","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","txt":"reconciliar caixa bp fluxo"}
 {"k":"n","id":"fn:fn_reconciliar_caso","t":"fn","f":"Supabase/migrations/0192_o_ok_que_matava_a_divergencia_irma.sql","txt":"reconciliar caso"}
 {"k":"n","id":"fn:fn_reconciliar_chaves_do_documento","t":"fn","f":"Supabase/migrations/0152_a_reconciliacao_do_lote.sql","txt":"reconciliar chaves do documento"}
 {"k":"n","id":"fn:fn_reconciliar_despfin_dre_vs_divida","t":"fn","f":"Supabase/migrations/0191_o_mapa_de_um_ano_contra_a_dre_de_dois.sql","txt":"reconciliar despfin dre vs divida"}
@@ -386,7 +387,7 @@
 {"k":"n","id":"fn:fn_reconciliar_intragrupo","t":"fn","f":"Supabase/migrations/0124_intragrupo_que_nao_e_mutuo.sql","txt":"reconciliar intragrupo"}
 {"k":"n","id":"fn:fn_reconciliar_mutuos","t":"fn","f":"Supabase/migrations/0123_mutuos_a_natureza_fora_da_linha.sql","txt":"reconciliar mutuos"}
 {"k":"n","id":"fn:fn_reconciliar_por_documento","t":"fn","f":"Supabase/migrations/0152_a_reconciliacao_do_lote.sql","txt":"reconciliar por documento"}
-{"k":"n","id":"fn:fn_reconciliar_receita_dre_vs_faturamento","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reconciliar receita dre vs faturamento"}
+{"k":"n","id":"fn:fn_reconciliar_receita_dre_vs_faturamento","t":"fn","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","txt":"reconciliar receita dre vs faturamento"}
 {"k":"n","id":"fn:fn_reconciliar_versoes_do_periodo","t":"fn","f":"Supabase/migrations/0159_o_rotulo_que_a_propria_estrutura_desmente.sql","txt":"reconciliar versoes do periodo"}
 {"k":"n","id":"fn:fn_reconferir_caso","t":"fn","f":"Supabase/migrations/0043_reconferir_o_que_ja_esta_no_banco.sql","txt":"reconferir caso"}
 {"k":"n","id":"fn:fn_reescrever_recado_linha_exigida","t":"fn","f":"Supabase/migrations/0188_o_motivo_que_a_checagem_sabia_e_nao_dizia.sql","txt":"reescrever recado linha exigida"}
@@ -579,6 +580,7 @@
 {"k":"n","id":"migration:0190","t":"migration","f":"Supabase/migrations/0190_a_arvore_que_nao_conferiu_nada.sql","txt":"a arvore que nao conferiu nada"}
 {"k":"n","id":"migration:0191","t":"migration","f":"Supabase/migrations/0191_o_mapa_de_um_ano_contra_a_dre_de_dois.sql","txt":"o mapa de um ano contra a dre de dois"}
 {"k":"n","id":"migration:0192","t":"migration","f":"Supabase/migrations/0192_o_ok_que_matava_a_divergencia_irma.sql","txt":"o ok que matava a divergencia irma"}
+{"k":"n","id":"migration:0193","t":"migration","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","txt":"a tolerancia que crescia com a escala"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -1324,6 +1326,12 @@
 {"k":"e","de":"arquivo:Supabase/test/sonda-producao.test.mjs","rel":"CHAMA","pa":"fn:fn_reconciliar_caso","f":"Supabase/test/sonda-producao.test.mjs","l":37}
 {"k":"e","de":"arquivo:Supabase/test/sonda_ve_gatilho.test.sql","rel":"CHAMA","pa":"fn:fn_instalacao_conferir","f":"Supabase/test/sonda_ve_gatilho.test.sql","l":4}
 {"k":"e","de":"arquivo:Supabase/test/sonda_ve_gatilho.test.sql","rel":"CHAMA","pa":"fn:fn_trg_auto_promover_dial","f":"Supabase/test/sonda_ve_gatilho.test.sql","l":8}
+{"k":"e","de":"arquivo:Supabase/test/tolerancia_na_base.test.sql","rel":"CHAMA","pa":"fn:fn_fator_escala","f":"Supabase/test/tolerancia_na_base.test.sql","l":24}
+{"k":"e","de":"arquivo:Supabase/test/tolerancia_na_base.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_caixa_bp_fluxo","f":"Supabase/test/tolerancia_na_base.test.sql","l":6}
+{"k":"e","de":"arquivo:Supabase/test/tolerancia_na_base.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_receita_dre_vs_faturamento","f":"Supabase/test/tolerancia_na_base.test.sql","l":12}
+{"k":"e","de":"arquivo:Supabase/test/tolerancia_na_base.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/tolerancia_na_base.test.sql","l":64}
+{"k":"e","de":"arquivo:Supabase/test/tolerancia_na_base.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/tolerancia_na_base.test.sql","l":61}
+{"k":"e","de":"arquivo:Supabase/test/tolerancia_na_base.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/tolerancia_na_base.test.sql","l":60}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_golden_campos","f":"Supabase/test/transcricao_humana.test.sql","l":11}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_transcricao_humana","f":"Supabase/test/transcricao_humana.test.sql","l":77}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_secao_e_de_resultado","f":"Supabase/test/transcricao_humana.test.sql","l":196}
@@ -1895,6 +1903,8 @@
 {"k":"e","de":"migration:0191","rel":"CRIA","pa":"fn:fn_reconciliar_despfin_dre_vs_divida","f":"Supabase/migrations/0191_o_mapa_de_um_ano_contra_a_dre_de_dois.sql","l":126}
 {"k":"e","de":"migration:0192","rel":"CRIA","pa":"fn:fn_reconciliar_caso","f":"Supabase/migrations/0192_o_ok_que_matava_a_divergencia_irma.sql","l":374}
 {"k":"e","de":"migration:0192","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0192_o_ok_que_matava_a_divergencia_irma.sql","l":106}
+{"k":"e","de":"migration:0193","rel":"CRIA","pa":"fn:fn_reconciliar_caixa_bp_fluxo","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","l":69}
+{"k":"e","de":"migration:0193","rel":"CRIA","pa":"fn:fn_reconciliar_receita_dre_vs_faturamento","f":"Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql","l":281}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

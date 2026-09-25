@@ -28,6 +28,11 @@
 > no primeiro raise). Os asserts do `reconciliacao.test.sql` NÃO mudaram — a versão do agente os
 > alterava para exigir a pendência falsa de despfin/2024, e foi isso que fez a `0191` nascer antes.
 >
+> **`0193_a_tolerancia_que_crescia_com_a_escala.sql`** — o mesmo vício da 0188 (tolerância
+> absoluta × fator de escala) em `fn_reconciliar_caixa_bp_fluxo` e
+> `fn_reconciliar_receita_dre_vs_faturamento`, corrigido igual (na base). Efeito ZERO medido em
+> produção (25/09/2026, somente leitura) — correção latente, não aplicada.
+>
 > **`0190`** (abaixo):
 >
 > **O defeito.** `fn_reconciliar_arvore` (corpo vigente na `0133`) testava só dois ramos:

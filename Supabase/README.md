@@ -582,6 +582,26 @@ supabase db execute --file Supabase/migrations/0192_o_ok_que_matava_a_divergenci
 #   select chave, presente, detalhe from fn_instalacao_conferir()
 #    where chave = 'ok_nao_mata_divergencia_irma';                  -- presente = true
 
+# A 0193 REEMITE fn_reconciliar_caixa_bp_fluxo e fn_reconciliar_receita_-
+# dre_vs_faturamento: a mesma correção que a 0188 aplicou na despfin — a
+# tolerância absoluta passa a estar em moeda BASE, não multiplicada pelo
+# fator de escala do documento (numa DRE/Balanço em 'milhar', o piso virava
+# 1000× maior que o default). MEDIDO EM PRODUÇÃO (25/09/2026, somente
+# leitura): efeito ZERO hoje — 0 das 33 caixa_bp_fluxo e 0 das 30 receita_-
+# dre_vs_faturamento com resultado 'ok' mudariam de resultado com a
+# tolerância na base. Correção LATENTE (mesmo vício estrutural da despfin,
+# ainda sem caso real que o exercite). IDEMPOTENTE — não roda reconciliação
+# nem recompute em caso nenhum; as assinaturas não mudam.
+# Testes: Supabase/test/tolerancia_na_base.test.sql (via run.sh).
+supabase db execute --file Supabase/migrations/0193_a_tolerancia_que_crescia_com_a_escala.sql
+# DEPOIS DE APLICAR, confira o catálogo:
+#   select chave, presente, detalhe from fn_instalacao_conferir()
+#    where migration = '0193' and not presente;                 -- ZERO linhas
+# E, se algum dia esta correção DEIXAR de ser latente (uma checagem em milhar
+# muda de 'ok' para 'divergente'/'zona_cinzenta' na próxima rodada de um
+# caso), a diferença aparece nas linhas novas de reconciliacao — não há nada
+# para reprocessar à mão, e nada muda sozinho nas linhas já gravadas.
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #
