@@ -246,9 +246,13 @@ estado não ficar em itálico com o resto. A linha já aceita é tipografia
 normal com o chip "aceita" (`ok-100` / `ok-800`).
 
 (Esta especificação morava só no `.impeccable/design.json`, removido em
-24/09/2026 com a skill impeccable; foi trazida para cá para não se perder. Em
-24/09 o portal ainda não a implementava — o equivalente existe só no Excel,
-em `portal/src/lib/export.ts`, na aba de linhas extraídas.)
+24/09/2026 com a skill impeccable; foi trazida para cá para não se perder. O
+portal a implementa EM PARTE: a tabela de linhas da tela do documento
+(`portal/src/app/casos/[id]/documentos/[docId]/page.tsx`) já mostra o chip
+"pendente"/"aceito", mas com `alerta-700`/`ok-700` em vez de `-800`, sem a linha
+em itálico e com a palavra "pendente" em vez de "pendente de aceite". Quem for
+alinhar ajusta esse chip; não cria um segundo. No Excel a linha pendente sai em
+itálico âmbar, em `portal/src/lib/export.ts`, na aba de linhas extraídas.)
 
 ### Cards / Containers
 
