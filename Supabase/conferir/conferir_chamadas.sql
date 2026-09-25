@@ -58,9 +58,12 @@ begin
   end loop;
 end $conf$;
 select
-  case when count(*) filter (where not resolve) = 0
-       then 'PODE RODAR — as ' || count(*) || ' chamadas do n8n resolvem neste banco'
-       else '*** NAO RODE *** ' || count(*) filter (where not resolve) || ' de ' || count(*) || ' NAO resolvem'
+  case when count(*) filter (where resolve = false) > 0
+       then '*** NAO RODE *** ' || count(*) filter (where resolve = false) || ' de ' || count(*) filter (where resolve is not null) || ' NAO resolvem'
+       when count(*) filter (where resolve is null) > 0
+       then '*** CONFERENCIA INCOMPLETA *** as ' || count(*) filter (where resolve) || ' chamadas conferidas resolvem, mas '
+            || count(*) filter (where resolve is null) || ' NAO FORAM CONFERIDAS (listadas abaixo) — isto nao e PODE RODAR'
+       else 'PODE RODAR — as ' || count(*) || ' chamadas do n8n resolvem neste banco'
   end as veredito
 from _conferir;
-select no, erro from _conferir where not resolve order by no;
+select no, erro from _conferir where resolve is not true order by no;

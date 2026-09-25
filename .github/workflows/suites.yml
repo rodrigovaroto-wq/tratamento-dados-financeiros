@@ -476,7 +476,7 @@ jobs:
             || { echo "::error::conferir_chamadas.sql diverge do gerado — rode o gerador e commite"; exit 1; }
           psql -d tdf_test -X -v ON_ERROR_STOP=1 -f Supabase/conferir/conferir_chamadas.sql | tee /tmp/conferir.out
           grep -q "PODE RODAR" /tmp/conferir.out \
-            || { echo "::error::o conferidor em SQL não disse PODE RODAR no banco completo"; exit 1; }
+            || { echo "::error::o conferidor em SQL não disse PODE RODAR no banco completo — NAO RODE, ou CONFERENCIA INCOMPLETA (algum nó Postgres virou não conferível: modo expressão ou mais de um comando)"; exit 1; }
 
       - name: A sonda do buraco no meio não dá alarme falso num banco completo
         # CONTROLE POSITIVO da detecção de buraco da `sonda-producao.mjs` (PR #238). Contra
