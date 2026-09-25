@@ -128,51 +128,108 @@ function lote(porVersao: Record<string, number>): Linha[] {
     }
   };
   andar(SRC);
-  /** Os argumentos de `.select(...)`, com parênteses balanceados, ou null. */
-  const argsDoSelect = (texto: string, desde: number): string | null => {
-    const i = texto.indexOf(".select(", desde);
-    if (i < 0) return null;
-    let nivel = 0;
-    for (let k = i + ".select".length; k < texto.length; k++) {
-      if (texto[k] === "(") nivel++;
-      else if (texto[k] === ")" && --nivel === 0) return texto.slice(i + ".select(".length, k);
+  /**
+   * O CÓDIGO sem comentários nem conteúdo de texto — as mesmas posições, com esses
+   * trechos trocados por espaço (quebra de linha preservada).
+   *
+   * POR QUE (quarta revisão do PR #244): o casamento de parênteses contava `(` e `)`
+   * dentro de comentário e de string. Um comentário citando `paginar(` sem fechar
+   * "abria" um paginar falso que o `)` do `Promise.all` fechava — medido: trocar um
+   * comentário de `perguntas/page.tsx` para "PAGINADA via `paginar(`" fazia uma
+   * leitura solta passar 15/0. E há `)` desbalanceado em comentários reais
+   * ("1) nota"). Sobre este texto, parêntese é só parêntese de código.
+   */
+  const soCodigo = (src: string): string => {
+    let out = "";
+    let k = 0;
+    const apagar = (fim: number) => { out += src.slice(k, fim).replace(/[^\n]/g, " "); k = fim; };
+    while (k < src.length) {
+      const c = src[k], d = src[k + 1];
+      if (c === "/" && d === "/") { const f = src.indexOf("\n", k); apagar(f < 0 ? src.length : f); continue; }
+      if (c === "/" && d === "*") { const f = src.indexOf("*/", k + 2); apagar(f < 0 ? src.length : f + 2); continue; }
+      if (c === '"' || c === "'" || c === "`") {
+        let f = k + 1;
+        while (f < src.length && src[f] !== c) f += src[f] === "\\" ? 2 : 1;
+        out += c; k++; apagar(Math.min(f, src.length)); if (k < src.length) { out += c; k++; }
+        continue;
+      }
+      out += c; k++;
     }
-    return null;
+    return out;
+  };
+  /** Posição do `)` que fecha o `(` em `abre`, no código já limpo; -1 se não fecha. */
+  const fecha = (c: string, abre: number): number => {
+    let nivel = 0;
+    for (let k = abre; k < c.length; k++) {
+      if (c[k] === "(") nivel++;
+      else if (c[k] === ")" && --nivel === 0) return k;
+    }
+    return -1;
   };
   /**
-   * A posição `i` está DENTRO dos parênteses de uma chamada `paginar(...)`?
-   *
-   * A segunda versão (24/09/2026) olhava os 400 caracteres anteriores procurando
-   * `paginar(` sem `;` no meio — e num `Promise.all([paginar(...), supabase.from(
-   * "campo_extraido")...])` a vírgula não é `;`: uma leitura não paginada logo depois
-   * de um `paginar` passava (achado ALTO da terceira revisão do PR #244, medido em
-   * `perguntas/page.tsx`; o varredor da primeira versão a pegava). Agora se casa o
-   * parêntese de cada `paginar` e se exige que a leitura esteja entre os dois.
+   * Os métodos encadeados na leitura que começa em `from(` na posição `i`:
+   * `from(…).select(…).in(…).range(…)` → ["select", "in", "range"]. Segue os
+   * parênteses casados de cada chamada até a cadeia acabar, então o `.range` de
+   * OUTRA consulta não conta como desta.
    */
-  const dentroDeUmPaginar = (texto: string, i: number): boolean => {
-    for (const m of texto.slice(0, i).matchAll(/paginar\s*(?:<[^()]*?>)?\s*\(/g)) {
-      const abre = (m.index ?? 0) + m[0].length - 1;
-      let nivel = 0;
-      for (let k = abre; k < texto.length; k++) {
-        if (texto[k] === "(") nivel++;
-        else if (texto[k] === ")" && --nivel === 0) {
-          if (k > i) return true;
-          break;
+  const cadeia = (c: string, i: number): Array<{ nome: string; args: string }> => {
+    const metodos: Array<{ nome: string; args: string }> = [];
+    let k = fecha(c, c.indexOf("(", i)) + 1;
+    while (k > 0) {
+      let j = k;
+      while (/\s/.test(c[j] ?? "")) j++;
+      if (c[j] !== ".") break;
+      j++;
+      const ini = j;
+      while (/[\w$]/.test(c[j] ?? "")) j++;
+      const nome = c.slice(ini, j);
+      while (/\s/.test(c[j] ?? "")) j++;
+      if (!nome || c[j] !== "(") break;
+      const fim = fecha(c, j);
+      if (fim < 0) break;
+      metodos.push({ nome, args: c.slice(j + 1, fim) });
+      k = fim + 1;
+    }
+    return metodos;
+  };
+  /**
+   * A leitura em `i` está dentro dos parênteses de um `paginar(...)`?
+   *
+   * Sozinho não basta (quarta revisão): uma leitura secundária no callback,
+   * `paginar(async (de, ate) => { await supabase.from(…).in(…); … })`, sai limitada
+   * a 1000 linhas — por isso quem decide é esta condição E a cadeia da leitura
+   * chegar a `.range`. Sem regex com retrocesso: o Sonar acusou a anterior (S8786).
+   */
+  const dentroDeUmPaginar = (c: string, i: number): boolean => {
+    for (let p = c.indexOf("paginar"); p >= 0 && p < i; p = c.indexOf("paginar", p + 1)) {
+      if (/[\w$]/.test(c[p - 1] ?? "") || /[\w$]/.test(c[p + 7] ?? "")) continue; // outro identificador
+      let k = p + 7;
+      while (/\s/.test(c[k] ?? "")) k++;
+      if (c[k] === "<") { // o genérico: `<` e `>` casados, sem contar o `>` de `=>`
+        let nivel = 0;
+        for (; k < c.length; k++) {
+          if (c[k] === "<") nivel++;
+          else if (c[k] === ">" && c[k - 1] !== "=" && --nivel === 0) { k++; break; }
         }
+        while (/\s/.test(c[k] ?? "")) k++;
       }
+      if (c[k] === "(" && fecha(c, k) > i) return true;
     }
     return false;
   };
   let leituras = 0;
   for (const arq of arquivos) {
     const texto = readFileSync(arq, "utf8");
+    const codigo = soCodigo(texto);
     const alvo = 'from("campo_extraido")';
     for (let i = texto.indexOf(alvo); i >= 0; i = texto.indexOf(alvo, i + 1)) {
+      if (codigo[i] !== "f") continue; // citada num comentário ou texto, não é leitura
       leituras++;
       const linha = texto.slice(0, i).split("\n").length;
-      const dentroDoPaginar = dentroDeUmPaginar(texto, i);
-      const soContagem = /head:\s*true/.test(argsDoSelect(texto, i) ?? "");
-      checar(dentroDoPaginar || soContagem,
+      const metodos = cadeia(codigo, i);
+      const paginada = dentroDeUmPaginar(codigo, i) && metodos.some((m) => m.nome === "range");
+      const soContagem = metodos.some((m) => m.nome === "select" && /head:\s*true/.test(m.args));
+      checar(paginada || soContagem,
         `${arq.replace(SRC, "portal/src/")}:${linha} lê linhas de campo_extraido sem paginar — o teto de 1000 corta em silêncio`);
     }
   }

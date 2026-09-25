@@ -415,7 +415,10 @@ jobs:
         # a função sem paginar reprova 7. Revisão do PR #244: o varredor passou a
         # ler o `.select(` da própria consulta (tirar o `head: true` da contagem
         # total passava verde — agora reprova 1), e página que falha no meio tem de
-        # se declarar `incompleto` (com o erro descartado, 2 reprovam).
+        # se declarar `incompleto` (com o erro descartado, 2 reprovam). Quarta revisão:
+        # parênteses casados só no CÓDIGO (comentário citando `paginar(` abria um falso) e
+        # a cadeia da própria leitura tem de chegar a `.range` — cinco mutações, uma
+        # reprovação cada.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-linhas-por-versao.mts
 
       - name: Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)
