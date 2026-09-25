@@ -831,3 +831,32 @@ test('araucária: o balancete chega fragmentado e a emenda junta 82 linhas em 36
   assert.equal(naoVazias(texto), 82, 'o texto bruto da captura mudou');
   assert.equal(naoVazias(juntarFragmentosDeLinha(texto)), 36);
 });
+
+// E O "ZERO FALSO POSITIVO, ZERO FALSO NEGATIVO" do README, não só a contagem — a terceira
+// revisão do PR #244 notou que 44 e 24 podiam continuar certos com a régua trocando um CNPJ
+// contado por um TOTAIS perdido. As categorias abaixo são as que o README da captura lista como
+// excluídas corretamente (cabeçalho de página, razão social, CNPJ, título, período, "(Valores
+// expressos…)", cabeçalho de colunas, nota e rodapé, bloco de assinatura).
+const RUIDO_DO_ARAUCARIA = [
+  /^Página \d/, /LTDA\.$/, /^CNPJ /, /^BALAN/, /^Exercícios encerrados/, /^Encerramento do exercício/,
+  /Valores expressos/, /^\d{2}\/\d{2}\/\d{4} \d{2}\/\d{2}\/\d{4}$/, /^Código Conta/, /notas explicativas/,
+  /^Nota —/, /^redutora do passivo/, /^_+$/, /Contador|Diretor Presidente/,
+];
+const ehRuido = (l) => RUIDO_DO_ARAUCARIA.some((r) => r.test(l));
+
+for (const nome of Object.keys(ARAUCARIA)) {
+  test(`araucária ${nome.slice(0, 3)}: nada contado é ruído, e nada descartado é conta`, () => {
+    const texto = ARAUCARIA[nome].texto;
+    const contadas = linhasDeConta(texto);
+    const descartadas = juntarFragmentosDeLinha(texto).split('\n').filter((l) => l.trim() && !contadas.includes(l));
+    assert.deepEqual(contadas.filter(ehRuido), [], 'falso positivo: a régua contou uma linha de ruído');
+    assert.deepEqual(descartadas.filter((l) => !ehRuido(l)), [], 'falso negativo: a régua descartou uma linha que não é ruído');
+  });
+}
+
+test('araucária 090: toda linha contada é conta analítica, mais exatamente uma linha de TOTAIS', () => {
+  const contadas = linhasDeConta(ARAUCARIA['090_Balancete_Analitico_Araucaria_Comercial_2023'].texto);
+  const totais = contadas.filter((l) => /^TOTAIS /.test(l));
+  assert.equal(totais.length, 1, 'a linha de TOTAIS tem de ser contada, uma vez');
+  assert.deepEqual(contadas.filter((l) => !/^\d\.\d\.\d{2}\.\d{3} /.test(l) && !/^TOTAIS /.test(l)), []);
+});
