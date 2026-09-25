@@ -274,6 +274,42 @@ if ! grep -qx '14|14|0|0|0|100.0' <<< "$resumo_lote"; then
 fi
 echo "   14 documentos, 14 com linha, 0 sem linha, 0 nunca extraídos — a consulta do aceite está viva"
 
+# E AS TRÊS SITUAÇÕES QUE SÃO A RAZÃO DE SER DO ACEITE. Sobre a fixture pura só o ramo `com_linha`
+# era exercitado (achado da 3ª revisão do PR #244): se a chave `tem_dado_financeiro` ou a ação
+# `extracao_sombra` fossem renomeadas no produtor, o portão ficaria verde e, em produção, todo
+# documento sem linha cairia em `sem_linha_silencioso`. Aqui três documentos sem linha entram
+# numa transação que VOLTA, e os eventos saem da função de PRODUÇÃO que os grava
+# (`fn_registrar_campos_extraidos`), não de um insert feito à mão: um declara que não tinha dado,
+# outro volta vazio sem declarar, o terceiro nunca é extraído.
+echo "== o aceite da F0 separa as três situações de documento sem linha"
+situacoes="$(psql -X -q -At -F'|' -v ON_ERROR_STOP=1 -d "$DB" \
+  -v caso_id="'11111111-1111-1111-1111-111111111111'" <<'SQL'
+begin;
+insert into documento (id, caso_id, entidade_id, periodo_id, tipo_taxonomia, status, confianca, fonte)
+select v.id, d.caso_id, d.entidade_id, d.periodo_id, 'CERTIDOES', 'valido', 0.9, 'fixture'
+  from (values ('aaaaaaaa-0000-0000-0000-000000000001'::uuid), ('aaaaaaaa-0000-0000-0000-000000000002'::uuid),
+               ('aaaaaaaa-0000-0000-0000-000000000003'::uuid)) v(id),
+       (select * from documento where caso_id = '11111111-1111-1111-1111-111111111111' limit 1) d;
+insert into documento_versao (id, documento_id, n_versao, arquivo_ref, nome_original, hash)
+select ('bbbbbbbb-0000-0000-0000-00000000000' || n)::uuid, ('aaaaaaaa-0000-0000-0000-00000000000' || n)::uuid, 1,
+       'fixture/sem-linha-' || n || '.pdf', 'sem-linha-' || n || '.pdf', md5(n::text)
+  from generate_series(1, 3) n;
+select fn_registrar_campos_extraidos('bbbbbbbb-0000-0000-0000-000000000001', '[]'::jsonb, p_falha_motivo => null, p_tem_dado_financeiro => false);
+select fn_registrar_campos_extraidos('bbbbbbbb-0000-0000-0000-000000000002', '[]'::jsonb, p_falha_motivo => 'resposta vazia', p_tem_dado_financeiro => true);
+\i Supabase/test/cobertura-do-lote.sql
+rollback;
+SQL
+)"
+for esperado in 'sem_linha_declarado|CERTIDOES|sem-linha-1.pdf|' 'sem_linha_silencioso|CERTIDOES|sem-linha-2.pdf|' \
+                'extracao_nunca_chamada|CERTIDOES|sem-linha-3.pdf|' '17|14|1|1|1|82.4'; do
+  if ! grep -qF -- "$esperado" <<< "$situacoes"; then
+    echo "FALHOU: o cobertura-do-lote.sql não classificou como esperado — faltou: $esperado"
+    echo "$situacoes" | sed 's/^/     /'
+    exit 1
+  fi
+done
+echo "   declarado, silencioso e nunca extraído: cada um na sua situação (17 documentos, 82,4% com linha)"
+
 # O TESTE DA 0188 VEM ANTES DE QUALQUER OUTRA RECONCILIAÇÃO, E A ORDEM É
 # OBRIGATÓRIA: os blocos 1 e 2 comparam o que as checagens produzem sobre as
 # fixtures (perturbadas dentro de uma transação que volta) contra o retrato
