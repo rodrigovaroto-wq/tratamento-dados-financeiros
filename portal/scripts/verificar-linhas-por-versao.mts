@@ -139,6 +139,30 @@ function lote(porVersao: Record<string, number>): Linha[] {
     }
     return null;
   };
+  /**
+   * A posição `i` está DENTRO dos parênteses de uma chamada `paginar(...)`?
+   *
+   * A segunda versão (24/09/2026) olhava os 400 caracteres anteriores procurando
+   * `paginar(` sem `;` no meio — e num `Promise.all([paginar(...), supabase.from(
+   * "campo_extraido")...])` a vírgula não é `;`: uma leitura não paginada logo depois
+   * de um `paginar` passava (achado ALTO da terceira revisão do PR #244, medido em
+   * `perguntas/page.tsx`; o varredor da primeira versão a pegava). Agora se casa o
+   * parêntese de cada `paginar` e se exige que a leitura esteja entre os dois.
+   */
+  const dentroDeUmPaginar = (texto: string, i: number): boolean => {
+    for (const m of texto.slice(0, i).matchAll(/paginar\s*(?:<[^()]*?>)?\s*\(/g)) {
+      const abre = (m.index ?? 0) + m[0].length - 1;
+      let nivel = 0;
+      for (let k = abre; k < texto.length; k++) {
+        if (texto[k] === "(") nivel++;
+        else if (texto[k] === ")" && --nivel === 0) {
+          if (k > i) return true;
+          break;
+        }
+      }
+    }
+    return false;
+  };
   let leituras = 0;
   for (const arq of arquivos) {
     const texto = readFileSync(arq, "utf8");
@@ -146,8 +170,7 @@ function lote(porVersao: Record<string, number>): Linha[] {
     for (let i = texto.indexOf(alvo); i >= 0; i = texto.indexOf(alvo, i + 1)) {
       leituras++;
       const linha = texto.slice(0, i).split("\n").length;
-      const antes = texto.slice(Math.max(0, i - 400), i);
-      const dentroDoPaginar = /paginar\s*[<(][^;]*$/.test(antes);
+      const dentroDoPaginar = dentroDeUmPaginar(texto, i);
       const soContagem = /head:\s*true/.test(argsDoSelect(texto, i) ?? "");
       checar(dentroDoPaginar || soContagem,
         `${arq.replace(SRC, "portal/src/")}:${linha} lê linhas de campo_extraido sem paginar — o teto de 1000 corta em silêncio`);

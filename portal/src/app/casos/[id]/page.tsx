@@ -347,6 +347,34 @@ export default async function CasoDashboardPage({
   const semLinha = documentos.filter(
     (d) => ((d.documento_versao ?? []).reduce((n, v) => n + (linhasPorVersao.get(v.id) ?? 0), 0)) === 0,
   ).length;
+  // Contagem parcial não é contagem (regra 1): com a leitura incompleta, a soma
+  // parcial NÃO aparece como total (o valor vira "—") e "sem nenhuma linha" não é
+  // dito — contaria documento cujas linhas estavam nas páginas que não vieram.
+  // A célula "linhas" de cada documento na tabela. Com a contagem incompleta, nem
+  // o número nem o "nenhuma" são verdade: as linhas podem estar nas páginas que
+  // não vieram.
+  const celulaDeLinhas = (linhas: number) => {
+    if (linhasIncompletas) {
+      return (
+        <span className="chip bg-alerta-100 text-alerta-800"
+              title="A leitura das linhas deste caso não terminou; a contagem não é conhecida.">
+          não conferido
+        </span>
+      );
+    }
+    if (linhas > 0) return <span className="tabular-nums text-tinta-900">{linhas.toLocaleString("pt-BR")}</span>;
+    return (
+      <span
+        className="chip bg-risco-100 text-risco-800"
+        title="O documento foi recebido e classificado, mas nenhuma linha financeira foi gravada."
+      >
+        nenhuma
+      </span>
+    );
+  };
+  let detalheDasLinhas: string | null = null;
+  if (linhasIncompletas) detalheDasLinhas = "contagem incompleta — a leitura das linhas não terminou";
+  else if (semLinha > 0) detalheDasLinhas = `${semLinha} ${semLinha === 1 ? "documento sem nenhuma linha" : "documentos sem nenhuma linha"}`;
 
   return (
     <div className="space-y-8">
@@ -420,15 +448,9 @@ export default async function CasoDashboardPage({
       <div className="carta grid grid-cols-2 divide-x divide-y divide-tinta-100 sm:grid-cols-4 sm:divide-y-0">
         <Indicador valor={documentos.length} rotulo="documentos recebidos" />
         <Indicador
-          valor={linhasTotais.toLocaleString("pt-BR")}
+          valor={linhasIncompletas ? "—" : linhasTotais.toLocaleString("pt-BR")}
           rotulo="linhas financeiras extraídas"
-          detalhe={linhasIncompletas
-            // Contagem parcial não é contagem: sem isto a soma parcial aparecia
-            // como total e "sem nenhuma linha" contava documento que tem linha.
-            ? "contagem incompleta — a leitura das linhas não terminou"
-            : semLinha > 0
-              ? `${semLinha} ${semLinha === 1 ? "documento sem nenhuma linha" : "documentos sem nenhuma linha"}`
-              : null}
+          detalhe={detalheDasLinhas}
           tom="alerta"
         />
         <Indicador
@@ -677,16 +699,7 @@ export default async function CasoDashboardPage({
                         {doc.periodo ? formatarPeriodo(doc.periodo.tipo, doc.periodo.referencia) : "—"}
                       </td>
                       <td className="px-3 py-2.5 text-right">
-                        {linhas > 0 ? (
-                          <span className="tabular-nums text-tinta-900">{linhas.toLocaleString("pt-BR")}</span>
-                        ) : (
-                          <span
-                            className="chip bg-risco-100 text-risco-800"
-                            title="O documento foi recebido e classificado, mas nenhuma linha financeira foi gravada."
-                          >
-                            nenhuma
-                          </span>
-                        )}
+                        {celulaDeLinhas(linhas)}
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <span className="tabular-nums text-tinta-700">
